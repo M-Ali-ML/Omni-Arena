@@ -1,0 +1,66 @@
+---
+name: market-research
+description: Conducts deep web research on the product being built — market landscape, competitors, alternatives, demand signals, pricing, positioning, and trends. Use when the user asks to research the market, find competitors or alternatives, validate demand, size an opportunity, or compare the product against existing solutions.
+---
+
+# Market Research
+
+## Overview
+
+Strong, evidence-based market research using live web search. Every claim must be backed by a source; every conclusion must distinguish fact from inference. The output is a decision-ready report, not a link dump.
+
+Before starting, read the product context so the research is grounded in what is actually being built: `README.md`, `pre-docs/PRD.md`, `pre-docs/mvp.md`, and `pre-docs/user-stories.md` (or their equivalents in the current project).
+
+## Research Dimensions
+
+Cover whichever of these the question demands — for a full market scan, cover all of them:
+
+1. **Competitive landscape** — direct competitors, indirect alternatives, and the "do nothing / DIY" option. For each: what it does, target user, pricing, strengths, weaknesses, traction signals (stars, funding, reviews, community size).
+2. **Demand signals** — search trends, community discussions (Reddit, Hacker News, X, Discord), job postings, GitHub activity, waitlists, complaints about existing tools. Complaints about incumbents are the strongest demand signal.
+3. **Market size and growth** — TAM/SAM estimates from credible reports, adoption curves, funding activity in the space. Flag when numbers come from vendor marketing.
+4. **Positioning gaps** — what do users complain about across all incumbents? What niche, price point, or workflow is underserved? Where does the product being built genuinely differ?
+5. **Pricing landscape** — how competitors charge (per seat, usage, freemium, open core), typical price points, what users say prices should be.
+6. **Trends and risks** — where is the space heading? Platform risk, commoditization risk, incumbent-adds-the-feature risk.
+
+## Method
+
+1. **Frame the question.** State what decision this research informs (build vs. skip, positioning, pricing, feature priority).
+2. **Search wide, then deep.** Start with 3–5 broad queries, then follow the strongest threads. Use multiple phrasings and include the current year for freshness. Search both product names and problem descriptions ("compare LLMs side by side" as well as "LMArena alternatives").
+3. **Triangulate.** No important claim rests on a single source. Prefer primary sources (official docs, pricing pages, repos, filings) over blog roundups and SEO listicles.
+4. **Date-check everything.** Note publication dates; the AI/software market shifts in months. Discard stale claims or mark them as such.
+5. **Steelman the competition.** Describe competitors at their best, not their worst — flattering research produces bad decisions.
+
+## Report Format
+
+```markdown
+# Market Research: [Topic]
+
+## TL;DR
+[3-5 sentences: the answer to the framing question, with the key evidence]
+
+## Competitive Landscape
+| Product | What it is | Target user | Pricing | Traction | Key weakness |
+|---------|-----------|-------------|---------|----------|--------------|
+
+## Demand Signals
+[Evidence of demand or its absence, with sources]
+
+## Gaps & Opportunities
+[Where the product being built can win — grounded in the evidence above]
+
+## Risks
+[What could make this space hard to win]
+
+## Recommendation
+[Concrete, opinionated next step]
+
+## Sources
+[Linked list, with dates]
+```
+
+## Quality Bar
+
+- Every factual claim carries a source link.
+- Clearly separate **fact** (sourced), **inference** (reasoned from facts), and **opinion** (judgment call).
+- Include negative findings — "I found no evidence of demand for X" is a valid and valuable result.
+- If the research is substantial, offer to save it under `pre-docs/research/` so it persists beyond the conversation.

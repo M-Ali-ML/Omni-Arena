@@ -83,7 +83,9 @@ An asynchronous/batch component — deliberately *off* the hot streaming path, a
 - **Anomaly detection**: p-value testing to exclude spam/malicious voters before fitting.
 
 ### 2.6 Frontend SDK
-Drop-in `useArenaChat` (React/Vue) hook that hides all multi-stream complexity: renders dual streams, manages voting UI states, submits votes with the matchup token — target integration is under ten lines of code.
+Drop-in `useArenaChat` (React/Vue) hook that hides all multi-stream complexity while staying headless: renders dual stream state, manages voting UI state, submits votes with the matchup token, and exposes model identities only after the backend validates the vote — target integration is under ten lines of code.
+
+The SDK also provides a headless leaderboard consumption surface (for example, `useArenaLeaderboard`) that fetches ratings, confidence intervals, and win-rate matrix data without imposing a built-in visual design. Host apps own the final leaderboard UI, which keeps OmniArena framework-agnostic and consistent with the "headless hook only" product decision.
 
 ## 3. Key Data Flows
 

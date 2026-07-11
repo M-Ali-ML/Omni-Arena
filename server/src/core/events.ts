@@ -1,0 +1,32 @@
+export type ArenaSlot = "A" | "B";
+
+export type ArenaEvent =
+  | { type: "token"; slot: ArenaSlot; token: string }
+  | { type: "slot_error"; slot: ArenaSlot; message: string }
+  | {
+      type: "slot_done";
+      slot: ArenaSlot;
+      content: string;
+      latencyMs: number;
+      error: string | null;
+    }
+  | { type: "matchup_done" };
+
+export type PublicArenaEvent =
+  | {
+      type: "matchup_started";
+      matchupId: string;
+      matchupToken: string;
+      slots: ArenaSlot[];
+    }
+  | { type: "token"; slot: ArenaSlot; token: string }
+  | { type: "slot_error"; slot: ArenaSlot; message: string }
+  | { type: "slot_done"; slot: ArenaSlot }
+  | { type: "matchup_done" };
+
+export function toPublicEvent(event: ArenaEvent): PublicArenaEvent {
+  if (event.type === "slot_done") {
+    return { type: "slot_done", slot: event.slot };
+  }
+  return event;
+}
