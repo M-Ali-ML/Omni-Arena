@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmniArena · Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --text: #37352F; --surface: #F7F7F5; --border: #E9E9E7; --muted: #ACABA9;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #FFFFFF; color: var(--text);
+    font: 400 16px/1.6 Inter, sans-serif;
+  }
+  main { max-width: 900px; margin: 0 auto; padding: 64px 24px; }
+  h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin: 64px 0 16px; }
+  .crumb { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+  .crumb a { color: var(--muted); text-decoration: none; }
+  .crumb a:hover { color: var(--text); }
+  .lede { color: var(--text); font-size: 18px; margin: 0; }
+  code, .mono { font-family: "Geist Mono", monospace; font-size: 13px; }
+  code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--surface); font-weight: 600; }
+  .callout {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px; margin: 16px 0; font-size: 14px;
+  }
+  .chip {
+    display: inline-block; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 9999px; padding: 2px 10px; font-size: 12px; color: var(--text); margin: 2px;
+  }
+  .flow { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .node {
+    flex: 1 1 160px; background: #FFFFFF; border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 16px; font-size: 14px; min-width: 150px;
+  }
+  .node:hover { box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+  .node .t { font-weight: 600; }
+  .node .d { color: var(--muted); font-size: 12px; }
+  .node.dim { background: var(--surface); }
+  .arrow { text-align: center; color: var(--muted); font-size: 13px; }
+  details { border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin: 16px 0; }
+  summary { cursor: pointer; font-weight: 500; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a></div>
+  <h1>Architecture</h1>
+  <p class="lede">The MVP as implemented: blind dual-model SSE streaming, signed votes, win-rate leaderboard. Target end-state lives in <span class="mono">pre-docs/</span>.</p>
+
+  <h2>System overview</h2>
+  <div class="flow">
+    <div class="row">
+      <div class="node"><div class="t">web (React demo)</div><div class="d">useArenaChat · useArenaLeaderboard · Vite proxy → :3001</div></div>
+    </div>
+    <div class="arrow">▼ HTTP + multiplexed SSE</div>
+    <div class="row">
+      <div class="node"><div class="t">Fastify routes</div><div class="d">/api/arena/chat · /vote · /leaderboard · /health</div></div>
+      <div class="node"><div class="t">ArenaCore</div><div class="d">parallel fan-out, one event stream, fault isolation</div></div>
+      <div class="node"><div class="t">RandomMatchmaker</div><div class="d">distinct pair + blind slot swap</div></div>
+      <div class="node"><div class="t">MatchupTokenService</div><div class="d">HMAC token, 15 min TTL, hash stored</div></div>
+    </div>
+    <div class="arrow">▼</div>
+    <div class="row">
+      <div class="node dim"><div class="t">PostgreSQL</div><div class="d">models · matchups · responses · preferences</div></div>
+      <div class="node dim"><div class="t">Google Gemini API</div><div class="d">only provider wired today</div></div>
+    </div>
+  </div>
+
+  <h2>Ports (hexagonal boundaries)</h2>
+  <table>
+    <tr><th>Port</th><th>MVP implementation</th><th>Future replacement</th></tr>
+    <tr><td class="mono">ModelProviderPort</td><td>GoogleModelProvider</td><td>OpenAI, Ollama/vLLM, host-proxy mode</td></tr>
+    <tr><td class="mono">ProviderResolverPort</td><td>ProviderRegistry</td><td>unchanged</td></tr>
+    <tr><td class="mono">MatchmakingPort</td><td>RandomMatchmaker</td><td>smart sampling</td></tr>
+    <tr><td class="mono">PreferenceRepositoryPort</td><td>PostgresRepository</td><td>unchanged</td></tr>
+    <tr><td class="mono">LeaderboardPort</td><td>win-rate SQL</td><td>Python Bradley-Terry worker</td></tr>
+  </table>
+  <div class="callout">Defined in <span class="mono">server/src/core/ports.ts</span>. Tests inject in-memory implementations behind the same interfaces.</div>
+
+  <h2>Stream orchestration</h2>
+  <p><span class="mono">ArenaCore.stream()</span> merges two concurrent provider streams into one async event queue. If one slot errors, the other keeps streaming.</p>
+  <div>
+    <span class="chip">token</span>
+    <span class="chip">slot_error</span>
+    <span class="chip">slot_done</span>
+    <span class="chip">matchup_done</span>
+  </div>
+  <div class="callout">Public <span class="mono">slot_done</span> events strip content and latency so model identities can't be inferred pre-vote.</div>
+
+  <h2>Blind voting integrity</h2>
+  <table>
+    <tr><th>Guarantee</th><th>Mechanism</th></tr>
+    <tr><td>No identity leak pre-vote</td><td><span class="mono">matchup_started</span> carries only slot IDs + token</td></tr>
+    <tr><td>Unforgeable votes</td><td>HMAC-SHA256 signed token with matchup + slot claims, 15 min expiry</td></tr>
+    <tr><td>Token never stored</td><td>Only its SHA-256 hash lands in the database</td></tr>
+    <tr><td>One vote per matchup</td><td>Unique constraint on <span class="mono">preferences.matchup_id</span></td></tr>
+  </table>
+
+  <details>
+    <summary>Intentionally not built yet (MVP non-goals)</summary>
+    <p>Protocol adapters (Vercel AI SDK, AG-UI/A2UI, OpenAI SSE), WebSocket control plane, Bradley-Terry rating worker, style control, multi-turn history, smart matchmaking, PII scrubbing, published SDK package.</p>
+  </details>
+</main>
+</body>
+</html>

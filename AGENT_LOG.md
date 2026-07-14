@@ -5,6 +5,14 @@ Format and rules: `.agents/skills/agent-log/SKILL.md`.
 
 ---
 
+## 2026-07-14 16:20 · Cursor Agent · Fable 5
+**Type:** feat, docs, chore
+- Phase 0 of the MVP-to-vision roadmap: committed pending work (markdown rendering, `server/src/env.ts` root-.env loader, seed lineup).
+- Versioned migrations: `server/src/db/migrations/001_initial.sql` + `runMigrations()` in `server/src/db/migrations.ts` (transactional, tracked in `schema_migrations`); replaced the one-shot `schema.sql` apply.
+- New tests: `RandomMatchmaker`, migration runner, and web `useArenaChat` hook (jsdom + SSE-stream fetch stubs); root `npm test` now runs both workspaces.
+- Gotcha: Node 24's experimental `localStorage` global shadows jsdom's with `undefined` in Vitest — web tests must stub it. pg-mem also fails AST coverage on repeat `CREATE TABLE IF NOT EXISTS`, so the migration runner uses an information_schema existence check.
+- Bootstrapped `docs/`: paired md/html for architecture, api, data-model, setup per the docs-sync skill; README now links them.
+
 ## 2026-07-11 17:05 · Cursor Agent · Fable 5
 **Type:** docs
 - Added a future-consideration callout on temporal drift to `pre-docs/vision.md` §4 (silent checkpoint swaps, harness drift; capture versioned model IDs + `harness_version` now, defer windowed/dynamic ratings). Explicitly not planned for now.

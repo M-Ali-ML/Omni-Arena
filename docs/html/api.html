@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmniArena · API</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root { --text: #37352F; --surface: #F7F7F5; --border: #E9E9E7; --muted: #ACABA9; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #FFFFFF; color: var(--text); font: 400 16px/1.6 Inter, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 64px 24px; }
+  h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; margin: 64px 0 16px; }
+  .crumb { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+  .crumb a { color: var(--muted); text-decoration: none; }
+  .crumb a:hover { color: var(--text); }
+  .lede { font-size: 18px; margin: 0; }
+  code, .mono { font-family: "Geist Mono", monospace; font-size: 13px; }
+  code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+  pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; font-size: 13px; }
+  pre code { background: none; border: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--surface); font-weight: 600; }
+  .callout { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 16px 0; font-size: 14px; }
+  .method { display: inline-block; font-family: "Geist Mono", monospace; font-size: 12px; font-weight: 500; background: #37352F; color: #FFFFFF; border-radius: 4px; padding: 2px 8px; margin-right: 8px; vertical-align: middle; }
+  .chip { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 9999px; padding: 2px 10px; font-size: 12px; margin: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a></div>
+  <h1>API</h1>
+  <p class="lede">Base URL <span class="mono">http://localhost:3001</span>. JSON bodies. The web dev server proxies <span class="mono">/api</span> and <span class="mono">/health</span>.</p>
+
+  <h2><span class="method">POST</span><span class="mono">/api/arena/chat</span></h2>
+  <p>Starts a blind matchup, streams both responses over one SSE connection.</p>
+<pre><code>{ "prompt": "Explain JWTs in simple terms", "sessionId": "anon_123" }</code></pre>
+  <table>
+    <tr><th>SSE event</th><th>Payload</th><th>Notes</th></tr>
+    <tr><td class="mono">matchup_started</td><td class="mono">{ matchupId, matchupToken, slots }</td><td>First event. No model identities.</td></tr>
+    <tr><td class="mono">token</td><td class="mono">{ slot, token }</td><td>Interleaved tokens for A and B</td></tr>
+    <tr><td class="mono">slot_error</td><td class="mono">{ slot, message }</td><td>Other slot keeps streaming</td></tr>
+    <tr><td class="mono">slot_done</td><td class="mono">{ slot }</td><td>Content/latency stripped from public event</td></tr>
+    <tr><td class="mono">matchup_done</td><td class="mono">{ }</td><td>Stream closes</td></tr>
+  </table>
+  <div class="callout"><span class="mono">prompt</span> required, 1–20,000 chars. <span class="mono">400</span> on validation failure.</div>
+
+  <h2><span class="method">POST</span><span class="mono">/api/arena/vote</span></h2>
+  <p>Records one vote, then reveals model identities.</p>
+<pre><code>{ "matchupId": "3f6e…", "matchupToken": "eyJt….sig", "vote": "left" }
+
+→ { "accepted": true,
+    "models": { "A": { "id", "displayName" }, "B": { "id", "displayName" } } }</code></pre>
+  <div>
+    <span class="chip">left</span><span class="chip">right</span><span class="chip">both_good</span><span class="chip">both_bad</span><span class="chip">skip</span>
+  </div>
+  <table>
+    <tr><th>Status</th><th>Meaning</th></tr>
+    <tr><td class="mono">400</td><td>Invalid body</td></tr>
+    <tr><td class="mono">401</td><td>Bad signature, expired token, or claims mismatch</td></tr>
+    <tr><td class="mono">404</td><td>Unknown matchup</td></tr>
+    <tr><td class="mono">409</td><td>Vote already recorded</td></tr>
+  </table>
+
+  <h2><span class="method">GET</span><span class="mono">/api/arena/leaderboard</span></h2>
+<pre><code>{ "models": [ { "id", "displayName", "wins": 12, "losses": 8, "ties": 3,
+                "skips": 1, "totalVotes": 24, "winRate": 0.5217 } ] }</code></pre>
+  <div class="callout"><span class="mono">winRate = wins / (wins + losses + ties)</span> — skips excluded. Future <span class="mono">rating</span> and <span class="mono">confidenceInterval</span> fields will be added alongside, not instead.</div>
+
+  <h2><span class="method">GET</span><span class="mono">/health</span></h2>
+  <p>Returns <code>{ "status": "ok" }</code>.</p>
+</main>
+</body>
+</html>

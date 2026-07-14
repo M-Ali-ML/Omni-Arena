@@ -1,13 +1,13 @@
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { runMigrations } from "./migrations.js";
 import { pool } from "./pool.js";
 
-const schemaPath = fileURLToPath(new URL("./schema.sql", import.meta.url));
-const schema = await readFile(schemaPath, "utf8");
-
 try {
-  await pool.query(schema);
-  console.log("Database migration complete");
+  const ran = await runMigrations(pool);
+  console.log(
+    ran.length > 0
+      ? `Applied migrations: ${ran.join(", ")}`
+      : "Database already up to date",
+  );
 } finally {
   await pool.end();
 }

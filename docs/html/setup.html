@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmniArena · Setup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root { --text: #37352F; --surface: #F7F7F5; --border: #E9E9E7; --muted: #ACABA9; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #FFFFFF; color: var(--text); font: 400 16px/1.6 Inter, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 64px 24px; }
+  h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; margin: 64px 0 16px; }
+  .crumb { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+  .crumb a { color: var(--muted); text-decoration: none; }
+  .crumb a:hover { color: var(--text); }
+  .lede { font-size: 18px; margin: 0; }
+  code, .mono { font-family: "Geist Mono", monospace; font-size: 13px; }
+  code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+  pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; font-size: 13px; }
+  pre code { background: none; border: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--surface); font-weight: 600; }
+  .callout { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 16px 0; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a></div>
+  <h1>Setup</h1>
+  <p class="lede">Node.js 20+, npm, Docker. One Postgres container, two npm workspaces.</p>
+
+  <h2>Quick start</h2>
+<pre><code>cp .env.example .env      # then set GOOGLE_API_KEY
+npm install
+docker compose up -d      # Postgres 16
+npm run db:migrate --workspace server
+npm run db:seed --workspace server
+npm run dev               # server :3001 · web :5173</code></pre>
+
+  <h2>Environment variables</h2>
+  <table>
+    <tr><th>Variable</th><th>Required</th><th>Purpose</th></tr>
+    <tr><td class="mono">GOOGLE_API_KEY</td><td>yes</td><td>Gemini API key (aistudio.google.com/apikey)</td></tr>
+    <tr><td class="mono">DATABASE_URL</td><td>yes</td><td>Postgres connection; compose default <span class="mono">postgres://omni_arena:omni_arena@localhost:5432/omni_arena</span></td></tr>
+    <tr><td class="mono">MATCHUP_TOKEN_SECRET</td><td>production</td><td>HMAC secret, min 16 chars; insecure dev default otherwise</td></tr>
+    <tr><td class="mono">PORT</td><td>no (3001)</td><td>API port</td></tr>
+    <tr><td class="mono">WEB_ORIGIN</td><td>no (:5173)</td><td>Allowed CORS origin</td></tr>
+  </table>
+  <div class="callout">The root <span class="mono">.env</span> is loaded regardless of workspace cwd via <span class="mono">server/src/env.ts</span>.</div>
+
+  <h2>Database</h2>
+  <table>
+    <tr><th>Task</th><th>Command</th><th>Notes</th></tr>
+    <tr><td>Migrate</td><td class="mono">npm run db:migrate --workspace server</td><td>Applies unapplied <span class="mono">migrations/*.sql</span> in filename order, each in a transaction. Add <span class="mono">NNN_description.sql</span>; never edit applied files.</td></tr>
+    <tr><td>Seed</td><td class="mono">npm run db:seed --workspace server</td><td>Upserts the lineup by <span class="mono">(provider, provider_model_id)</span>; edit <span class="mono">server/src/db/seed.ts</span> to change it.</td></tr>
+  </table>
+
+  <h2>Commands</h2>
+  <table>
+    <tr><th>Command</th><th>What it does</th></tr>
+    <tr><td class="mono">npm run dev</td><td>Server (tsx watch) + web (Vite), concurrently</td></tr>
+    <tr><td class="mono">npm test</td><td>Server (Vitest + pg-mem) and web (Vitest + jsdom hook tests)</td></tr>
+    <tr><td class="mono">npm run build</td><td>Server tsc build + web production bundle</td></tr>
+    <tr><td class="mono">npm run typecheck</td><td>Both workspaces</td></tr>
+  </table>
+  <div class="callout">Tests need no running Postgres or API keys. Web hook tests stub <span class="mono">fetch</span> with real SSE streams and stub <span class="mono">localStorage</span> (Node 24's experimental global shadows jsdom's).</div>
+</main>
+</body>
+</html>

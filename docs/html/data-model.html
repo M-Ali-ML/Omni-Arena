@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmniArena · Data model</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root { --text: #37352F; --surface: #F7F7F5; --border: #E9E9E7; --muted: #ACABA9; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #FFFFFF; color: var(--text); font: 400 16px/1.6 Inter, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 64px 24px; }
+  h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; margin: 64px 0 16px; }
+  .crumb { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+  .crumb a { color: var(--muted); text-decoration: none; }
+  .crumb a:hover { color: var(--text); }
+  .lede { font-size: 18px; margin: 0; }
+  code, .mono { font-family: "Geist Mono", monospace; font-size: 13px; }
+  code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin: 8px 0 16px; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--surface); font-weight: 600; }
+  .callout { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 16px 0; font-size: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; margin: 16px 0; }
+  .card { border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; font-size: 13px; }
+  .card:hover { box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+  .card .t { font-family: "Geist Mono", monospace; font-weight: 500; font-size: 14px; }
+  .card .d { color: var(--muted); font-size: 12px; }
+  .chip { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 9999px; padding: 2px 10px; font-size: 12px; margin: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a></div>
+  <h1>Data model</h1>
+  <p class="lede">PostgreSQL owns all arena state. SQL migrations in <span class="mono">server/src/db/migrations/</span> apply in filename order, tracked in <span class="mono">schema_migrations</span>.</p>
+
+  <h2>Tables at a glance</h2>
+  <div class="grid">
+    <div class="card"><div class="t">models</div><div class="d">catalog of comparable models; only enabled ones enter matchmaking</div></div>
+    <div class="card"><div class="t">matchups</div><div class="d">one blind head-to-head per prompt; randomized slot assignment + token hash</div></div>
+    <div class="card"><div class="t">responses</div><div class="d">one row per slot per matchup: content, latency, error</div></div>
+    <div class="card"><div class="t">preferences</div><div class="d">one vote per matchup (unique constraint), winner nullable</div></div>
+    <div class="card"><div class="t">schema_migrations</div><div class="d">migration bookkeeping: name + applied_at</div></div>
+  </div>
+
+  <h2>Key columns</h2>
+  <table>
+    <tr><th>Table</th><th>Column</th><th>Why it matters</th></tr>
+    <tr><td class="mono">models</td><td class="mono">provider + provider_model_id</td><td>Unique pair; seed upserts on it. Provider maps to the registry key (currently <span class="mono">google</span>).</td></tr>
+    <tr><td class="mono">matchups</td><td class="mono">slot_a/b_model_id</td><td>Randomized display assignment, distinct from the raw pair columns; checks forbid self-matches.</td></tr>
+    <tr><td class="mono">matchups</td><td class="mono">matchup_token_hash</td><td>SHA-256 of the signed token — the token itself is never stored.</td></tr>
+    <tr><td class="mono">responses</td><td class="mono">latency_ms, error</td><td>Stream duration and failure per slot; unique on <span class="mono">(matchup_id, slot)</span>.</td></tr>
+    <tr><td class="mono">preferences</td><td class="mono">winner_model_id</td><td>Null for ties and skips.</td></tr>
+    <tr><td class="mono">preferences</td><td class="mono">position_bias_meta</td><td>JSONB, currently <span class="mono">{ selectedSlot }</span> — future style/bias analytics hook.</td></tr>
+    <tr><td class="mono">preferences</td><td class="mono">anonymous_session_id</td><td>Carried from the matchup token claims.</td></tr>
+  </table>
+
+  <h2>Vote semantics</h2>
+  <div>
+    <span class="chip">left → slot A wins</span>
+    <span class="chip">right → slot B wins</span>
+    <span class="chip">both_good → tie</span>
+    <span class="chip">both_bad → tie</span>
+    <span class="chip">skip → excluded from winRate</span>
+  </div>
+  <div class="callout"><strong>Leaderboard:</strong> <span class="mono">winRate = wins / (wins + losses + ties)</span>, computed by SQL aggregation in <span class="mono">PostgresRepository.getLeaderboard()</span>; <span class="mono">0</span> when a model has no votes.</div>
+</main>
+</body>
+</html>

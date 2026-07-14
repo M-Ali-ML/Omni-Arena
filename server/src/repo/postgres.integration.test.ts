@@ -1,10 +1,10 @@
-import { readFile } from "node:fs/promises";
 import type { Pool } from "pg";
 import { newDb } from "pg-mem";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
 import { ArenaCore } from "../core/arena.js";
 import type { MatchupAssignment, Model } from "../core/ports.js";
+import { runMigrations } from "../db/migrations.js";
 import { ProviderRegistry } from "../providers/registry.js";
 import { PostgresRepository } from "./postgres.js";
 import { MatchupTokenService } from "../token.js";
@@ -33,11 +33,7 @@ describe("Postgres-backed arena flow", () => {
     const database = newDb();
     const adapter = database.adapters.createPg();
     const pool = new adapter.Pool() as unknown as Pool;
-    const schema = await readFile(
-      new URL("../db/schema.sql", import.meta.url),
-      "utf8",
-    );
-    await pool.query(schema);
+    await runMigrations(pool);
     await pool.query(
       `INSERT INTO models (
         id, display_name, provider, provider_model_id, enabled
