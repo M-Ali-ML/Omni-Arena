@@ -47,6 +47,7 @@ counterparts in [`docs/html/`](docs/html/)):
 [architecture](docs/md/architecture.md) · [API](docs/md/api.md) ·
 [data model](docs/md/data-model.md) · [setup](docs/md/setup.md).
 
-Planning documents (vision, target architecture, MVP scope) are in
+Planning documents (target architecture, MVP scope, PRD) are in
 [`pre-docs/`](pre-docs/); the detailed MVP scope is
-[`pre-docs/mvp.md`](pre-docs/mvp.md).
+[`pre-docs/mvp.md`](pre-docs/mvp.md). The long-form vision doc lives at
+`artifacts/vision.md` (local-only, gitignored — not committed).

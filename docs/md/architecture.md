@@ -3,7 +3,7 @@
 OmniArena is a small, self-hosted service for blind side-by-side LLM
 comparisons. This document describes the architecture **as implemented today**
 (the MVP). The target end-state lives in [`pre-docs/architecture.md`](../../pre-docs/architecture.md)
-and [`pre-docs/vision.md`](../../pre-docs/vision.md).
+and `artifacts/vision.md` (local-only, gitignored — not committed).
 
 Related: [API](api.md) · [Data model](data-model.md) · [Setup](setup.md)
 
