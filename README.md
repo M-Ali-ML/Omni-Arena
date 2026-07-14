@@ -22,7 +22,7 @@ npm run dev
 Open [http://localhost:5173](http://localhost:5173). The API listens on
 `http://localhost:3001`.
 
-The seed enables Gemini 3.5 Flash, Gemini 3.1 Flash-Lite, and Gemini 2.5 Pro.
+The seed enables Gemini 3.1 Flash-Lite, Gemini 3 Flash, and Gemini 3.5 Flash.
 Set `GOOGLE_API_KEY` in `.env` before starting the server. To change the arena
 lineup, edit `server/src/db/seed.ts` and run the seed command again.
 

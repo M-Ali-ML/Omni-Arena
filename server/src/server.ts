@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./env.js";
 import { createApp } from "./app.js";
 import { ArenaCore } from "./core/arena.js";
 import { pool } from "./db/pool.js";

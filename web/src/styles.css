@@ -170,9 +170,117 @@ textarea:focus {
 
 .response-content {
   flex: 1;
+  overflow-wrap: anywhere;
   padding: 20px;
-  white-space: pre-wrap;
   line-height: 1.65;
+}
+
+.response-content > *:first-child {
+  margin-top: 0;
+}
+
+.response-content > *:last-child {
+  margin-bottom: 0;
+}
+
+.response-content p,
+.response-content ul,
+.response-content ol,
+.response-content pre,
+.response-content blockquote,
+.response-content table {
+  margin: 0 0 12px;
+}
+
+.response-content h1,
+.response-content h2,
+.response-content h3,
+.response-content h4,
+.response-content h5,
+.response-content h6 {
+  margin: 20px 0 8px;
+  line-height: 1.3;
+}
+
+.response-content h1 {
+  font-size: 1.4em;
+}
+
+.response-content h2 {
+  font-size: 1.25em;
+}
+
+.response-content h3 {
+  font-size: 1.1em;
+}
+
+.response-content ul,
+.response-content ol {
+  padding-left: 24px;
+}
+
+.response-content li + li {
+  margin-top: 4px;
+}
+
+.response-content li > ul,
+.response-content li > ol {
+  margin: 4px 0;
+}
+
+.response-content code {
+  border-radius: 4px;
+  padding: 2px 5px;
+  background: #f5f3f1;
+  font: 400 0.9em/1.4 "Geist Mono", monospace;
+}
+
+.response-content pre {
+  overflow-x: auto;
+  border-radius: 6px;
+  padding: 12px 14px;
+  background: #f5f3f1;
+}
+
+.response-content pre code {
+  padding: 0;
+  background: none;
+}
+
+.response-content blockquote {
+  margin-left: 0;
+  padding-left: 12px;
+  border-left: 3px solid #e4e2e0;
+  color: #5d5f5d;
+}
+
+.response-content a {
+  color: #37352f;
+  text-decoration: underline;
+  text-decoration-color: #cbc6bc;
+}
+
+.response-content table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+.response-content th,
+.response-content td {
+  border: 1px solid #e4e2e0;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.response-content th {
+  background: #f5f3f1;
+}
+
+.response-content hr {
+  margin: 16px 0;
+  border: none;
+  border-top: 1px solid #e4e2e0;
 }
 
 .placeholder {

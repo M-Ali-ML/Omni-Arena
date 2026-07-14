@@ -1,4 +1,6 @@
 import { useState, type FormEvent } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   useArenaChat,
   type ArenaSlot,
@@ -78,7 +80,11 @@ export default function App() {
               </span>
             </div>
             <div className="response-content">
-              {arena.slots[slot].content || (
+              {arena.slots[slot].content ? (
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {arena.slots[slot].content}
+                </ReactMarkdown>
+              ) : (
                 <span className="placeholder">Waiting for a prompt.</span>
               )}
               {arena.slots[slot].error && (
