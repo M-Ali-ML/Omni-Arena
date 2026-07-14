@@ -5,6 +5,11 @@ Format and rules: `.agents/skills/agent-log/SKILL.md`.
 
 ---
 
+## 2026-07-14 16:40 · Cursor Agent · Fable 5
+**Type:** chore, docs
+- Moved `pre-docs/vision.md` → `artifacts/vision.md` (untracked from git via `git rm --cached`; `artifacts/` is already gitignored) since vision is a personal/local planning doc, not meant to be committed.
+- Updated references in `docs/md/architecture.md` and `README.md` to point at the new local-only path.
+
 ## 2026-07-14 16:20 · Cursor Agent · Fable 5
 **Type:** feat, docs, chore
 - Phase 0 of the MVP-to-vision roadmap: committed pending work (markdown rendering, `server/src/env.ts` root-.env loader, seed lineup).
