@@ -11,5 +11,4 @@ coverage/
 *.log
 *.tsbuildinfo
 artifacts/
-AGENT_LOG.md
 plans/

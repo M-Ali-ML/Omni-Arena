@@ -1,13 +1,13 @@
 ---
 name: agent-log
-description: Appends a brief entry to the centralized AGENT_LOG.md at the end of every agent run that changes the repo or discovers something. Use after adding, changing, or deleting code or files, fixing or discovering bugs, running research, or learning notable information about the project.
+description: Appends a brief entry to the centralized artifacts/AGENT_LOG.md at the end of every agent run that changes the repo or discovers something. Use after adding, changing, or deleting code or files, fixing or discovering bugs, running research, or learning notable information about the project.
 ---
 
 # Agent Log
 
 ## Purpose
 
-`AGENT_LOG.md` at the repo root is the centralized, chronological record of what every agent did on this codebase. It lets any agent (or human) catch up on recent activity in seconds without reading git history or old conversations.
+`artifacts/AGENT_LOG.md` is the centralized, chronological record of what every agent did on this codebase. It lets any agent (or human) catch up on recent activity in seconds without reading git history or old conversations. It lives under the gitignored, local-only `artifacts/` folder, so it is not committed.
 
 ## When to Log
 
@@ -54,4 +54,4 @@ Rules:
 
 ## Reading the Log
 
-When starting work on this repo, skim the top ~10 entries of `AGENT_LOG.md` to pick up recent changes, open bugs, and gotchas before making changes.
+When starting work on this repo, skim the top ~10 entries of `artifacts/AGENT_LOG.md` to pick up recent changes, open bugs, and gotchas before making changes.
