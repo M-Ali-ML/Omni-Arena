@@ -5,6 +5,11 @@ Format and rules: `.agents/skills/agent-log/SKILL.md`.
 
 ---
 
+## 2026-07-15 14:42 · Cursor Agent · GPT-5.6 Sol
+**Type:** chore, research
+- Added `explain-diff-html` and `build-microworld` teaching skills under `.agents/skills/`.
+- Summarized Geoffrey Litt's understanding workflow in local-only `artifacts/understanding-is-the-new-bottleneck.md`.
+
 ## 2026-07-14 16:40 · Cursor Agent · Fable 5
 **Type:** chore, docs
 - Moved `pre-docs/vision.md` → `artifacts/vision.md` (untracked from git via `git rm --cached`; `artifacts/` is already gitignored) since vision is a personal/local planning doc, not meant to be committed.
