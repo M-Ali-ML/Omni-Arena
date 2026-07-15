@@ -40,22 +40,27 @@ describe("ArenaCore", () => {
       new Resolver({
         a: {
           async *stream() {
-            yield "A1";
+            yield { type: "token" as const, token: "A1" };
             await new Promise((resolve) => setTimeout(resolve, 10));
-            yield "A2";
+            yield { type: "token" as const, token: "A2" };
           },
         },
         b: {
           async *stream() {
             await new Promise((resolve) => setTimeout(resolve, 2));
-            yield "B1";
+            yield { type: "metadata" as const, modelVersion: "b-2026-07" };
+            yield { type: "token" as const, token: "B1" };
+            yield { type: "metadata" as const, outputTokenCount: 7 };
           },
         },
       }),
     );
 
     const events = [];
-    for await (const event of core.stream("prompt", assignment)) {
+    for await (const event of core.stream(
+      [{ role: "user", content: "prompt" }],
+      assignment,
+    )) {
       events.push(event);
     }
 
@@ -64,6 +69,15 @@ describe("ArenaCore", () => {
         .filter((event) => event.type === "token")
         .map((event) => `${event.slot}:${event.token}`),
     ).toEqual(["A:A1", "B:B1", "A:A2"]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "slot_done",
+        slot: "B",
+        modelVersion: "b-2026-07",
+        outputTokenCount: 7,
+        tokenCountSource: "provider",
+      }),
+    );
     expect(events.at(-1)).toEqual({ type: "matchup_done" });
   });
 
@@ -77,14 +91,17 @@ describe("ArenaCore", () => {
         },
         b: {
           async *stream() {
-            yield "still works";
+            yield { type: "token" as const, token: "still works" };
           },
         },
       }),
     );
 
     const events = [];
-    for await (const event of core.stream("prompt", assignment)) {
+    for await (const event of core.stream(
+      [{ role: "user", content: "prompt" }],
+      assignment,
+    )) {
       events.push(event);
     }
 

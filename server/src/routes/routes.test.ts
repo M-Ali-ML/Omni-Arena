@@ -3,14 +3,17 @@ import { createApp } from "../app.js";
 import { ArenaCore } from "../core/arena.js";
 import type {
   ArenaVote,
+  ChatMessage,
   LeaderboardEntry,
   MatchupAssignment,
   MatchupRecord,
   Model,
+  PiiScrubberPort,
   PreferenceRecord,
   PreferenceRepositoryPort,
   ResponseRecord,
 } from "../core/ports.js";
+import { NoopPiiScrubber } from "../privacy/noop.js";
 import { ProviderRegistry } from "../providers/registry.js";
 import { DuplicateVoteError } from "../repo/postgres.js";
 import { MatchupTokenService } from "../token.js";
@@ -58,6 +61,56 @@ class MemoryRepository implements PreferenceRepositoryPort {
       throw new DuplicateVoteError();
     }
     this.preferences.set(preference.matchupId, preference);
+  }
+
+  async getConversationContext(
+    conversationId: string,
+    anonymousSessionId: string | null,
+  ) {
+    const turns = [...this.matchups.values()]
+      .filter((matchup) => matchup.conversation.id === conversationId)
+      .sort(
+        (left, right) =>
+          left.conversation.turnIndex - right.conversation.turnIndex,
+      );
+    if (turns.length === 0) {
+      return { status: "not_found" as const };
+    }
+    if (
+      turns[0]?.conversation.anonymousSessionId !== anonymousSessionId
+    ) {
+      return { status: "forbidden" as const };
+    }
+
+    const messages: ChatMessage[] = [];
+    let parentResponseId: string | null = null;
+    for (const turn of turns) {
+      const preference = this.preferences.get(turn.id);
+      const winner = this.responses.find(
+        (response) =>
+          response.matchupId === turn.id &&
+          response.modelId === preference?.winnerModelId,
+      );
+      if (!winner) {
+        return { status: "not_ready" as const };
+      }
+      messages.push(
+        { role: "user", content: turn.prompt },
+        { role: "assistant", content: winner.content },
+      );
+      parentResponseId = `${turn.id}:${winner.slot}`;
+    }
+    const latest = turns.at(-1);
+    if (!latest || !parentResponseId) {
+      return { status: "not_ready" as const };
+    }
+    return {
+      status: "ready" as const,
+      conversationId,
+      nextTurnIndex: latest.conversation.turnIndex + 1,
+      parentResponseId,
+      messages,
+    };
   }
 
   async getMatchup(matchupId: string) {
@@ -111,20 +164,34 @@ function parseEvents(body: string): Array<Record<string, unknown>> {
     .map((data) => JSON.parse(data) as Record<string, unknown>);
 }
 
-async function setup() {
+async function setup(
+  piiScrubber: PiiScrubberPort = new NoopPiiScrubber(),
+) {
   const repository = new MemoryRepository();
+  const receivedMessages: ChatMessage[][] = [];
   const provider = {
-    async *stream(model: Model) {
-      yield `Answer from ${model.providerModelId}`;
+    async *stream(model: Model, messages: ChatMessage[]) {
+      receivedMessages.push(messages);
+      yield {
+        type: "metadata" as const,
+        modelVersion: `${model.providerModelId}-2026-07`,
+        outputTokenCount: 3,
+      };
+      yield {
+        type: "token" as const,
+        token: `Answer from ${model.providerModelId}`,
+      };
     },
   };
   const app = await createApp({
     core: new ArenaCore(new ProviderRegistry().register("test", provider)),
     matchmaker: { async pick() { return assignment; } },
     repository,
+    piiScrubber,
     tokens: new MatchupTokenService("test-secret-long-enough"),
+    harnessVersion: "test-harness-v1",
   });
-  return { app, repository };
+  return { app, repository, receivedMessages };
 }
 
 describe("arena routes", () => {
@@ -168,6 +235,14 @@ describe("arena routes", () => {
         B: { id: slotB.id, displayName: slotB.displayName },
       });
       expect(repository.responses).toHaveLength(2);
+      expect(repository.responses[0]).toMatchObject({
+        outputTokenCount: 3,
+        tokenCountSource: "provider",
+        modelVersion: "alpha-2026-07",
+      });
+      expect(
+        repository.matchups.get(matchupId)?.harnessVersion,
+      ).toBe("test-harness-v1");
 
       const leaderboard = await app.inject({
         method: "GET",
@@ -186,6 +261,89 @@ describe("arena routes", () => {
         payload: { matchupId, matchupToken, vote: "right" },
       });
       expect(duplicate.statusCode).toBe(409);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("continues only from the latest winning response", async () => {
+    const { app, receivedMessages } = await setup();
+    try {
+      const first = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat",
+        payload: { prompt: "First turn", sessionId: "anon_linear" },
+      });
+      const started = parseEvents(first.body)[0];
+      const conversationId = started?.conversationId as string;
+      expect(started?.turnIndex).toBe(0);
+
+      const premature = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat",
+        payload: {
+          prompt: "Too soon",
+          sessionId: "anon_linear",
+          conversationId,
+        },
+      });
+      expect(premature.statusCode).toBe(409);
+
+      await app.inject({
+        method: "POST",
+        url: "/api/arena/vote",
+        payload: {
+          matchupId: started?.matchupId,
+          matchupToken: started?.matchupToken,
+          vote: "left",
+        },
+      });
+      const followUp = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat",
+        payload: {
+          prompt: "Follow up",
+          sessionId: "anon_linear",
+          conversationId,
+        },
+      });
+      expect(followUp.statusCode).toBe(200);
+      expect(parseEvents(followUp.body)[0]).toMatchObject({
+        conversationId,
+        turnIndex: 1,
+      });
+      expect(receivedMessages.at(-1)).toEqual([
+        { role: "user", content: "First turn" },
+        { role: "assistant", content: "Answer from alpha" },
+        { role: "user", content: "Follow up" },
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("scrubs prompts and responses only at the persistence boundary", async () => {
+    const scrubber: PiiScrubberPort = {
+      async scrub() {
+        return "[scrubbed]";
+      },
+    };
+    const { app, repository, receivedMessages } = await setup(scrubber);
+    try {
+      const chat = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat",
+        payload: { prompt: "Email me at private@example.com" },
+      });
+      expect(chat.statusCode).toBe(200);
+      expect(receivedMessages[0]).toEqual([
+        { role: "user", content: "Email me at private@example.com" },
+      ]);
+      expect([...repository.matchups.values()][0]?.prompt).toBe("[scrubbed]");
+      expect(repository.responses.map((response) => response.content)).toEqual([
+        "[scrubbed]",
+        "[scrubbed]",
+      ]);
     } finally {
       await app.close();
     }

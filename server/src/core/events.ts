@@ -8,6 +8,12 @@ export type ArenaEvent =
       slot: ArenaSlot;
       content: string;
       latencyMs: number;
+      ttftMs: number | null;
+      streamDurationMs: number;
+      outputTokenCount: number;
+      tokenCountSource: "provider" | "estimated";
+      markdownDensity: number;
+      modelVersion: string | null;
       error: string | null;
     }
   | { type: "matchup_done" };
@@ -17,6 +23,8 @@ export type PublicArenaEvent =
       type: "matchup_started";
       matchupId: string;
       matchupToken: string;
+      conversationId: string;
+      turnIndex: number;
       slots: ArenaSlot[];
     }
   | { type: "token"; slot: ArenaSlot; token: string }

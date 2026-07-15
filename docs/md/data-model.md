@@ -16,10 +16,34 @@ The catalog of comparable models. Seeded by `server/src/db/seed.ts`.
 |---|---|---|
 | `id` | UUID PK | |
 | `display_name` | TEXT | Shown only after a vote |
-| `provider` | TEXT | Provider registry key (currently `google`) |
+| `provider` | TEXT | Registry key: `google`, `openai`, `ollama`, `vllm`, or `host-proxy` |
 | `provider_model_id` | TEXT | e.g. `gemini-3.5-flash`; unique with `provider` |
 | `enabled` | BOOLEAN | Only enabled models enter matchmaking |
 | `created_at` | TIMESTAMPTZ | |
+
+### conversations
+
+The linear chat container. `id` is returned in `matchup_started`; an optional
+`anonymous_session_id` prevents a different browser session from continuing
+the conversation.
+
+### turns
+
+Maps each matchup into one ordered conversation turn.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID PK | |
+| `conversation_id` | UUID FK | Cascades on conversation delete |
+| `matchup_id` | UUID FK, UNIQUE | One matchup per turn |
+| `parent_response_id` | UUID FK, UNIQUE, NULL | Null only at turn 0; later turns point to the preceding winning response |
+| `turn_index` | INTEGER | Zero-based; unique per conversation |
+| `prompt` | TEXT | PII-scrubbed before persistence |
+| `created_at` | TIMESTAMPTZ | |
+
+The API derives the next parent from the stored decisive vote. Uniqueness on
+`parent_response_id` and `(conversation_id, turn_index)` prevents concurrent
+follow-ups from creating branches.
 
 ### matchups
 
@@ -32,6 +56,7 @@ One blind head-to-head instantiation per prompt.
 | `model_a_id` / `model_b_id` | UUID FK | The selected pair |
 | `slot_a_model_id` / `slot_b_model_id` | UUID FK | Randomized display assignment |
 | `matchup_token_hash` | TEXT | SHA-256 of the signed matchup token; the token itself is never stored |
+| `harness_version` | TEXT | Version of the prompt/orchestration harness used for this comparison |
 | `created_at` | TIMESTAMPTZ | |
 
 Checks enforce that the pair and the slot assignment are distinct models.
@@ -46,8 +71,14 @@ One row per slot per matchup, written when a slot finishes streaming.
 | `matchup_id` | UUID FK | Cascades on delete; unique with `slot` |
 | `slot` | TEXT | `A` or `B` |
 | `model_id` | UUID FK | |
-| `content` | TEXT | Full generated text |
-| `latency_ms` | INTEGER | Total stream duration for the slot |
+| `content` | TEXT | Full generated text, passed through the configured PII scrubber |
+| `latency_ms` | INTEGER | Backward-compatible total stream duration |
+| `ttft_ms` | INTEGER NULL | Time to first emitted text token; null if no text arrived |
+| `stream_duration_ms` | INTEGER | Total stream duration |
+| `output_token_count` | INTEGER | Provider-reported count when available, otherwise deterministic lexical estimate |
+| `token_count_source` | TEXT | `provider` or `estimated` |
+| `markdown_density` | DOUBLE PRECISION | Markdown marker characters divided by non-whitespace characters, clamped to 0–1 |
+| `model_version` | TEXT NULL | Provider-reported model/checkpoint identity from the stream |
 | `error` | TEXT NULL | Set when the slot failed mid-stream |
 | `created_at` | TIMESTAMPTZ | |
 

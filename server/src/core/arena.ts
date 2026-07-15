@@ -1,9 +1,11 @@
 import type { ArenaEvent, ArenaSlot } from "./events.js";
 import type {
+  ChatMessage,
   MatchupAssignment,
   Model,
   ProviderResolverPort,
 } from "./ports.js";
+import { calculateMarkdownDensity, estimateTokenCount } from "./style.js";
 
 class AsyncEventQueue<T> {
   private values: T[] = [];
@@ -42,7 +44,7 @@ export class ArenaCore {
   constructor(private readonly providers: ProviderResolverPort) {}
 
   async *stream(
-    prompt: string,
+    messages: ChatMessage[],
     assignment: MatchupAssignment,
   ): AsyncGenerator<ArenaEvent> {
     const queue = new AsyncEventQueue<ArenaEvent>();
@@ -52,22 +54,47 @@ export class ArenaCore {
       const startedAt = performance.now();
       let content = "";
       let error: string | null = null;
+      let firstTokenAt: number | null = null;
+      let modelVersion: string | null = null;
+      let providerTokenCount: number | null = null;
 
       try {
         const provider = this.providers.resolve(model.provider);
-        for await (const token of provider.stream(model, prompt)) {
-          content += token;
-          queue.push({ type: "token", slot, token });
+        for await (const chunk of provider.stream(model, messages)) {
+          if (chunk.type === "metadata") {
+            modelVersion = chunk.modelVersion ?? modelVersion;
+            providerTokenCount =
+              chunk.outputTokenCount ?? providerTokenCount;
+            continue;
+          }
+
+          if (firstTokenAt === null) {
+            firstTokenAt = performance.now();
+          }
+          content += chunk.token;
+          queue.push({ type: "token", slot, token: chunk.token });
         }
       } catch (caught) {
         error = caught instanceof Error ? caught.message : "Model stream failed";
         queue.push({ type: "slot_error", slot, message: error });
       } finally {
+        const finishedAt = performance.now();
+        const streamDurationMs = Math.round(finishedAt - startedAt);
+        const outputTokenCount =
+          providerTokenCount ?? estimateTokenCount(content);
         queue.push({
           type: "slot_done",
           slot,
           content,
-          latencyMs: Math.round(performance.now() - startedAt),
+          latencyMs: streamDurationMs,
+          ttftMs:
+            firstTokenAt === null ? null : Math.round(firstTokenAt - startedAt),
+          streamDurationMs,
+          outputTokenCount,
+          tokenCountSource:
+            providerTokenCount === null ? "estimated" : "provider",
+          markdownDensity: calculateMarkdownDensity(content),
+          modelVersion,
           error,
         });
         activeSlots -= 1;

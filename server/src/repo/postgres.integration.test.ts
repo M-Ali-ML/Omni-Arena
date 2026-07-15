@@ -3,8 +3,13 @@ import { newDb } from "pg-mem";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
 import { ArenaCore } from "../core/arena.js";
-import type { MatchupAssignment, Model } from "../core/ports.js";
+import type {
+  ChatMessage,
+  MatchupAssignment,
+  Model,
+} from "../core/ports.js";
 import { runMigrations } from "../db/migrations.js";
+import { NoopPiiScrubber } from "../privacy/noop.js";
 import { ProviderRegistry } from "../providers/registry.js";
 import { PostgresRepository } from "./postgres.js";
 import { MatchupTokenService } from "../token.js";
@@ -53,16 +58,28 @@ describe("Postgres-backed arena flow", () => {
       slotA,
       slotB,
     };
+    const receivedMessages: ChatMessage[][] = [];
     const provider = {
-      async *stream(model: Model) {
-        yield `${model.displayName} answer`;
+      async *stream(model: Model, messages: ChatMessage[]) {
+        receivedMessages.push(messages);
+        yield {
+          type: "metadata" as const,
+          modelVersion: `${model.providerModelId}-revision`,
+          outputTokenCount: 2,
+        };
+        yield {
+          type: "token" as const,
+          token: `${model.displayName} answer`,
+        };
       },
     };
     const app = await createApp({
       core: new ArenaCore(new ProviderRegistry().register("test", provider)),
       matchmaker: { async pick() { return assignment; } },
       repository,
+      piiScrubber: new NoopPiiScrubber(),
       tokens: new MatchupTokenService("integration-secret-long-enough"),
+      harnessVersion: "integration-v1",
     });
 
     try {
@@ -75,11 +92,25 @@ describe("Postgres-backed arena flow", () => {
       const started = parseStarted(chat.body);
 
       const responseRows = await pool.query(
-        "SELECT slot, content FROM responses ORDER BY slot",
+        `SELECT
+          slot, content, output_token_count, token_count_source, model_version
+         FROM responses ORDER BY slot`,
       );
       expect(responseRows.rows).toEqual([
-        { slot: "A", content: "Alpha answer" },
-        { slot: "B", content: "Beta answer" },
+        {
+          slot: "A",
+          content: "Alpha answer",
+          output_token_count: 2,
+          token_count_source: "provider",
+          model_version: "alpha-revision",
+        },
+        {
+          slot: "B",
+          content: "Beta answer",
+          output_token_count: 2,
+          token_count_source: "provider",
+          model_version: "beta-revision",
+        },
       ]);
 
       const vote = await app.inject({
@@ -92,6 +123,47 @@ describe("Postgres-backed arena flow", () => {
         },
       });
       expect(vote.statusCode).toBe(200);
+
+      const followUp = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat",
+        payload: {
+          prompt: "Go deeper",
+          conversationId: (
+            JSON.parse(
+              chat.body
+                .split(/\r?\n/u)
+                .find((line) => line.startsWith("data:"))
+                ?.slice(5)
+                .trim() ?? "{}",
+            ) as { conversationId?: string }
+          ).conversationId,
+        },
+      });
+      expect(followUp.statusCode).toBe(200);
+      expect(receivedMessages.at(-1)).toEqual([
+        { role: "user", content: "Compare these" },
+        { role: "assistant", content: "Alpha answer" },
+        { role: "user", content: "Go deeper" },
+      ]);
+      const turns = await pool.query(
+        `SELECT t.turn_index, t.parent_response_id, mt.harness_version
+         FROM turns t
+         JOIN matchups mt ON mt.id = t.matchup_id
+         ORDER BY t.turn_index`,
+      );
+      expect(turns.rows).toEqual([
+        {
+          turn_index: 0,
+          parent_response_id: null,
+          harness_version: "integration-v1",
+        },
+        {
+          turn_index: 1,
+          parent_response_id: expect.any(String),
+          harness_version: "integration-v1",
+        },
+      ]);
 
       const leaderboard = await app.inject({
         method: "GET",

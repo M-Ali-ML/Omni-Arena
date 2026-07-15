@@ -14,26 +14,40 @@ Request:
 ```json
 {
   "prompt": "Explain JWTs in simple terms",
-  "sessionId": "anon_123"
+  "sessionId": "anon_123",
+  "conversationId": "optional UUID from an earlier matchup_started event"
 }
 ```
 
 - `prompt` — required, 1–20,000 characters after trimming.
 - `sessionId` — optional anonymous session identifier (1–200 characters).
+- `conversationId` — optional. Omit it to start a conversation. Supply the
+  previous value after a decisive `left`/`right` vote to continue from that
+  winning response.
 
-Errors: `400` with `{ "error": "Invalid request", "details": ... }` on
-validation failure.
+The server loads prior prompts and only the winning response for each completed
+turn. Client-provided message history is never accepted. A tie, both-bad, skip,
+or unvoted matchup has no single winning response and cannot be continued.
 
 Response: `200` with `content-type: text/event-stream`. Each event has an
 `event:` name and a JSON `data:` payload that repeats the type:
 
 | Event | Payload | Notes |
 |---|---|---|
-| `matchup_started` | `{ type, matchupId, matchupToken, slots: ["A", "B"] }` | First event. No model identities. |
+| `matchup_started` | `{ type, matchupId, matchupToken, conversationId, turnIndex, slots: ["A", "B"] }` | First event. No model identities. Save `conversationId` for a follow-up. |
 | `token` | `{ type, slot, token }` | One token for slot `A` or `B`, interleaved. |
 | `slot_error` | `{ type, slot, message }` | That slot failed; the other keeps streaming. |
 | `slot_done` | `{ type, slot }` | Content and latency are stripped from the public event. |
 | `matchup_done` | `{ type }` | Both slots finished; stream closes. |
+
+Errors before streaming:
+
+| Status | Meaning |
+|---|---|
+| `400` | Invalid request body |
+| `403` | `sessionId` does not own the requested conversation |
+| `404` | Unknown `conversationId` |
+| `409` | The prior turn has no decisive vote, or another request already advanced the conversation |
 
 ## POST /api/arena/vote
 

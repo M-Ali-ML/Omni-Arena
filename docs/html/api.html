@@ -36,17 +36,26 @@
   <p class="lede">Base URL <span class="mono">http://localhost:3001</span>. JSON bodies. The web dev server proxies <span class="mono">/api</span> and <span class="mono">/health</span>.</p>
 
   <h2><span class="method">POST</span><span class="mono">/api/arena/chat</span></h2>
-  <p>Starts a blind matchup, streams both responses over one SSE connection.</p>
-<pre><code>{ "prompt": "Explain JWTs in simple terms", "sessionId": "anon_123" }</code></pre>
+  <p>Starts a blind matchup, or continues one from its latest winning response, and streams both responses over one SSE connection.</p>
+<pre><code>{ "prompt": "Explain JWTs in simple terms",
+  "sessionId": "anon_123",
+  "conversationId": "optional UUID from matchup_started" }</code></pre>
   <table>
     <tr><th>SSE event</th><th>Payload</th><th>Notes</th></tr>
-    <tr><td class="mono">matchup_started</td><td class="mono">{ matchupId, matchupToken, slots }</td><td>First event. No model identities.</td></tr>
+    <tr><td class="mono">matchup_started</td><td class="mono">{ matchupId, matchupToken, conversationId, turnIndex, slots }</td><td>First event. Save the conversation ID; no model identities.</td></tr>
     <tr><td class="mono">token</td><td class="mono">{ slot, token }</td><td>Interleaved tokens for A and B</td></tr>
     <tr><td class="mono">slot_error</td><td class="mono">{ slot, message }</td><td>Other slot keeps streaming</td></tr>
     <tr><td class="mono">slot_done</td><td class="mono">{ slot }</td><td>Content/latency stripped from public event</td></tr>
     <tr><td class="mono">matchup_done</td><td class="mono">{ }</td><td>Stream closes</td></tr>
   </table>
-  <div class="callout"><span class="mono">prompt</span> required, 1–20,000 chars. <span class="mono">400</span> on validation failure.</div>
+  <div class="callout"><strong>Linear history:</strong> omit <span class="mono">conversationId</span> at turn 0. After a decisive <span class="mono">left</span>/<span class="mono">right</span> vote, resend it for a follow-up. The server reconstructs history from stored winners; ties, both-bad, skips, and unvoted turns cannot continue.</div>
+  <table>
+    <tr><th>Status</th><th>Pre-stream error</th></tr>
+    <tr><td class="mono">400</td><td>Invalid body</td></tr>
+    <tr><td class="mono">403</td><td>Conversation belongs to a different anonymous session</td></tr>
+    <tr><td class="mono">404</td><td>Unknown conversation</td></tr>
+    <tr><td class="mono">409</td><td>No decisive winner yet, or the conversation already advanced</td></tr>
+  </table>
 
   <h2><span class="method">POST</span><span class="mono">/api/arena/vote</span></h2>
   <p>Records one vote, then reveals model identities.</p>

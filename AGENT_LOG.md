@@ -10,6 +10,13 @@ Format and rules: `.agents/skills/agent-log/SKILL.md`.
 - Added `explain-diff-html` and `build-microworld` teaching skills under `.agents/skills/`.
 - Summarized Geoffrey Litt's understanding workflow in local-only `artifacts/understanding-is-the-new-bottleneck.md`.
 
+## 2026-07-14 17:10 · Cursor Agent · GPT-5.6 Sol
+**Type:** feat, docs
+- Phase 1 linear history: conversations/turns persist server-derived winning-response chains; ties/skips end a branch and concurrent follow-ups cannot fork it.
+- Captured TTFT, stream duration, token count/source, Markdown density, provider model version, and matchup `harness_version` for future rating passes.
+- Added OpenAI-compatible, Ollama/vLLM, and host-proxy providers plus a no-op `PiiScrubberPort` at the persistence boundary.
+- Updated the React hook/demo, migration `002_phase_one.sql`, paired docs, and provider/route/repository tests; full test, typecheck, and build pass.
+
 ## 2026-07-14 16:40 · Cursor Agent · Fable 5
 **Type:** chore, docs
 - Moved `pre-docs/vision.md` → `artifacts/vision.md` (untracked from git via `git rm --cached`; `artifacts/` is already gitignored) since vision is a personal/local planning doc, not meant to be committed.

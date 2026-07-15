@@ -1,9 +1,9 @@
 # OmniArena
 
 OmniArena is a small, self-hosted service for blind side-by-side LLM
-comparisons. The MVP streams two anonymous answers over one SSE connection,
-records a vote, reveals the model identities, and updates a win-rate
-leaderboard.
+comparisons. It streams two anonymous answers over one SSE connection, records
+a vote, continues multi-turn chats from the winning response, and captures the
+metadata needed for future style-controlled ratings.
 
 ## Run locally
 
@@ -22,9 +22,9 @@ npm run dev
 Open [http://localhost:5173](http://localhost:5173). The API listens on
 `http://localhost:3001`.
 
-The seed enables Gemini 3.1 Flash-Lite, Gemini 3 Flash, and Gemini 3.5 Flash.
-Set `GOOGLE_API_KEY` in `.env` before starting the server. To change the arena
-lineup, edit `server/src/db/seed.ts` and run the seed command again.
+The default seed enables three Gemini models, so set `GOOGLE_API_KEY` before
+starting it. OpenAI-compatible, Ollama, vLLM, and host-proxy providers are also
+available; edit `server/src/db/seed.ts` to use them and run the seed again.
 
 ## Commands
 

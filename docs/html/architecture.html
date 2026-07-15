@@ -54,7 +54,7 @@
 <main>
   <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a></div>
   <h1>Architecture</h1>
-  <p class="lede">The MVP as implemented: blind dual-model SSE streaming, signed votes, win-rate leaderboard. Target end-state lives in <span class="mono">pre-docs/</span>.</p>
+  <p class="lede">Phase 1 as implemented: blind multi-turn SSE comparisons, signed votes, style/version capture, multiple providers, and a PII-scrubbing boundary.</p>
 
   <h2>System overview</h2>
   <div class="flow">
@@ -70,19 +70,20 @@
     </div>
     <div class="arrow">▼</div>
     <div class="row">
-      <div class="node dim"><div class="t">PostgreSQL</div><div class="d">models · matchups · responses · preferences</div></div>
-      <div class="node dim"><div class="t">Google Gemini API</div><div class="d">only provider wired today</div></div>
+      <div class="node dim"><div class="t">PostgreSQL</div><div class="d">conversations · turns · matchups · responses · preferences</div></div>
+      <div class="node dim"><div class="t">Model endpoints</div><div class="d">Google · OpenAI · Ollama · vLLM · host proxy</div></div>
     </div>
   </div>
 
   <h2>Ports (hexagonal boundaries)</h2>
   <table>
-    <tr><th>Port</th><th>MVP implementation</th><th>Future replacement</th></tr>
-    <tr><td class="mono">ModelProviderPort</td><td>GoogleModelProvider</td><td>OpenAI, Ollama/vLLM, host-proxy mode</td></tr>
+    <tr><th>Port</th><th>Phase 1 implementation</th><th>Future replacement</th></tr>
+    <tr><td class="mono">ModelProviderPort</td><td>Google, OpenAI-compatible, Ollama, host proxy</td><td>additional providers</td></tr>
     <tr><td class="mono">ProviderResolverPort</td><td>ProviderRegistry</td><td>unchanged</td></tr>
     <tr><td class="mono">MatchmakingPort</td><td>RandomMatchmaker</td><td>smart sampling</td></tr>
     <tr><td class="mono">PreferenceRepositoryPort</td><td>PostgresRepository</td><td>unchanged</td></tr>
     <tr><td class="mono">LeaderboardPort</td><td>win-rate SQL</td><td>Python Bradley-Terry worker</td></tr>
+    <tr><td class="mono">PiiScrubberPort</td><td>NoopPiiScrubber</td><td>real PII redaction</td></tr>
   </table>
   <div class="callout">Defined in <span class="mono">server/src/core/ports.ts</span>. Tests inject in-memory implementations behind the same interfaces.</div>
 
@@ -94,7 +95,25 @@
     <span class="chip">slot_done</span>
     <span class="chip">matchup_done</span>
   </div>
-  <div class="callout">Public <span class="mono">slot_done</span> events strip content and latency so model identities can't be inferred pre-vote.</div>
+  <div class="callout">Internal completion events capture TTFT, duration, provider/estimated tokens, Markdown density, and provider-reported model version. Public <span class="mono">slot_done</span> strips them; every matchup stores <span class="mono">HARNESS_VERSION</span>.</div>
+
+  <h2>Linear history</h2>
+  <div class="flow">
+    <div class="row">
+      <div class="node"><div class="t">Turn 0</div><div class="d">prompt → A/B → decisive vote</div></div>
+      <div class="node"><div class="t">Winning response</div><div class="d">server derives parent; client history ignored</div></div>
+      <div class="node"><div class="t">Turn N</div><div class="d">prior winners + next prompt → new A/B</div></div>
+    </div>
+  </div>
+  <div class="callout">Unique <span class="mono">parent_response_id</span> and <span class="mono">(conversation_id, turn_index)</span> prevent branching. Session IDs gate ownership. Ties, both-bad, skips, and unvoted turns end the branch.</div>
+
+  <h2>Provider and privacy modes</h2>
+  <table>
+    <tr><th>Mode</th><th>Behavior</th></tr>
+    <tr><td>Direct custody</td><td>Google, OpenAI-compatible, or Ollama adapters call providers with OmniArena-held configuration; vLLM reuses OpenAI compatibility.</td></tr>
+    <tr><td>Host custody</td><td>HostProxyModelProvider calls the host's OpenAI-compatible proxy; upstream keys never enter OmniArena.</td></tr>
+    <tr><td>Persistence privacy</td><td>Prompts and responses pass through <span class="mono">PiiScrubberPort</span>; Phase 1's no-op establishes the boundary but does not redact yet.</td></tr>
+  </table>
 
   <h2>Blind voting integrity</h2>
   <table>
@@ -106,8 +125,8 @@
   </table>
 
   <details>
-    <summary>Intentionally not built yet (MVP non-goals)</summary>
-    <p>Protocol adapters (Vercel AI SDK, AG-UI/A2UI, OpenAI SSE), WebSocket control plane, Bradley-Terry rating worker, style control, multi-turn history, smart matchmaking, PII scrubbing, published SDK package.</p>
+    <summary>Intentionally not built yet</summary>
+    <p>Protocol adapters (Vercel AI SDK, AG-UI/A2UI, OpenAI SSE), WebSocket control plane, Bradley-Terry rating worker, style-controlled fitting, smart matchmaking, real PII redaction, and the published SDK package.</p>
   </details>
 </main>
 </body>

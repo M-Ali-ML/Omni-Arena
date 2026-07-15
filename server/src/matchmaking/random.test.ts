@@ -18,6 +18,7 @@ function repoWith(models: Model[]): PreferenceRepositoryPort {
     createMatchup: async () => {},
     saveResponse: async () => {},
     recordPreference: async () => {},
+    getConversationContext: async () => ({ status: "not_found" }),
     getMatchup: async () => null,
   };
 }

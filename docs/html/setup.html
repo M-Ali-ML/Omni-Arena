@@ -34,7 +34,7 @@
   <p class="lede">Node.js 20+, npm, Docker. One Postgres container, two npm workspaces.</p>
 
   <h2>Quick start</h2>
-<pre><code>cp .env.example .env      # then set GOOGLE_API_KEY
+<pre><code>cp .env.example .env      # configure the seeded provider
 npm install
 docker compose up -d      # Postgres 16
 npm run db:migrate --workspace server
@@ -44,13 +44,21 @@ npm run dev               # server :3001 · web :5173</code></pre>
   <h2>Environment variables</h2>
   <table>
     <tr><th>Variable</th><th>Required</th><th>Purpose</th></tr>
-    <tr><td class="mono">GOOGLE_API_KEY</td><td>yes</td><td>Gemini API key (aistudio.google.com/apikey)</td></tr>
+    <tr><td class="mono">GOOGLE_API_KEY</td><td>Google models</td><td>Gemini API key (aistudio.google.com/apikey)</td></tr>
+    <tr><td class="mono">OPENAI_API_KEY / OPENAI_BASE_URL</td><td>OpenAI models</td><td>OpenAI bearer token; optional compatible base URL</td></tr>
+    <tr><td class="mono">OLLAMA_BASE_URL</td><td>no</td><td>Defaults to <span class="mono">http://localhost:11434</span>; provider is always registered</td></tr>
+    <tr><td class="mono">VLLM_BASE_URL / VLLM_API_KEY</td><td>vLLM models</td><td>OpenAI-compatible endpoint + optional bearer token</td></tr>
+    <tr><td class="mono">HOST_PROXY_URL / HOST_PROXY_TOKEN</td><td>host-proxy models</td><td>Host-owned OpenAI-compatible endpoint + optional proxy auth</td></tr>
+    <tr><td class="mono">HARNESS_VERSION</td><td>no (v1)</td><td>Version label persisted on every matchup</td></tr>
     <tr><td class="mono">DATABASE_URL</td><td>yes</td><td>Postgres connection; compose default <span class="mono">postgres://omni_arena:omni_arena@localhost:5432/omni_arena</span></td></tr>
     <tr><td class="mono">MATCHUP_TOKEN_SECRET</td><td>production</td><td>HMAC secret, min 16 chars; insecure dev default otherwise</td></tr>
     <tr><td class="mono">PORT</td><td>no (3001)</td><td>API port</td></tr>
     <tr><td class="mono">WEB_ORIGIN</td><td>no (:5173)</td><td>Allowed CORS origin</td></tr>
   </table>
-  <div class="callout">The root <span class="mono">.env</span> is loaded regardless of workspace cwd via <span class="mono">server/src/env.ts</span>.</div>
+  <div class="callout">The default seed contains Google models, so it needs <span class="mono">GOOGLE_API_KEY</span>. Change <span class="mono">provider</span> + <span class="mono">provider_model_id</span> in the seed for OpenAI, Ollama, vLLM, or host proxy. The root <span class="mono">.env</span> loads regardless of workspace cwd.</div>
+
+  <h2>Host-proxy contract</h2>
+  <div class="callout">Expose OpenAI-compatible streaming chat completions at <span class="mono">&lt;HOST_PROXY_URL&gt;/chat/completions</span>. OmniArena sends <span class="mono">model</span>, the server-derived linear <span class="mono">messages</span>, <span class="mono">stream: true</span>, and <span class="mono">x-omni-arena-proxy: 1</span>. The host keeps the upstream provider credential.</div>
 
   <h2>Database</h2>
   <table>

@@ -7,7 +7,7 @@ Related: [Architecture](architecture.md) · [API](api.md) · [Data model](data-m
 ## Quick start
 
 ```bash
-cp .env.example .env      # then set GOOGLE_API_KEY
+cp .env.example .env      # configure the provider used by the seed lineup
 npm install
 docker compose up -d      # Postgres 16
 npm run db:migrate --workspace server
@@ -24,11 +24,29 @@ Loaded from the repo-root `.env` regardless of workspace working directory
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `GOOGLE_API_KEY` | yes | — | Gemini API key ([create one](https://aistudio.google.com/apikey)) |
+| `GOOGLE_API_KEY` | for `google` models | — | Gemini API key ([create one](https://aistudio.google.com/apikey)) |
+| `OPENAI_API_KEY` | for OpenAI | — | Bearer token for the OpenAI-compatible provider |
+| `OPENAI_BASE_URL` | no | `https://api.openai.com/v1` when a key is set | Alternate OpenAI-compatible base URL |
+| `OLLAMA_BASE_URL` | no | `http://localhost:11434` | Ollama server; the `ollama` provider is always registered |
+| `VLLM_BASE_URL` | for `vllm` models | — | vLLM OpenAI-compatible base URL |
+| `VLLM_API_KEY` | no | — | Optional bearer token for vLLM |
+| `HOST_PROXY_URL` | for `host-proxy` models | — | Host-owned OpenAI-compatible base URL |
+| `HOST_PROXY_TOKEN` | no | — | Optional bearer token used only to authenticate to the host proxy |
+| `HARNESS_VERSION` | no | `v1` | Version label persisted on every matchup |
 | `DATABASE_URL` | yes | — | Postgres connection string; docker-compose default is `postgres://omni_arena:omni_arena@localhost:5432/omni_arena` |
 | `MATCHUP_TOKEN_SECRET` | production | insecure dev default | HMAC secret for matchup tokens, minimum 16 characters |
 | `PORT` | no | `3001` | API port |
 | `WEB_ORIGIN` | no | `http://localhost:5173` | Allowed CORS origin |
+
+The default seed lineup contains Google models, so the unmodified seed still
+needs `GOOGLE_API_KEY`. To use OpenAI, Ollama, vLLM, or host-proxy models, set
+their `provider` and `provider_model_id` entries in `server/src/db/seed.ts` and
+re-run the seed.
+
+The host-proxy endpoint must expose OpenAI-compatible streaming chat
+completions at `<HOST_PROXY_URL>/chat/completions`. OmniArena sends
+`model`, the full linear `messages` array, `stream: true`, and the
+`x-omni-arena-proxy: 1` header. The host keeps the upstream provider key.
 
 ## Database
 

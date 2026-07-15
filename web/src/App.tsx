@@ -24,8 +24,9 @@ export default function App() {
   const submitPrompt = (event: FormEvent): void => {
     event.preventDefault();
     const trimmedPrompt = prompt.trim();
-    if (trimmedPrompt && !arena.isStreaming) {
+    if (trimmedPrompt && !arena.isStreaming && !arena.canVote) {
       void arena.sendPrompt(trimmedPrompt);
+      setPrompt("");
     }
   };
 
@@ -57,15 +58,30 @@ export default function App() {
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
           placeholder="Explain a difficult idea in simple terms…"
-          disabled={arena.isStreaming}
+          disabled={arena.isStreaming || arena.canVote}
         />
         <button
           className="primary"
           type="submit"
-          disabled={!prompt.trim() || arena.isStreaming}
+          disabled={!prompt.trim() || arena.isStreaming || arena.canVote}
         >
-          {arena.isStreaming ? "Models are responding…" : "Start comparison"}
+          {arena.isStreaming
+            ? "Models are responding…"
+            : arena.conversationId
+              ? "Continue comparison"
+              : "Start comparison"}
         </button>
+        {arena.conversationId && !arena.isStreaming && (
+          <button
+            type="button"
+            onClick={() => {
+              arena.resetConversation();
+              setPrompt("");
+            }}
+          >
+            New conversation
+          </button>
+        )}
       </form>
 
       {arena.error && <p className="error-banner">{arena.error}</p>}
@@ -115,7 +131,12 @@ export default function App() {
           ))}
         </div>
         {arena.revealedModels && (
-          <p className="accepted">Vote recorded. Model identities revealed.</p>
+          <p className="accepted">
+            Vote recorded.{" "}
+            {arena.conversationId
+              ? "Your next prompt will continue from the winning response."
+              : "This result has no single winner, so the next prompt starts a new conversation."}
+          </p>
         )}
       </section>
 

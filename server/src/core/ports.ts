@@ -1,5 +1,18 @@
 import type { ArenaSlot } from "./events.js";
 
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export type ModelStreamChunk =
+  | { type: "token"; token: string }
+  | {
+      type: "metadata";
+      modelVersion?: string;
+      outputTokenCount?: number;
+    };
+
 export type ArenaVote =
   | "left"
   | "right"
@@ -16,7 +29,7 @@ export interface Model {
 }
 
 export interface ModelProviderPort {
-  stream(model: Model, prompt: string): AsyncIterable<string>;
+  stream(model: Model, messages: ChatMessage[]): AsyncIterable<ModelStreamChunk>;
 }
 
 export interface ProviderResolverPort {
@@ -42,6 +55,14 @@ export interface MatchupRecord {
   slotAModelId: string;
   slotBModelId: string;
   matchupTokenHash: string;
+  harnessVersion: string;
+  conversation: {
+    id: string;
+    turnId: string;
+    turnIndex: number;
+    parentResponseId: string | null;
+    anonymousSessionId: string | null;
+  };
 }
 
 export interface ResponseRecord {
@@ -50,6 +71,12 @@ export interface ResponseRecord {
   modelId: string;
   content: string;
   latencyMs: number;
+  ttftMs: number | null;
+  streamDurationMs: number;
+  outputTokenCount: number;
+  tokenCountSource: "provider" | "estimated";
+  markdownDensity: number;
+  modelVersion: string | null;
   error: string | null;
 }
 
@@ -66,6 +93,21 @@ export interface PreferenceRepositoryPort {
   createMatchup(matchup: MatchupRecord): Promise<void>;
   saveResponse(response: ResponseRecord): Promise<void>;
   recordPreference(preference: PreferenceRecord): Promise<void>;
+  getConversationContext(
+    conversationId: string,
+    anonymousSessionId: string | null,
+  ): Promise<
+    | {
+        status: "ready";
+        conversationId: string;
+        nextTurnIndex: number;
+        parentResponseId: string;
+        messages: ChatMessage[];
+      }
+    | { status: "not_found" }
+    | { status: "forbidden" }
+    | { status: "not_ready" }
+  >;
   getMatchup(matchupId: string): Promise<{
     id: string;
     matchupTokenHash: string;
@@ -87,4 +129,8 @@ export interface LeaderboardEntry {
 
 export interface LeaderboardPort {
   getLeaderboard(): Promise<LeaderboardEntry[]>;
+}
+
+export interface PiiScrubberPort {
+  scrub(content: string): Promise<string>;
 }

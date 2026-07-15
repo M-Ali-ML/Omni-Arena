@@ -41,7 +41,13 @@ function mockChatFetch(events: SseEvent[]): ReturnType<typeof vi.fn> {
 }
 
 const streamedMatchup: SseEvent[] = [
-  { type: "matchup_started", matchupId: "m1", matchupToken: "t1" },
+  {
+    type: "matchup_started",
+    matchupId: "m1",
+    matchupToken: "t1",
+    conversationId: "c1",
+    turnIndex: 0,
+  },
   { type: "token", slot: "A", token: "Hello" },
   { type: "token", slot: "B", token: "Hi" },
   { type: "token", slot: "A", token: " there" },
@@ -78,7 +84,13 @@ describe("useArenaChat", () => {
     vi.stubGlobal(
       "fetch",
       mockChatFetch([
-        { type: "matchup_started", matchupId: "m1", matchupToken: "t1" },
+        {
+          type: "matchup_started",
+          matchupId: "m1",
+          matchupToken: "t1",
+          conversationId: "c1",
+          turnIndex: 0,
+        },
         { type: "token", slot: "A", token: "Fine" },
         { type: "slot_error", slot: "B", message: "Provider exploded" },
         { type: "slot_done", slot: "A" },
@@ -128,6 +140,57 @@ describe("useArenaChat", () => {
       expect(result.current.revealedModels).toEqual(revealed);
     });
     expect(result.current.canVote).toBe(false);
+  });
+
+  it("continues decisive votes in the same conversation", async () => {
+    const followUpEvents: SseEvent[] = [
+      {
+        type: "matchup_started",
+        matchupId: "m2",
+        matchupToken: "t2",
+        conversationId: "c1",
+        turnIndex: 1,
+      },
+      { type: "matchup_done" },
+    ];
+    let chatCalls = 0;
+    const fetchMock = vi.fn(
+      async (url: RequestInfo | URL, _init?: RequestInit) => {
+        if (String(url).endsWith("/vote")) {
+          return Response.json({
+            accepted: true,
+            models: {
+              A: { id: "model_1", displayName: "Alpha" },
+              B: { id: "model_2", displayName: "Beta" },
+            },
+          });
+        }
+        chatCalls += 1;
+        return new Response(
+          sseBody(chatCalls === 1 ? streamedMatchup : followUpEvents),
+          { status: 200 },
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useArenaChat());
+
+    await act(() => result.current.sendPrompt("First"));
+    await act(() => result.current.vote("left"));
+    await act(() => result.current.sendPrompt("Second"));
+
+    const chatRequests = fetchMock.mock.calls.filter(([url]) =>
+      String(url).endsWith("/chat"),
+    );
+    const secondRequest = chatRequests[1]?.[1];
+    if (!secondRequest) {
+      throw new Error("Missing follow-up request");
+    }
+    expect(JSON.parse(String(secondRequest.body))).toMatchObject({
+      prompt: "Second",
+      conversationId: "c1",
+    });
+    expect(result.current.conversationId).toBe("c1");
   });
 
   it("surfaces vote rejection as an error without revealing models", async () => {

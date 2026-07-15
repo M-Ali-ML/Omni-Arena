@@ -28,6 +28,8 @@ interface StreamEvent {
     | "matchup_done";
   matchupId?: string;
   matchupToken?: string;
+  conversationId?: string;
+  turnIndex?: number;
   slot?: ArenaSlot;
   token?: string;
   message?: string;
@@ -57,15 +59,27 @@ export function useArenaChat() {
   >();
   const [error, setError] = useState<string | null>(null);
   const [canVote, setCanVote] = useState(false);
+  const [conversationId, setConversationId] = useState<string>();
   const matchup = useRef<{ id: string; token: string } | null>(null);
+  const conversation = useRef<{ id: string; turnIndex: number } | null>(null);
   const currentRequest = useRef<AbortController | null>(null);
 
   const handleEvent = useCallback((event: StreamEvent) => {
     if (event.type === "matchup_started") {
-      if (!event.matchupId || !event.matchupToken) {
+      if (
+        !event.matchupId ||
+        !event.matchupToken ||
+        !event.conversationId ||
+        event.turnIndex === undefined
+      ) {
         throw new Error("Server returned an invalid matchup");
       }
       matchup.current = { id: event.matchupId, token: event.matchupToken };
+      conversation.current = {
+        id: event.conversationId,
+        turnIndex: event.turnIndex,
+      };
+      setConversationId(event.conversationId);
       setCanVote(true);
       setSlots((current) => ({
         A: { ...current.A, status: "streaming" },
@@ -127,7 +141,11 @@ export function useArenaChat() {
         const response = await fetch("/api/arena/chat", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ prompt, sessionId: getSessionId() }),
+          body: JSON.stringify({
+            prompt,
+            sessionId: getSessionId(),
+            conversationId: conversation.current?.id,
+          }),
           signal: controller.signal,
         });
         if (!response.ok || !response.body) {
@@ -198,15 +216,37 @@ export function useArenaChat() {
     }
     setRevealedModels(payload.models);
     setCanVote(false);
+    if (
+      selectedVote !== "left" &&
+      selectedVote !== "right"
+    ) {
+      conversation.current = null;
+      setConversationId(undefined);
+    }
+  }, []);
+
+  const resetConversation = useCallback((): void => {
+    currentRequest.current?.abort();
+    currentRequest.current = null;
+    matchup.current = null;
+    conversation.current = null;
+    setConversationId(undefined);
+    setSlots(emptySlots());
+    setRevealedModels(undefined);
+    setCanVote(false);
+    setIsStreaming(false);
+    setError(null);
   }, []);
 
   return {
     sendPrompt,
     vote,
+    resetConversation,
     slots,
     isStreaming,
     revealedModels,
     canVote,
+    conversationId,
     error,
   };
 }
