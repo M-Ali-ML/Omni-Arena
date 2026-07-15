@@ -60,10 +60,20 @@ Use this structure for the chat answer and for any saved file:
 [Linked list, with dates]
 ```
 
-## Saving reports
+## Writing the report (do this when done)
 
-When the user asks to save (or accepts an offer to save), write under
-`pre-docs/research/` as `YYYY-MM-DD-<short-slug>.md`.
+When you finish substantial research, **write the report file** — do not stop at
+a chat answer or a mere offer. Save it under `artifacts/research/` as
+`YYYY-MM-DD-<short-slug>.md`, using the Report Format skeleton above.
+
+- `artifacts/` is git-ignored, so reports persist locally without cluttering the
+  repo history — write there by default, no need to ask first.
+- If the user explicitly wants the report tracked in git, save it somewhere
+  outside `artifacts/` (e.g. `pre-docs/research/`) and tell them it will be
+  committed.
+- After writing, tell the user the path and give a one-line summary. For trivial
+  or exploratory questions that don't warrant a file, just answer in chat.
+- Cross-link related reports in the same directory when relevant.
 
 **Saved reports must be a concise ≤5-minute read** (~800–1,000 words max;
 prefer under ~900). Enforce that by:
@@ -78,11 +88,11 @@ prefer under ~900). Enforce that by:
 - Prefer tight tables and bullets over prose paragraphs.
 
 If the chat draft is longer, **compress on save** — do not dump the full
-conversation writeup into `pre-docs/research/`.
+conversation writeup into `artifacts/research/`.
 
 ## Quality Bar
 
 - Every factual claim carries a source link.
 - Clearly separate **fact** (sourced), **inference** (reasoned from facts), and **opinion** (judgment call).
 - Include negative findings — "I found no evidence of demand for X" is a valid and valuable result.
-- If the research is substantial, offer to save it under `pre-docs/research/` so it persists beyond the conversation. Reminder: the saved file must meet the ≤5-minute read rule above.
+- If the research is substantial, **write** the report under `artifacts/research/` (see "Writing the report") so it persists beyond the conversation. Reminder: the saved file must meet the ≤5-minute read rule above.
