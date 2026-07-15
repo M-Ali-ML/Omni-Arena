@@ -38,7 +38,7 @@ Maps each matchup into one ordered conversation turn.
 | `matchup_id` | UUID FK, UNIQUE | One matchup per turn |
 | `parent_response_id` | UUID FK, UNIQUE, NULL | Null only at turn 0; later turns point to the preceding winning response |
 | `turn_index` | INTEGER | Zero-based; unique per conversation |
-| `prompt` | TEXT | PII-scrubbed before persistence |
+| `prompt` | TEXT | Persisted as received |
 | `created_at` | TIMESTAMPTZ | |
 
 The API derives the next parent from the stored decisive vote. Uniqueness on
@@ -71,7 +71,7 @@ One row per slot per matchup, written when a slot finishes streaming.
 | `matchup_id` | UUID FK | Cascades on delete; unique with `slot` |
 | `slot` | TEXT | `A` or `B` |
 | `model_id` | UUID FK | |
-| `content` | TEXT | Full generated text, passed through the configured PII scrubber |
+| `content` | TEXT | Full generated text, persisted as received |
 | `latency_ms` | INTEGER | Backward-compatible total stream duration |
 | `ttft_ms` | INTEGER NULL | Time to first emitted text token; null if no text arrived |
 | `stream_duration_ms` | INTEGER | Total stream duration |
@@ -116,6 +116,37 @@ null rating fields.
 The worker computes these from aggregated `(model_lo, model_hi, wins_lo,
 wins_hi, ties)` triples — never from raw vote rows.
 
+### model_style_ratings
+
+Style-controlled Bradley-Terry ratings written by the worker's heavier periodic
+pass (`worker/style.py`, migration `004_phase_three.sql`). Kept in a sibling
+table (not merged into `model_ratings`) because the style fit is a slower,
+separate computation over raw votes and may lag the default leaderboard. A
+missing row means the style pass has not rated that model; the leaderboard then
+returns null style fields.
+
+| Column | Type | Notes |
+|---|---|---|
+| `model_id` | UUID PK, FK | References `models(id)`, cascades on delete |
+| `style_controlled_rating` | DOUBLE PRECISION | Elo-like display scale with style confounders regressed out |
+| `style_controlled_stderr` | DOUBLE PRECISION | Standard error on the display scale (≥ 0) |
+| `style_ci_lower` / `style_ci_upper` | DOUBLE PRECISION | 95% CI bounds; `style_ci_lower ≤ style_ci_upper` enforced |
+| `component_id` | INTEGER | Connected-component id over the style vote graph |
+| `games` | INTEGER | Non-skip votes involving the model (≥ 0) |
+| `computed_at` | TIMESTAMPTZ | Style-pass timestamp |
+
+### style_control_coefficients
+
+The fitted style-confounder coefficients, one row per feature (`position`,
+`verbosity`, `formatting`, `latency_ttft`, `latency_duration`), upserted each
+style pass. Persisted for the rating-methodology docs and the explain-diff view.
+
+| Column | Type | Notes |
+|---|---|---|
+| `feature` | TEXT PK | Covariate name |
+| `coefficient` | DOUBLE PRECISION | Fitted joint-regression coefficient (standardized-feature scale) |
+| `computed_at` | TIMESTAMPTZ | Style-pass timestamp |
+
 ### schema_migrations
 
 Bookkeeping for the migration runner: `name` (filename, PK) and `applied_at`.
@@ -132,4 +163,7 @@ The leaderboard is a SQL aggregation in `PostgresRepository.getLeaderboard()`:
 
 When `model_ratings` rows exist, the query LEFT JOINs them so each entry also
 carries `rating`, `ratingStdError`, `confidenceInterval`, and `componentId`
-(null until the worker runs), ordered by `rating` (nulls last) then wins.
+(null until the worker runs), ordered by `rating` (nulls last) then wins. It
+also LEFT JOINs `model_style_ratings` to surface `styleControlledRating`,
+`styleControlledStdError`, and `styleControlledConfidenceInterval` (null until
+the style pass runs).

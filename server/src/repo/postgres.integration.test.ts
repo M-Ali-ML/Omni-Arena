@@ -9,7 +9,6 @@ import type {
   Model,
 } from "../core/ports.js";
 import { runMigrations } from "../db/migrations.js";
-import { NoopPiiScrubber } from "../privacy/noop.js";
 import { ProviderRegistry } from "../providers/registry.js";
 import { PostgresRepository } from "./postgres.js";
 import { MatchupTokenService } from "../token.js";
@@ -77,7 +76,6 @@ describe("Postgres-backed arena flow", () => {
       core: new ArenaCore(new ProviderRegistry().register("test", provider)),
       matchmaker: { async pick() { return assignment; } },
       repository,
-      piiScrubber: new NoopPiiScrubber(),
       tokens: new MatchupTokenService("integration-secret-long-enough"),
       harnessVersion: "integration-v1",
     });

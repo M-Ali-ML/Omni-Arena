@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .anomaly import SessionStats
 from .bradley_terry import PairCounts
 
 # ``wins_lo`` counts decisive votes where the lexicographically smaller model id
@@ -37,15 +38,38 @@ SELECT
 FROM preferences p
 JOIN matchups mt ON mt.id = p.matchup_id
 WHERE p.vote <> 'skip'
+{exclusion}
 GROUP BY model_lo, model_hi
 HAVING SUM(CASE WHEN p.vote <> 'skip' THEN 1 ELSE 0 END) > 0
 """
+
+# Excludes sessions flagged by anomaly detection. NULL sessions are always
+# kept (we cannot attribute them to an abusive voter).
+_EXCLUSION_CLAUSE = (
+    "AND (p.anonymous_session_id IS NULL "
+    "OR p.anonymous_session_id <> ALL(%s))"
+)
 
 MODELS_SQL = """
 SELECT id, display_name
 FROM models
 WHERE enabled = TRUE
 ORDER BY created_at, id
+"""
+
+# Per-session vote tallies for the pre-fit anomaly screen. Timestamps let the
+# speed test run; NULL-session votes cannot be attributed and are ignored.
+SESSION_STATS_SQL = """
+SELECT
+  p.anonymous_session_id AS session_id,
+  SUM(CASE WHEN p.vote = 'left' THEN 1 ELSE 0 END)  AS left_votes,
+  SUM(CASE WHEN p.vote = 'right' THEN 1 ELSE 0 END) AS right_votes,
+  SUM(CASE WHEN p.vote IN ('both_good', 'both_bad') THEN 1 ELSE 0 END) AS ties,
+  SUM(CASE WHEN p.vote = 'skip' THEN 1 ELSE 0 END)  AS skips,
+  ARRAY_AGG(EXTRACT(EPOCH FROM p.created_at)) AS timestamps
+FROM preferences p
+WHERE p.anonymous_session_id IS NOT NULL
+GROUP BY p.anonymous_session_id
 """
 
 
@@ -112,14 +136,51 @@ def build_aggregated_data(
     )
 
 
-def fetch_aggregated_data(conn) -> AggregatedData:
-    """Run the aggregation queries against a psycopg connection."""
+def fetch_aggregated_data(
+    conn, *, excluded_sessions: list[str] | None = None
+) -> AggregatedData:
+    """Run the aggregation queries against a psycopg connection.
+
+    ``excluded_sessions`` (from :mod:`omniarena_rating.anomaly`) are dropped from
+    the outcome counts before aggregation so spam/malicious voters never reach
+    the fit.
+    """
+    excluded = excluded_sessions or []
+    if excluded:
+        sql = AGGREGATE_SQL.format(exclusion=_EXCLUSION_CLAUSE)
+        params: tuple = (excluded,)
+    else:
+        sql = AGGREGATE_SQL.format(exclusion="")
+        params = ()
     with conn.cursor() as cur:
         cur.execute(MODELS_SQL)
         model_rows = [(str(r[0]), str(r[1])) for r in cur.fetchall()]
-        cur.execute(AGGREGATE_SQL)
+        cur.execute(sql, params)
         triple_rows = [
             (str(r[0]), str(r[1]), int(r[2]), int(r[3]), int(r[4]))
             for r in cur.fetchall()
         ]
     return build_aggregated_data(model_rows, triple_rows)
+
+
+def fetch_session_stats(conn) -> list[SessionStats]:
+    """Pull per-session vote tallies for anomaly detection."""
+    with conn.cursor() as cur:
+        cur.execute(SESSION_STATS_SQL)
+        rows = cur.fetchall()
+    stats: list[SessionStats] = []
+    for session_id, left, right, ties, skips, timestamps in rows:
+        stamps = tuple(
+            float(t) for t in (timestamps or []) if t is not None
+        )
+        stats.append(
+            SessionStats(
+                session_id=str(session_id),
+                left=int(left),
+                right=int(right),
+                ties=int(ties),
+                skips=int(skips),
+                timestamps=stamps,
+            )
+        )
+    return stats

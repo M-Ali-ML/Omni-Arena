@@ -8,21 +8,23 @@ description: Creates a rich, self-contained HTML explanation of a code change, d
 Produce a single long-form HTML page that teaches a reader how a specified code change works. Investigate the surrounding system before explaining the diff: the page should make sense to a beginner while giving an experienced engineer a concise route to the changed behavior.
 
 Adapted from Geoffrey Litt's `explain-diff-html` skill:
-https://gist.github.com/geoffreylitt/a29df1b5f9865506e8952488eac3d524
+[https://gist.github.com/geoffreylitt/a29df1b5f9865506e8952488eac3d524](https://gist.github.com/geoffreylitt/a29df1b5f9865506e8952488eac3d524)
 
 ## Workflow
 
 1. Identify the change and its scope from the checkout, diff, branch, PR, or user-supplied files. If the target is ambiguous, state the assumption in the page.
 2. Explore the relevant code, tests, configuration, callers, data models, and documentation. Trace old and new execution paths far enough to explain behavior rather than listing edits.
 3. Build a narrative:
-   - the problem or constraint motivating the change;
-   - the prior behavior;
-   - the smallest useful mental model of the new behavior;
-   - how the implementation realizes that model;
-   - edge cases, trade-offs, and observable consequences.
+  - the problem or constraint motivating the change;
+  - the prior behavior;
+  - the smallest useful mental model of the new behavior;
+  - how the implementation realizes that model;
+  - edge cases, trade-offs, and observable consequences.
 4. Write one complete HTML document with inline CSS and JavaScript and no external dependencies.
 5. Save it at `artifacts/YYYY-MM-DD-explanation-<slug>.html`. This directory is intentionally local and gitignored.
 6. Validate that the file exists, works offline, contains no external assets, preserves code whitespace, and has functioning quiz interactions.
+
+
 
 ## Required structure
 
@@ -49,12 +51,14 @@ Never use ASCII diagrams. Label arrows and show example values when depicting da
 ## Quiz quality
 
 - Balance correct-answer positions across the five questions.
-- Randomize each question's visible option order, deterministically if needed.
+- Randomize each question's visible option order, deterministically if needed [Important].
 - Keep options comparable in length, grammar, specificity, and confidence.
 - Make distractors plausible and based on real misunderstandings.
 - Test behavior, causality, contracts, edge cases, or trade-offs—not trivia.
 - Do not use “all/none of the above.”
 - Reveal feedback only after selection, without exposing correctness in source ordering, labels, styling, or accessibility text.
+
+
 
 ## HTML constraints
 
@@ -64,6 +68,8 @@ Never use ASCII diagrams. Label arrows and show example values when depicting da
 - Include visible focus states and sufficient contrast.
 - Do not encode correctness using color alone.
 - Distinguish source-backed facts from interpretation.
+
+
 
 ## Handoff
 

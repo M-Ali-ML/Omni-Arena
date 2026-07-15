@@ -8,12 +8,10 @@ import type {
   MatchupAssignment,
   MatchupRecord,
   Model,
-  PiiScrubberPort,
   PreferenceRecord,
   PreferenceRepositoryPort,
   ResponseRecord,
 } from "../core/ports.js";
-import { NoopPiiScrubber } from "../privacy/noop.js";
 import { ProviderRegistry } from "../providers/registry.js";
 import { DuplicateVoteError } from "../repo/postgres.js";
 import { MatchupTokenService } from "../token.js";
@@ -149,6 +147,9 @@ class MemoryRepository implements PreferenceRepositoryPort {
         ratingStdError: null,
         confidenceInterval: null,
         componentId: null,
+        styleControlledRating: null,
+        styleControlledStdError: null,
+        styleControlledConfidenceInterval: null,
       };
     });
   }
@@ -168,9 +169,7 @@ function parseEvents(body: string): Array<Record<string, unknown>> {
     .map((data) => JSON.parse(data) as Record<string, unknown>);
 }
 
-async function setup(
-  piiScrubber: PiiScrubberPort = new NoopPiiScrubber(),
-) {
+async function setup() {
   const repository = new MemoryRepository();
   const receivedMessages: ChatMessage[][] = [];
   const provider = {
@@ -191,7 +190,6 @@ async function setup(
     core: new ArenaCore(new ProviderRegistry().register("test", provider)),
     matchmaker: { async pick() { return assignment; } },
     repository,
-    piiScrubber,
     tokens: new MatchupTokenService("test-secret-long-enough"),
     harnessVersion: "test-harness-v1",
   });
@@ -320,33 +318,6 @@ describe("arena routes", () => {
         { role: "user", content: "First turn" },
         { role: "assistant", content: "Answer from alpha" },
         { role: "user", content: "Follow up" },
-      ]);
-    } finally {
-      await app.close();
-    }
-  });
-
-  it("scrubs prompts and responses only at the persistence boundary", async () => {
-    const scrubber: PiiScrubberPort = {
-      async scrub() {
-        return "[scrubbed]";
-      },
-    };
-    const { app, repository, receivedMessages } = await setup(scrubber);
-    try {
-      const chat = await app.inject({
-        method: "POST",
-        url: "/api/arena/chat",
-        payload: { prompt: "Email me at private@example.com" },
-      });
-      expect(chat.statusCode).toBe(200);
-      expect(receivedMessages[0]).toEqual([
-        { role: "user", content: "Email me at private@example.com" },
-      ]);
-      expect([...repository.matchups.values()][0]?.prompt).toBe("[scrubbed]");
-      expect(repository.responses.map((response) => response.content)).toEqual([
-        "[scrubbed]",
-        "[scrubbed]",
       ]);
     } finally {
       await app.close();

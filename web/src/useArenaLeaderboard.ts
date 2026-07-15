@@ -14,6 +14,11 @@ export interface LeaderboardModel {
   ratingStdError: number | null;
   confidenceInterval: { lower: number; upper: number } | null;
   componentId: number | null;
+  // Style-controlled rating (verbosity/formatting/latency/position regressed
+  // out jointly) from the worker's heavier style pass; null until it has run.
+  styleControlledRating: number | null;
+  styleControlledStdError: number | null;
+  styleControlledConfidenceInterval: { lower: number; upper: number } | null;
 }
 
 export function useArenaLeaderboard() {

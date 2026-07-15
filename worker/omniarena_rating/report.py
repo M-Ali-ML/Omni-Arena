@@ -25,7 +25,10 @@ import numpy as np
 from .aggregate import AggregatedData
 from .bradley_terry import BTResult, fit_bradley_terry
 from .confidence import RatingIntervals, fisher_information_intervals
-from .connectivity import connected_components
+from .connectivity import component_sizes, connected_components
+from .logging_setup import get_logger
+
+logger = get_logger(__name__)
 
 SCALE = 400.0 / math.log(10.0)
 BASELINE = 1000.0
@@ -115,10 +118,36 @@ def compute_ratings(
         anchor="mean",
         init=warm_start,
     )
+    if not result.converged:
+        logger.warning(
+            "Bradley-Terry fit did not converge after %d iterations "
+            "(n_models=%d, pairs=%d); ratings may be unreliable.",
+            result.n_iter,
+            data.n_models,
+            len(data.pairs),
+        )
     intervals = fisher_information_intervals(
         result, data.pairs, confidence=confidence
     )
+    n_degenerate = int(
+        np.count_nonzero(~np.isfinite(intervals.stderr))
+        + np.count_nonzero(intervals.stderr == 0.0)
+    )
+    if n_degenerate:
+        logger.warning(
+            "%d model(s) have a degenerate (zero or non-finite) standard "
+            "error; their confidence intervals are not trustworthy.",
+            n_degenerate,
+        )
     components = connected_components(data.n_models, data.pairs)
+    sizes = component_sizes(components)
+    if len(sizes) > 1:
+        logger.warning(
+            "Comparison graph is disconnected: %d components %s. Ratings are "
+            "only comparable within a component.",
+            len(sizes),
+            sorted(sizes.values(), reverse=True),
+        )
     report = build_report(data, result, intervals, components)
     report.warm_state = result.raw_params
     return report

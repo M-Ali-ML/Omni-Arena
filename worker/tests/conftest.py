@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 
@@ -12,6 +13,37 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from omniarena_rating.bradley_terry import PairCounts  # noqa: E402
+
+
+class _ListHandler(logging.Handler):
+    """Collect emitted records in memory for assertions."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+@pytest.fixture
+def pkg_logs():
+    """Capture ``omniarena_rating`` log records (including child loggers).
+
+    The package logger has ``propagate=False`` so pytest's ``caplog`` (which
+    attaches to the root logger) never sees these records; attaching directly to
+    the package logger captures them regardless.
+    """
+    logger = logging.getLogger("omniarena_rating")
+    handler = _ListHandler()
+    prev_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    try:
+        yield handler.records
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(prev_level)
 
 
 def _sigmoid(x: float) -> float:

@@ -6,7 +6,6 @@ import { toPublicEvent, type PublicArenaEvent } from "../core/events.js";
 import type {
   ChatMessage,
   MatchmakingPort,
-  PiiScrubberPort,
   PreferenceRepositoryPort,
 } from "../core/ports.js";
 import { ConversationConflictError } from "../repo/postgres.js";
@@ -30,7 +29,6 @@ export interface ChatRouteDependencies {
   core: ArenaCore;
   matchmaker: MatchmakingPort;
   repository: PreferenceRepositoryPort;
-  piiScrubber: PiiScrubberPort;
   tokens: MatchupTokenService;
   harnessVersion: string;
 }
@@ -79,9 +77,6 @@ export function registerChatRoute(
 
     const assignment = await dependencies.matchmaker.pick();
     const matchupId = randomUUID();
-    const persistedPrompt = await dependencies.piiScrubber.scrub(
-      parsed.data.prompt,
-    );
     const issuedToken = dependencies.tokens.issue({
       matchupId,
       slotAModelId: assignment.slotA.id,
@@ -92,7 +87,7 @@ export function registerChatRoute(
     try {
       await dependencies.repository.createMatchup({
         id: matchupId,
-        prompt: persistedPrompt,
+        prompt: parsed.data.prompt,
         modelAId: assignment.modelA.id,
         modelBId: assignment.modelB.id,
         slotAModelId: assignment.slotA.id,
@@ -141,15 +136,12 @@ export function registerChatRoute(
         assignment,
       )) {
         if (event.type === "slot_done") {
-          const persistedContent = await dependencies.piiScrubber.scrub(
-            event.content,
-          );
           await dependencies.repository.saveResponse({
             matchupId,
             slot: event.slot,
             modelId:
               event.slot === "A" ? assignment.slotA.id : assignment.slotB.id,
-            content: persistedContent,
+            content: event.content,
             latencyMs: event.latencyMs,
             ttftMs: event.ttftMs,
             streamDurationMs: event.streamDurationMs,

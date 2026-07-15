@@ -47,6 +47,29 @@ export interface MatchmakingPort {
   pick(): Promise<MatchupAssignment>;
 }
 
+/** Games played by a canonical (unordered) model pair. */
+export interface PairSampleCount {
+  modelAId: string;
+  modelBId: string;
+  games: number;
+}
+
+/**
+ * Inputs the smart matchmaker needs to prioritise informative matchups:
+ * the enabled roster, how many decided games each pair already has, and each
+ * model's rating-interval width (its uncertainty). Absent uncertainty means the
+ * worker has not rated that model yet.
+ */
+export interface MatchmakingStats {
+  models: Model[];
+  pairGames: PairSampleCount[];
+  ratingUncertainty: Record<string, number>;
+}
+
+export interface MatchmakingStatsPort {
+  getMatchmakingStats(): Promise<MatchmakingStats>;
+}
+
 export interface MatchupRecord {
   id: string;
   prompt: string;
@@ -143,12 +166,16 @@ export interface LeaderboardEntry {
    * comparable within the same component; null until the worker has run.
    */
   componentId: number | null;
+  /**
+   * Style-controlled Bradley-Terry rating: the model's strength with verbosity,
+   * formatting, latency, and position confounders regressed out jointly. From
+   * the worker's heavier periodic style pass; null until that pass has run.
+   */
+  styleControlledRating: number | null;
+  styleControlledStdError: number | null;
+  styleControlledConfidenceInterval: RatingInterval | null;
 }
 
 export interface LeaderboardPort {
   getLeaderboard(): Promise<LeaderboardEntry[]>;
-}
-
-export interface PiiScrubberPort {
-  scrub(content: string): Promise<string>;
 }

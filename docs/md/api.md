@@ -107,7 +107,10 @@ then wins.
       "rating": 1184.3,
       "ratingStdError": 41.7,
       "confidenceInterval": { "lower": 1102.6, "upper": 1266.0 },
-      "componentId": 0
+      "componentId": 0,
+      "styleControlledRating": 1147.9,
+      "styleControlledStdError": 44.2,
+      "styleControlledConfidenceInterval": { "lower": 1061.3, "upper": 1234.5 }
     }
   ]
 }
@@ -124,9 +127,14 @@ The rating fields are populated by the Python rating worker (`worker/`):
 | `ratingStdError` | Standard error of the rating (same scale) |
 | `confidenceInterval` | 95% CI `{ lower, upper }` from Fisher information |
 | `componentId` | Connected-component id; ratings only comparable within a component |
+| `styleControlledRating` | Bradley-Terry rating with verbosity/formatting/latency/position confounders regressed out jointly, from the worker's heavier style pass |
+| `styleControlledStdError` | Standard error of the style-controlled rating (same scale) |
+| `styleControlledConfidenceInterval` | 95% CI `{ lower, upper }` for the style-controlled rating |
 
-All four are `null` until the worker has rated the model, so clients must treat
-them as optional and keep using `winRate` as a fallback.
+The `rating*`/`componentId` fields are `null` until the default worker pass has
+rated the model; the `styleControlled*` fields are `null` until the heavier
+style pass has run. Clients must treat all of them as optional and keep using
+`winRate` as a fallback.
 
 ## GET /health
 

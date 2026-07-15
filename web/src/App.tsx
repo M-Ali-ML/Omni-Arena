@@ -171,6 +171,14 @@ export default function App() {
               ) : (
                 <strong>{Math.round(model.winRate * 100)}%</strong>
               )}
+              {model.styleControlledRating !== null && (
+                <span
+                  className="style-rating"
+                  title="Style-controlled rating (verbosity, formatting, latency, and position regressed out)"
+                >
+                  style {Math.round(model.styleControlledRating)}
+                </span>
+              )}
             </li>
           ))}
         </ol>

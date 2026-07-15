@@ -46,6 +46,8 @@
     <div class="card"><div class="t">responses</div><div class="d">content + TTFT, duration, tokens, Markdown density, model version</div></div>
     <div class="card"><div class="t">preferences</div><div class="d">one vote per matchup (unique constraint), winner nullable</div></div>
     <div class="card"><div class="t">model_ratings</div><div class="d">worker-written Bradley-Terry rating, CI, component id, games</div></div>
+    <div class="card"><div class="t">model_style_ratings</div><div class="d">style-controlled rating, CI, component id — heavier periodic pass</div></div>
+    <div class="card"><div class="t">style_control_coefficients</div><div class="d">fitted style confounder coefficients, one row per feature</div></div>
     <div class="card"><div class="t">schema_migrations</div><div class="d">migration bookkeeping: name + applied_at</div></div>
   </div>
 
@@ -54,7 +56,7 @@
     <tr><th>Table</th><th>Column</th><th>Why it matters</th></tr>
     <tr><td class="mono">models</td><td class="mono">provider + provider_model_id</td><td>Unique pair; provider is <span class="mono">google</span>, <span class="mono">openai</span>, <span class="mono">ollama</span>, <span class="mono">vllm</span>, or <span class="mono">host-proxy</span>.</td></tr>
     <tr><td class="mono">turns</td><td class="mono">parent_response_id</td><td>Null only at turn 0; unique thereafter, preventing two follow-ups from branching from one winner.</td></tr>
-    <tr><td class="mono">turns</td><td class="mono">conversation_id + turn_index</td><td>Unique ordered position; prompt is scrubbed before persistence.</td></tr>
+    <tr><td class="mono">turns</td><td class="mono">conversation_id + turn_index</td><td>Unique ordered position; prompt persisted as received.</td></tr>
     <tr><td class="mono">matchups</td><td class="mono">slot_a/b_model_id</td><td>Randomized display assignment, distinct from the raw pair columns; checks forbid self-matches.</td></tr>
     <tr><td class="mono">matchups</td><td class="mono">matchup_token_hash</td><td>SHA-256 of the signed token — the token itself is never stored.</td></tr>
     <tr><td class="mono">matchups</td><td class="mono">harness_version</td><td>Prompt/orchestration version captured for temporal drift analysis.</td></tr>
@@ -67,8 +69,10 @@
     <tr><td class="mono">model_ratings</td><td class="mono">rating + ci_lower/ci_upper</td><td>Elo-like rating <span class="mono">1000 + (400/ln10)·r</span> with 95% Fisher-information CI. Worker-written (migration <span class="mono">003_phase_two.sql</span>).</td></tr>
     <tr><td class="mono">model_ratings</td><td class="mono">component_id</td><td>Connected-component id; ratings only comparable within a component.</td></tr>
     <tr><td class="mono">model_ratings</td><td class="mono">games + computed_at</td><td>Non-skip votes involving the model and the refit timestamp; upserted per model.</td></tr>
+    <tr><td class="mono">model_style_ratings</td><td class="mono">style_controlled_rating + style_ci_lower/upper</td><td>Elo-like rating with verbosity/formatting/latency/position regressed out, with 95% CI. Style-pass-written (migration <span class="mono">004_phase_three.sql</span>).</td></tr>
+    <tr><td class="mono">style_control_coefficients</td><td class="mono">feature + coefficient</td><td>One row per confounder (position, verbosity, formatting, latency_ttft, latency_duration); upserted each style pass.</td></tr>
   </table>
-  <div class="callout"><strong>Persistence boundary:</strong> prompts and responses pass through <span class="mono">PiiScrubberPort</span>. Phase 1 uses a no-op implementation; real redaction is still pending.</div>
+  <div class="callout"><strong>Persistence:</strong> prompts and responses are stored as received; OmniArena does not transform or redact content.</div>
 
   <h2>Vote semantics</h2>
   <div>
@@ -78,7 +82,7 @@
     <span class="chip">both_bad → tie</span>
     <span class="chip">skip → excluded from winRate</span>
   </div>
-  <div class="callout"><strong>Leaderboard:</strong> <span class="mono">winRate = wins / (wins + losses + ties)</span>, computed by SQL aggregation in <span class="mono">PostgresRepository.getLeaderboard()</span>; <span class="mono">0</span> when a model has no votes. A LEFT JOIN on <span class="mono">model_ratings</span> adds <span class="mono">rating</span>, <span class="mono">ratingStdError</span>, <span class="mono">confidenceInterval</span>, and <span class="mono">componentId</span> (null until the worker runs).</div>
+  <div class="callout"><strong>Leaderboard:</strong> <span class="mono">winRate = wins / (wins + losses + ties)</span>, computed by SQL aggregation in <span class="mono">PostgresRepository.getLeaderboard()</span>; <span class="mono">0</span> when a model has no votes. A LEFT JOIN on <span class="mono">model_ratings</span> adds <span class="mono">rating</span>, <span class="mono">ratingStdError</span>, <span class="mono">confidenceInterval</span>, and <span class="mono">componentId</span> (null until the worker runs); a LEFT JOIN on <span class="mono">model_style_ratings</span> adds <span class="mono">styleControlledRating</span>, <span class="mono">styleControlledStdError</span>, and <span class="mono">styleControlledConfidenceInterval</span> (null until the style pass runs).</div>
 </main>
 </body>
 </html>

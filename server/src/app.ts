@@ -4,7 +4,6 @@ import type { ArenaCore } from "./core/arena.js";
 import type {
   LeaderboardPort,
   MatchmakingPort,
-  PiiScrubberPort,
   PreferenceRepositoryPort,
 } from "./core/ports.js";
 import { registerChatRoute } from "./routes/chat.js";
@@ -16,7 +15,6 @@ export interface AppDependencies {
   core: ArenaCore;
   matchmaker: MatchmakingPort;
   repository: PreferenceRepositoryPort & LeaderboardPort;
-  piiScrubber: PiiScrubberPort;
   tokens: MatchupTokenService;
   harnessVersion: string;
   webOrigin?: string;

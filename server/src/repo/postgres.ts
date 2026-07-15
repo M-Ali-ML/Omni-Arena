@@ -4,6 +4,8 @@ import type {
   ChatMessage,
   LeaderboardEntry,
   LeaderboardPort,
+  MatchmakingStats,
+  MatchmakingStatsPort,
   MatchupRecord,
   Model,
   PreferenceRecord,
@@ -42,7 +44,7 @@ export class ConversationConflictError extends Error {
 }
 
 export class PostgresRepository
-  implements PreferenceRepositoryPort, LeaderboardPort
+  implements PreferenceRepositoryPort, LeaderboardPort, MatchmakingStatsPort
 {
   constructor(private readonly pool: Pool) {}
 
@@ -316,9 +318,57 @@ export class PostgresRepository
     };
   }
 
+  async getMatchmakingStats(): Promise<MatchmakingStats> {
+    const models = await this.listEnabledModels();
+
+    // Games already played per canonical (unordered) pair; skips do not count
+    // as evaluations. Under-sampled pairs surface as low or absent counts.
+    const pairRows = await this.pool.query<{
+      model_a: string;
+      model_b: string;
+      games: string;
+    }>(
+      `SELECT
+        LEAST(mt.model_a_id, mt.model_b_id)    AS model_a,
+        GREATEST(mt.model_a_id, mt.model_b_id) AS model_b,
+        COUNT(*) AS games
+      FROM preferences p
+      JOIN matchups mt ON mt.id = p.matchup_id
+      WHERE p.vote <> 'skip'
+      GROUP BY model_a, model_b`,
+    );
+
+    // Rating-interval width is the model's current uncertainty; null-rated
+    // models are simply absent so the matchmaker treats them as maximally
+    // uncertain and explores them first.
+    const uncertaintyRows = await this.pool.query<{
+      model_id: string;
+      width: number;
+    }>(
+      `SELECT model_id, (ci_upper - ci_lower) AS width FROM model_ratings`,
+    );
+
+    const ratingUncertainty: Record<string, number> = {};
+    for (const row of uncertaintyRows.rows) {
+      ratingUncertainty[row.model_id] = Number(row.width);
+    }
+
+    return {
+      models,
+      pairGames: pairRows.rows.map((row) => ({
+        modelAId: row.model_a,
+        modelBId: row.model_b,
+        games: Number(row.games),
+      })),
+      ratingUncertainty,
+    };
+  }
+
   async getLeaderboard(): Promise<LeaderboardEntry[]> {
     // Rating fields come from model_ratings via LEFT JOIN, so they are null
-    // until the Python worker has run. The win-rate aggregation is unchanged.
+    // until the Python worker has run. The style-controlled fields come from
+    // the sibling model_style_ratings table (heavier periodic pass) and stay
+    // null until that pass runs. The win-rate aggregation is unchanged.
     const result = await this.pool.query<{
       id: string;
       display_name: string;
@@ -332,6 +382,10 @@ export class PostgresRepository
       ci_lower: number | null;
       ci_upper: number | null;
       component_id: number | null;
+      style_rating: number | null;
+      style_stderr: number | null;
+      style_ci_lower: number | null;
+      style_ci_upper: number | null;
     }>(
       `SELECT
         m.id,
@@ -353,15 +407,22 @@ export class PostgresRepository
         mr.rating_stderr,
         mr.ci_lower,
         mr.ci_upper,
-        mr.component_id
+        mr.component_id,
+        msr.style_controlled_rating AS style_rating,
+        msr.style_controlled_stderr AS style_stderr,
+        msr.style_ci_lower,
+        msr.style_ci_upper
       FROM models m
       LEFT JOIN matchups mt
         ON m.id = mt.slot_a_model_id OR m.id = mt.slot_b_model_id
       LEFT JOIN preferences p ON p.matchup_id = mt.id
       LEFT JOIN model_ratings mr ON mr.model_id = m.id
+      LEFT JOIN model_style_ratings msr ON msr.model_id = m.id
       WHERE m.enabled = TRUE
       GROUP BY m.id, m.display_name, mr.rating, mr.rating_stderr,
-        mr.ci_lower, mr.ci_upper, mr.component_id
+        mr.ci_lower, mr.ci_upper, mr.component_id,
+        msr.style_controlled_rating, msr.style_controlled_stderr,
+        msr.style_ci_lower, msr.style_ci_upper
       ORDER BY
         mr.rating DESC NULLS LAST,
         wins DESC, total_votes DESC, m.display_name`,
@@ -375,6 +436,12 @@ export class PostgresRepository
       const rating = row.rating === null ? null : Number(row.rating);
       const ciLower = row.ci_lower === null ? null : Number(row.ci_lower);
       const ciUpper = row.ci_upper === null ? null : Number(row.ci_upper);
+      const styleRating =
+        row.style_rating === null ? null : Number(row.style_rating);
+      const styleLower =
+        row.style_ci_lower === null ? null : Number(row.style_ci_lower);
+      const styleUpper =
+        row.style_ci_upper === null ? null : Number(row.style_ci_upper);
       return {
         id: row.id,
         displayName: row.display_name,
@@ -393,6 +460,13 @@ export class PostgresRepository
             : { lower: ciLower, upper: ciUpper },
         componentId:
           row.component_id === null ? null : Number(row.component_id),
+        styleControlledRating: styleRating,
+        styleControlledStdError:
+          row.style_stderr === null ? null : Number(row.style_stderr),
+        styleControlledConfidenceInterval:
+          styleLower === null || styleUpper === null
+            ? null
+            : { lower: styleLower, upper: styleUpper },
       };
     });
   }

@@ -1,15 +1,28 @@
 import "./env.js";
 import { createApp } from "./app.js";
 import { ArenaCore } from "./core/arena.js";
+import type { MatchmakingPort } from "./core/ports.js";
 import { pool } from "./db/pool.js";
 import { RandomMatchmaker } from "./matchmaking/random.js";
-import { NoopPiiScrubber } from "./privacy/noop.js";
+import { SmartMatchmaker } from "./matchmaking/smart.js";
 import { createProviderRegistry } from "./providers/configure.js";
 import { PostgresRepository } from "./repo/postgres.js";
 import { MatchupTokenService } from "./token.js";
 
 const repository = new PostgresRepository(pool);
 const providers = createProviderRegistry(process.env);
+
+// Smart matchmaking is the default (it prioritises under-evaluated and
+// high-variance pairs); set MATCHMAKER=random to fall back to uniform sampling.
+function createMatchmaker(
+  mode: string | undefined,
+  repo: PostgresRepository,
+): MatchmakingPort {
+  if (mode === "random") {
+    return new RandomMatchmaker(repo);
+  }
+  return new SmartMatchmaker(repo);
+}
 
 const secret =
   process.env.MATCHUP_TOKEN_SECRET ?? "development-only-change-me";
@@ -21,9 +34,8 @@ if (!process.env.MATCHUP_TOKEN_SECRET) {
 
 const app = await createApp({
   core: new ArenaCore(providers),
-  matchmaker: new RandomMatchmaker(repository),
+  matchmaker: createMatchmaker(process.env.MATCHMAKER, repository),
   repository,
-  piiScrubber: new NoopPiiScrubber(),
   tokens: new MatchupTokenService(secret),
   harnessVersion: process.env.HARNESS_VERSION ?? "v1",
   webOrigin: process.env.WEB_ORIGIN,

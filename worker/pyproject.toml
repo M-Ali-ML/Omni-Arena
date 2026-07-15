@@ -1,7 +1,7 @@
 [project]
 name = "omniarena-rating"
-version = "0.2.0"
-description = "OmniArena Bradley-Terry rating worker (Phase 2, style-agnostic)"
+version = "0.3.0"
+description = "OmniArena Bradley-Terry rating worker (style control + anomaly screen)"
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.26,<3",
