@@ -1,6 +1,6 @@
 # Setup
 
-Requirements: Node.js 20+, npm, Docker.
+Requirements: Node.js 20+, npm, Docker. Python 3.10+ for the rating worker.
 
 Related: [Architecture](architecture.md) · [API](api.md) · [Data model](data-model.md)
 
@@ -33,6 +33,8 @@ Loaded from the repo-root `.env` regardless of workspace working directory
 | `HOST_PROXY_URL` | for `host-proxy` models | — | Host-owned OpenAI-compatible base URL |
 | `HOST_PROXY_TOKEN` | no | — | Optional bearer token used only to authenticate to the host proxy |
 | `HARNESS_VERSION` | no | `v1` | Version label persisted on every matchup |
+| `REFIT_INTERVAL_SECONDS` | no | `300` | Rating worker loop interval between refits |
+| `RATING_RIDGE` | no | `0.01` | Rating worker ridge-prior strength (log-odds scale) |
 | `DATABASE_URL` | yes | — | Postgres connection string; docker-compose default is `postgres://omni_arena:omni_arena@localhost:5432/omni_arena` |
 | `MATCHUP_TOKEN_SECRET` | production | insecure dev default | HMAC secret for matchup tokens, minimum 16 characters |
 | `PORT` | no | `3001` | API port |
@@ -58,6 +60,32 @@ completions at `<HOST_PROXY_URL>/chat/completions`. OmniArena sends
   `(provider, provider_model_id)`. Edit `server/src/db/seed.ts` to change the
   arena lineup, then re-run.
 
+## Rating worker
+
+The Bradley-Terry rating worker lives in `worker/` (Python, NumPy/SciPy). It
+aggregates votes in-database, fits ratings with Fisher-information confidence
+intervals, and upserts the `model_ratings` table the leaderboard reads.
+
+```bash
+cd worker
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# One-shot (requires migrations applied and DATABASE_URL set):
+DATABASE_URL=postgres://omni_arena:omni_arena@localhost:5432/omni_arena \
+  python -m omniarena_rating
+
+# Periodic loop with warm-started refits:
+python -m omniarena_rating --loop --interval 300 --ridge 0.01
+
+# Tests (pure Python, no database):
+python -m pytest
+```
+
+`docker compose up -d` also starts a `worker` service that runs the loop
+against the `postgres` service automatically. Ratings appear on the leaderboard
+after the first successful refit; until then the rating fields are null.
+
 ## Commands
 
 | Command | What it does |
@@ -74,3 +102,8 @@ completions at `<HOST_PROXY_URL>/chat/completions`. OmniArena sends
 - Web hook tests (`web/src/useArenaChat.test.ts`) run under jsdom and stub
   `fetch` with real SSE `ReadableStream` bodies. `localStorage` is stubbed
   because Node 24's experimental global shadows jsdom's implementation.
+- Rating worker tests (`worker/tests/`) are pure Python via `pytest`: no live
+  database. They check the analytic gradient against finite differences,
+  recover known synthetic ratings, verify tie modeling and anchoring, confirm
+  Fisher-information CIs agree with the multinomial bootstrap, and check
+  connectivity splits a disconnected graph.

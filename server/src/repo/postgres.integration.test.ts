@@ -176,16 +176,65 @@ describe("Postgres-backed arena flow", () => {
           wins: 1,
           losses: 0,
           winRate: 1,
+          // Rating fields are null until the worker has run.
+          rating: null,
+          ratingStdError: null,
+          confidenceInterval: null,
+          componentId: null,
         }),
         expect.objectContaining({
           displayName: "Beta",
           wins: 0,
           losses: 1,
           winRate: 0,
+          rating: null,
         }),
       ]);
     } finally {
       await app.close();
+      await pool.end();
+    }
+  });
+
+  it("exposes worker-computed rating fields once model_ratings is populated", async () => {
+    const database = newDb();
+    const adapter = database.adapters.createPg();
+    const pool = new adapter.Pool() as unknown as Pool;
+    await runMigrations(pool);
+    await pool.query(
+      `INSERT INTO models (
+        id, display_name, provider, provider_model_id, enabled
+      ) VALUES
+        ('00000000-0000-4000-8000-000000000001', 'Alpha', 'test', 'alpha', TRUE),
+        ('00000000-0000-4000-8000-000000000002', 'Beta', 'test', 'beta', TRUE)`,
+    );
+    // Only Alpha has a rating; Beta stays null (worker rated a subset).
+    await pool.query(
+      `INSERT INTO model_ratings (
+        model_id, rating, rating_stderr, ci_lower, ci_upper,
+        component_id, games
+      ) VALUES
+        ('00000000-0000-4000-8000-000000000001', 1180.5, 42.0, 1098.2, 1262.8, 0, 30)`,
+    );
+
+    const repository = new PostgresRepository(pool);
+    try {
+      const board = await repository.getLeaderboard();
+      // Rated model sorts first (rating DESC NULLS LAST).
+      expect(board[0]).toMatchObject({
+        displayName: "Alpha",
+        rating: 1180.5,
+        ratingStdError: 42.0,
+        confidenceInterval: { lower: 1098.2, upper: 1262.8 },
+        componentId: 0,
+      });
+      expect(board[1]).toMatchObject({
+        displayName: "Beta",
+        rating: null,
+        confidenceInterval: null,
+        componentId: null,
+      });
+    } finally {
       await pool.end();
     }
   });

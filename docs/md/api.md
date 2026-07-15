@@ -88,7 +88,9 @@ Errors:
 
 ## GET /api/arena/leaderboard
 
-Returns win/loss/tie counts and win rate per enabled model, ordered by wins.
+Returns win/loss/tie counts, win rate, and (when the rating worker has run)
+Bradley-Terry ratings per enabled model. Ordered by `rating` (nulls last),
+then wins.
 
 ```json
 {
@@ -101,15 +103,30 @@ Returns win/loss/tie counts and win rate per enabled model, ordered by wins.
       "ties": 3,
       "skips": 1,
       "totalVotes": 24,
-      "winRate": 0.5217
+      "winRate": 0.5217,
+      "rating": 1184.3,
+      "ratingStdError": 41.7,
+      "confidenceInterval": { "lower": 1102.6, "upper": 1266.0 },
+      "componentId": 0
     }
   ]
 }
 ```
 
 `winRate = wins / (wins + losses + ties)`; skips are excluded from the
-denominator. Future rating fields (`rating`, `confidenceInterval`) will be
-added alongside these, not instead of them.
+denominator. The win-rate fields are always present.
+
+The rating fields are populated by the Python rating worker (`worker/`):
+
+| Field | Meaning |
+|---|---|
+| `rating` | Bradley-Terry rating on an Elo-like scale (`1000 + (400/ln10)·r`) |
+| `ratingStdError` | Standard error of the rating (same scale) |
+| `confidenceInterval` | 95% CI `{ lower, upper }` from Fisher information |
+| `componentId` | Connected-component id; ratings only comparable within a component |
+
+All four are `null` until the worker has rated the model, so clients must treat
+them as optional and keep using `winRate` as a fallback.
 
 ## GET /health
 

@@ -96,6 +96,26 @@ One vote per matchup, enforced by a unique constraint on `matchup_id`.
 | `anonymous_session_id` | TEXT NULL | From the matchup token claims |
 | `created_at` | TIMESTAMPTZ | |
 
+### model_ratings
+
+Bradley-Terry ratings written by the Python worker (`worker/`, migration
+`003_phase_two.sql`). One row per model, upserted on every refit. A missing row
+means the worker has not yet rated that model; the leaderboard then returns
+null rating fields.
+
+| Column | Type | Notes |
+|---|---|---|
+| `model_id` | UUID PK, FK | References `models(id)`, cascades on delete |
+| `rating` | DOUBLE PRECISION | Elo-like display scale (`1000 + (400/ln10)·r`) |
+| `rating_stderr` | DOUBLE PRECISION | Standard error on the display scale (≥ 0) |
+| `ci_lower` / `ci_upper` | DOUBLE PRECISION | 95% CI bounds; `ci_lower ≤ ci_upper` enforced |
+| `component_id` | INTEGER | Connected-component id; ratings only comparable within a component |
+| `games` | INTEGER | Non-skip votes involving the model (≥ 0) |
+| `computed_at` | TIMESTAMPTZ | Refit timestamp |
+
+The worker computes these from aggregated `(model_lo, model_hi, wins_lo,
+wins_hi, ties)` triples — never from raw vote rows.
+
 ### schema_migrations
 
 Bookkeeping for the migration runner: `name` (filename, PK) and `applied_at`.
@@ -109,3 +129,7 @@ The leaderboard is a SQL aggregation in `PostgresRepository.getLeaderboard()`:
 - **tie** — `both_good` or `both_bad`
 - **skip** — counted separately, excluded from `winRate`
 - `winRate = wins / (wins + losses + ties)`, `0` when there are no votes
+
+When `model_ratings` rows exist, the query LEFT JOINs them so each entry also
+carries `rating`, `ratingStdError`, `confidenceInterval`, and `componentId`
+(null until the worker runs), ordered by `rating` (nulls last) then wins.

@@ -5,6 +5,16 @@ Format and rules: `.agents/skills/agent-log/SKILL.md`.
 
 ---
 
+## 2026-07-15 20:10 · Cursor Agent · Opus 4.8
+**Type:** feat, docs
+- Phase 2 Bradley-Terry rating engine: new Python `worker/` (`omniarena_rating`) — in-DB `GROUP BY` aggregation (O(votes)→O(pairs), skips excluded), L-BFGS-B BT fit with analytic gradient, Rao-Kupper tie model (`P(tie)=σ(d+η)−σ(d−η)`), weak ridge prior, sum-to-zero anchoring, warm-started refits.
+- CIs: inverse-Hessian Fisher information projected through the anchoring contrast, validated by a multinomial bootstrap over the aggregated triples; union-find connectivity for per-component comparability. Elo-like display scale `1000 + (400/ln10)·r`.
+- 20 pure-Python pytest cases (gradient check, synthetic recovery, tie/anchor behavior, Fisher≈bootstrap, connectivity) — all green; no DB needed.
+- Persistence: migration `003_phase_two.sql` adds `model_ratings` (upsert); `LeaderboardEntry` + `getLeaderboard()` gain nullable `rating`/`ratingStdError`/`confidenceInterval`/`componentId` via LEFT JOIN, ordered by rating NULLS LAST; win-rate shape unchanged. Vitest covers null + populated cases.
+- Added `worker` service to `docker-compose.yml` + `REFIT_INTERVAL_SECONDS`/`RATING_RIDGE` env; synced docs (architecture/api/data-model/setup md+html) with a rating-methodology section.
+- Gotcha: raw Fisher SEs are dominated by the barely-penalised common-mode direction under weak ridge — SEs MUST be computed on the anchored (sum-to-zero contrast) covariance or they blow up (~15 vs ~0.02 log-units) and disagree with the bootstrap.
+- Deferred to Phase 3 (not implemented): style-controlled ratings, anomaly detection, smart matchmaking.
+
 ## 2026-07-15 14:42 · Cursor Agent · GPT-5.6 Sol
 **Type:** chore, research
 - Added `explain-diff-html` and `build-microworld` teaching skills under `.agents/skills/`.

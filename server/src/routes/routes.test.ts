@@ -145,6 +145,10 @@ class MemoryRepository implements PreferenceRepositoryPort {
         skips: preference?.vote === "skip" ? 1 : 0,
         totalVotes: preference ? 1 : 0,
         winRate: wins + losses + ties === 0 ? 0 : wins / (wins + losses + ties),
+        rating: null,
+        ratingStdError: null,
+        confidenceInterval: null,
+        componentId: null,
       };
     });
   }

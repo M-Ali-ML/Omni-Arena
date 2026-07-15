@@ -76,8 +76,19 @@
 
   <h2><span class="method">GET</span><span class="mono">/api/arena/leaderboard</span></h2>
 <pre><code>{ "models": [ { "id", "displayName", "wins": 12, "losses": 8, "ties": 3,
-                "skips": 1, "totalVotes": 24, "winRate": 0.5217 } ] }</code></pre>
-  <div class="callout"><span class="mono">winRate = wins / (wins + losses + ties)</span> — skips excluded. Future <span class="mono">rating</span> and <span class="mono">confidenceInterval</span> fields will be added alongside, not instead.</div>
+                "skips": 1, "totalVotes": 24, "winRate": 0.5217,
+                "rating": 1184.3, "ratingStdError": 41.7,
+                "confidenceInterval": { "lower": 1102.6, "upper": 1266.0 },
+                "componentId": 0 } ] }</code></pre>
+  <div class="callout"><span class="mono">winRate = wins / (wins + losses + ties)</span> — skips excluded; win-rate fields are always present. Ordered by <span class="mono">rating</span> (nulls last), then wins.</div>
+  <table>
+    <tr><th>Rating field</th><th>Meaning</th></tr>
+    <tr><td class="mono">rating</td><td>Bradley-Terry rating, Elo-like scale <span class="mono">1000 + (400/ln10)·r</span></td></tr>
+    <tr><td class="mono">ratingStdError</td><td>Standard error (same scale)</td></tr>
+    <tr><td class="mono">confidenceInterval</td><td>95% CI <span class="mono">{ lower, upper }</span> from Fisher information</td></tr>
+    <tr><td class="mono">componentId</td><td>Connected component; ratings only comparable within a component</td></tr>
+  </table>
+  <div class="callout">All four rating fields are <span class="mono">null</span> until the Python rating worker (<span class="mono">worker/</span>) has rated the model — clients treat them as optional and fall back to <span class="mono">winRate</span>.</div>
 
   <h2><span class="method">GET</span><span class="mono">/health</span></h2>
   <p>Returns <code>{ "status": "ok" }</code>.</p>

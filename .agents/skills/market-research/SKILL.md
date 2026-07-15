@@ -32,6 +32,8 @@ Cover whichever of these the question demands — for a full market scan, cover 
 
 ## Report Format
 
+Use this structure for the chat answer and for any saved file:
+
 ```markdown
 # Market Research: [Topic]
 
@@ -58,9 +60,29 @@ Cover whichever of these the question demands — for a full market scan, cover 
 [Linked list, with dates]
 ```
 
+## Saving reports
+
+When the user asks to save (or accepts an offer to save), write under
+`pre-docs/research/` as `YYYY-MM-DD-<short-slug>.md`.
+
+**Saved reports must be a concise ≤5-minute read** (~800–1,000 words max;
+prefer under ~900). Enforce that by:
+
+- Keeping the same section skeleton above — do not add extra top-level sections.
+- Cap the competitor table at **6–8 rows** (merge or drop weak/noise entries).
+- Bullet lists only: **≤5 bullets** per section (Demand, Gaps, Risks).
+- One short Recommendation block (numbered steps OK if ≤5).
+- Sources: **≤12 links**, each with a date; no commentary paragraphs.
+- Cut restated background, long quotes, and duplicate evidence. Link out
+  instead of pasting.
+- Prefer tight tables and bullets over prose paragraphs.
+
+If the chat draft is longer, **compress on save** — do not dump the full
+conversation writeup into `pre-docs/research/`.
+
 ## Quality Bar
 
 - Every factual claim carries a source link.
 - Clearly separate **fact** (sourced), **inference** (reasoned from facts), and **opinion** (judgment call).
 - Include negative findings — "I found no evidence of demand for X" is a valid and valuable result.
-- If the research is substantial, offer to save it under `pre-docs/research/` so it persists beyond the conversation.
+- If the research is substantial, offer to save it under `pre-docs/research/` so it persists beyond the conversation. Reminder: the saved file must meet the ≤5-minute read rule above.

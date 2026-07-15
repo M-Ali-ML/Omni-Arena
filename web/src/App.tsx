@@ -158,7 +158,19 @@ export default function App() {
               <span className="record">
                 {model.wins}W · {model.losses}L · {model.ties}T
               </span>
-              <strong>{Math.round(model.winRate * 100)}%</strong>
+              {model.rating !== null ? (
+                <strong title="Bradley-Terry rating (95% CI)">
+                  {Math.round(model.rating)}
+                  {model.confidenceInterval &&
+                    ` ±${Math.round(
+                      (model.confidenceInterval.upper -
+                        model.confidenceInterval.lower) /
+                        2,
+                    )}`}
+                </strong>
+              ) : (
+                <strong>{Math.round(model.winRate * 100)}%</strong>
+              )}
             </li>
           ))}
         </ol>

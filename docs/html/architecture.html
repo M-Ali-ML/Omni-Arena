@@ -54,7 +54,7 @@
 <main>
   <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a></div>
   <h1>Architecture</h1>
-  <p class="lede">Phase 1 as implemented: blind multi-turn SSE comparisons, signed votes, style/version capture, multiple providers, and a PII-scrubbing boundary.</p>
+  <p class="lede">Through Phase 2 as implemented: blind multi-turn SSE comparisons, signed votes, style/version capture, multiple providers, a PII-scrubbing boundary, and an off-path Bradley-Terry rating worker.</p>
 
   <h2>System overview</h2>
   <div class="flow">
@@ -70,8 +70,12 @@
     </div>
     <div class="arrow">▼</div>
     <div class="row">
-      <div class="node dim"><div class="t">PostgreSQL</div><div class="d">conversations · turns · matchups · responses · preferences</div></div>
+      <div class="node dim"><div class="t">PostgreSQL</div><div class="d">conversations · turns · matchups · responses · preferences · model_ratings</div></div>
       <div class="node dim"><div class="t">Model endpoints</div><div class="d">Google · OpenAI · Ollama · vLLM · host proxy</div></div>
+    </div>
+    <div class="arrow">▲ writes model_ratings (off the hot path)</div>
+    <div class="row">
+      <div class="node"><div class="t">worker (Python)</div><div class="d">Bradley-Terry + Rao-Kupper ties · Fisher-info CIs · connectivity · periodic refit</div></div>
     </div>
   </div>
 
@@ -82,7 +86,7 @@
     <tr><td class="mono">ProviderResolverPort</td><td>ProviderRegistry</td><td>unchanged</td></tr>
     <tr><td class="mono">MatchmakingPort</td><td>RandomMatchmaker</td><td>smart sampling</td></tr>
     <tr><td class="mono">PreferenceRepositoryPort</td><td>PostgresRepository</td><td>unchanged</td></tr>
-    <tr><td class="mono">LeaderboardPort</td><td>win-rate SQL</td><td>Python Bradley-Terry worker</td></tr>
+    <tr><td class="mono">LeaderboardPort</td><td>win-rate SQL + model_ratings LEFT JOIN</td><td>style-controlled ratings (Phase 3)</td></tr>
     <tr><td class="mono">PiiScrubberPort</td><td>NoopPiiScrubber</td><td>real PII redaction</td></tr>
   </table>
   <div class="callout">Defined in <span class="mono">server/src/core/ports.ts</span>. Tests inject in-memory implementations behind the same interfaces.</div>
@@ -124,9 +128,30 @@
     <tr><td>One vote per matchup</td><td>Unique constraint on <span class="mono">preferences.matchup_id</span></td></tr>
   </table>
 
+  <h2>Rating worker (Phase 2)</h2>
+  <p>The <span class="mono">worker/</span> package (<span class="mono">omniarena_rating</span>) computes the style-agnostic default leaderboard rating as a separate Python process — never on the Fastify request path. It follows a strict <em>aggregate-then-compute</em> design.</p>
+  <table>
+    <tr><th>Step</th><th>Module</th><th>What it does</th></tr>
+    <tr><td>Aggregate</td><td class="mono">aggregate.py</td><td>One SQL <span class="mono">GROUP BY</span> → canonical <span class="mono">(model_lo, model_hi, wins_lo, wins_hi, ties)</span> triples. <span class="mono">skip</span> excluded. O(votes) → O(model pairs); raw rows stay in Postgres.</td></tr>
+    <tr><td>Fit</td><td class="mono">bradley_terry.py</td><td>Log-parameterized BT MLE via SciPy <strong>L-BFGS-B</strong> with analytic gradient. <strong>Rao-Kupper</strong> tie model (ordered logit, threshold ±η). Weak <strong>ridge prior</strong>, <strong>sum-to-zero anchoring</strong>, <strong>warm-start</strong>.</td></tr>
+    <tr><td>Intervals</td><td class="mono">confidence.py</td><td><strong>Inverse-Hessian</strong> (observed Fisher information) CIs projected through the anchoring contrast, validated by a <strong>multinomial bootstrap</strong> over the triples.</td></tr>
+    <tr><td>Connectivity</td><td class="mono">connectivity.py</td><td>Union-find components; ratings only comparable within a component, isolated models get wide intervals.</td></tr>
+    <tr><td>Write back</td><td class="mono">writeback.py</td><td>Idempotent upsert into <span class="mono">model_ratings</span>.</td></tr>
+  </table>
+  <div class="callout"><strong>Rating methodology:</strong> Rao-Kupper gives <span class="mono">P(a≻b)=σ(d−η)</span>, <span class="mono">P(b≻a)=σ(−d−η)</span>, <span class="mono">P(tie)=σ(d+η)−σ(d−η)</span> with <span class="mono">d = r_a − r_b</span>. The ridge-penalized log-likelihood is convex; the ridge (a Gaussian prior) identifies ratings, regularizes sparsely-compared models, and keeps the Hessian invertible for Fisher-information CIs. Reported on an Elo-like scale <span class="mono">1000 + (400/ln10)·r</span>, centered per component.</div>
+  <div>
+    <span class="chip">L-BFGS-B</span>
+    <span class="chip">Rao-Kupper ties</span>
+    <span class="chip">ridge prior</span>
+    <span class="chip">sum-to-zero anchor</span>
+    <span class="chip">Fisher-info CIs</span>
+    <span class="chip">multinomial bootstrap</span>
+    <span class="chip">warm-start refits</span>
+  </div>
+
   <details>
     <summary>Intentionally not built yet</summary>
-    <p>Protocol adapters (Vercel AI SDK, AG-UI/A2UI, OpenAI SSE), WebSocket control plane, Bradley-Terry rating worker, style-controlled fitting, smart matchmaking, real PII redaction, and the published SDK package.</p>
+    <p>Style-controlled ratings (joint confounder regression), anomaly detection, and smart matchmaking (Phase 3); protocol adapters (Vercel AI SDK, AG-UI/A2UI, OpenAI SSE), WebSocket control plane, real PII redaction, and the published SDK package (Phase 4+).</p>
   </details>
 </main>
 </body>

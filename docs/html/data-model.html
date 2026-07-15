@@ -45,6 +45,7 @@
     <div class="card"><div class="t">matchups</div><div class="d">blind head-to-head; randomized slots, token hash, harness version</div></div>
     <div class="card"><div class="t">responses</div><div class="d">content + TTFT, duration, tokens, Markdown density, model version</div></div>
     <div class="card"><div class="t">preferences</div><div class="d">one vote per matchup (unique constraint), winner nullable</div></div>
+    <div class="card"><div class="t">model_ratings</div><div class="d">worker-written Bradley-Terry rating, CI, component id, games</div></div>
     <div class="card"><div class="t">schema_migrations</div><div class="d">migration bookkeeping: name + applied_at</div></div>
   </div>
 
@@ -63,6 +64,9 @@
     <tr><td class="mono">preferences</td><td class="mono">winner_model_id</td><td>Null for ties and skips.</td></tr>
     <tr><td class="mono">preferences</td><td class="mono">position_bias_meta</td><td>JSONB, currently <span class="mono">{ selectedSlot }</span> — future style/bias analytics hook.</td></tr>
     <tr><td class="mono">preferences</td><td class="mono">anonymous_session_id</td><td>Carried from the matchup token claims.</td></tr>
+    <tr><td class="mono">model_ratings</td><td class="mono">rating + ci_lower/ci_upper</td><td>Elo-like rating <span class="mono">1000 + (400/ln10)·r</span> with 95% Fisher-information CI. Worker-written (migration <span class="mono">003_phase_two.sql</span>).</td></tr>
+    <tr><td class="mono">model_ratings</td><td class="mono">component_id</td><td>Connected-component id; ratings only comparable within a component.</td></tr>
+    <tr><td class="mono">model_ratings</td><td class="mono">games + computed_at</td><td>Non-skip votes involving the model and the refit timestamp; upserted per model.</td></tr>
   </table>
   <div class="callout"><strong>Persistence boundary:</strong> prompts and responses pass through <span class="mono">PiiScrubberPort</span>. Phase 1 uses a no-op implementation; real redaction is still pending.</div>
 
@@ -74,7 +78,7 @@
     <span class="chip">both_bad → tie</span>
     <span class="chip">skip → excluded from winRate</span>
   </div>
-  <div class="callout"><strong>Leaderboard:</strong> <span class="mono">winRate = wins / (wins + losses + ties)</span>, computed by SQL aggregation in <span class="mono">PostgresRepository.getLeaderboard()</span>; <span class="mono">0</span> when a model has no votes.</div>
+  <div class="callout"><strong>Leaderboard:</strong> <span class="mono">winRate = wins / (wins + losses + ties)</span>, computed by SQL aggregation in <span class="mono">PostgresRepository.getLeaderboard()</span>; <span class="mono">0</span> when a model has no votes. A LEFT JOIN on <span class="mono">model_ratings</span> adds <span class="mono">rating</span>, <span class="mono">ratingStdError</span>, <span class="mono">confidenceInterval</span>, and <span class="mono">componentId</span> (null until the worker runs).</div>
 </main>
 </body>
 </html>

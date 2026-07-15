@@ -317,6 +317,8 @@ export class PostgresRepository
   }
 
   async getLeaderboard(): Promise<LeaderboardEntry[]> {
+    // Rating fields come from model_ratings via LEFT JOIN, so they are null
+    // until the Python worker has run. The win-rate aggregation is unchanged.
     const result = await this.pool.query<{
       id: string;
       display_name: string;
@@ -325,6 +327,11 @@ export class PostgresRepository
       ties: string;
       skips: string;
       total_votes: string;
+      rating: number | null;
+      rating_stderr: number | null;
+      ci_lower: number | null;
+      ci_upper: number | null;
+      component_id: number | null;
     }>(
       `SELECT
         m.id,
@@ -341,14 +348,23 @@ export class PostgresRepository
           WHEN p.vote IN ('both_good', 'both_bad') THEN 1 ELSE 0
         END) AS ties,
         SUM(CASE WHEN p.vote = 'skip' THEN 1 ELSE 0 END) AS skips,
-        COUNT(p.id) AS total_votes
+        COUNT(p.id) AS total_votes,
+        mr.rating,
+        mr.rating_stderr,
+        mr.ci_lower,
+        mr.ci_upper,
+        mr.component_id
       FROM models m
       LEFT JOIN matchups mt
         ON m.id = mt.slot_a_model_id OR m.id = mt.slot_b_model_id
       LEFT JOIN preferences p ON p.matchup_id = mt.id
+      LEFT JOIN model_ratings mr ON mr.model_id = m.id
       WHERE m.enabled = TRUE
-      GROUP BY m.id, m.display_name
-      ORDER BY wins DESC, total_votes DESC, m.display_name`,
+      GROUP BY m.id, m.display_name, mr.rating, mr.rating_stderr,
+        mr.ci_lower, mr.ci_upper, mr.component_id
+      ORDER BY
+        mr.rating DESC NULLS LAST,
+        wins DESC, total_votes DESC, m.display_name`,
     );
 
     return result.rows.map((row) => {
@@ -356,6 +372,9 @@ export class PostgresRepository
       const losses = Number(row.losses);
       const ties = Number(row.ties);
       const denominator = wins + losses + ties;
+      const rating = row.rating === null ? null : Number(row.rating);
+      const ciLower = row.ci_lower === null ? null : Number(row.ci_lower);
+      const ciUpper = row.ci_upper === null ? null : Number(row.ci_upper);
       return {
         id: row.id,
         displayName: row.display_name,
@@ -365,6 +384,15 @@ export class PostgresRepository
         skips: Number(row.skips),
         totalVotes: Number(row.total_votes),
         winRate: denominator === 0 ? 0 : wins / denominator,
+        rating,
+        ratingStdError:
+          row.rating_stderr === null ? null : Number(row.rating_stderr),
+        confidenceInterval:
+          ciLower === null || ciUpper === null
+            ? null
+            : { lower: ciLower, upper: ciUpper },
+        componentId:
+          row.component_id === null ? null : Number(row.component_id),
       };
     });
   }

@@ -116,6 +116,11 @@ export interface PreferenceRepositoryPort {
   } | null>;
 }
 
+export interface RatingInterval {
+  lower: number;
+  upper: number;
+}
+
 export interface LeaderboardEntry {
   id: string;
   displayName: string;
@@ -125,6 +130,19 @@ export interface LeaderboardEntry {
   skips: number;
   totalVotes: number;
   winRate: number;
+  /**
+   * Bradley-Terry rating (Elo-like scale) from the Python worker, or null when
+   * the worker has not yet rated this model. The win-rate fields above are
+   * always present regardless.
+   */
+  rating: number | null;
+  ratingStdError: number | null;
+  confidenceInterval: RatingInterval | null;
+  /**
+   * Connected-component id of the comparison graph. Ratings are only
+   * comparable within the same component; null until the worker has run.
+   */
+  componentId: number | null;
 }
 
 export interface LeaderboardPort {

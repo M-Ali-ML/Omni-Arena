@@ -31,7 +31,7 @@
 <main>
   <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a></div>
   <h1>Setup</h1>
-  <p class="lede">Node.js 20+, npm, Docker. One Postgres container, two npm workspaces.</p>
+  <p class="lede">Node.js 20+, npm, Docker; Python 3.10+ for the rating worker. One Postgres container, two npm workspaces, one Python worker.</p>
 
   <h2>Quick start</h2>
 <pre><code>cp .env.example .env      # configure the seeded provider
@@ -50,6 +50,8 @@ npm run dev               # server :3001 · web :5173</code></pre>
     <tr><td class="mono">VLLM_BASE_URL / VLLM_API_KEY</td><td>vLLM models</td><td>OpenAI-compatible endpoint + optional bearer token</td></tr>
     <tr><td class="mono">HOST_PROXY_URL / HOST_PROXY_TOKEN</td><td>host-proxy models</td><td>Host-owned OpenAI-compatible endpoint + optional proxy auth</td></tr>
     <tr><td class="mono">HARNESS_VERSION</td><td>no (v1)</td><td>Version label persisted on every matchup</td></tr>
+    <tr><td class="mono">REFIT_INTERVAL_SECONDS</td><td>no (300)</td><td>Rating worker loop interval between refits</td></tr>
+    <tr><td class="mono">RATING_RIDGE</td><td>no (0.01)</td><td>Rating worker ridge-prior strength (log-odds scale)</td></tr>
     <tr><td class="mono">DATABASE_URL</td><td>yes</td><td>Postgres connection; compose default <span class="mono">postgres://omni_arena:omni_arena@localhost:5432/omni_arena</span></td></tr>
     <tr><td class="mono">MATCHUP_TOKEN_SECRET</td><td>production</td><td>HMAC secret, min 16 chars; insecure dev default otherwise</td></tr>
     <tr><td class="mono">PORT</td><td>no (3001)</td><td>API port</td></tr>
@@ -67,11 +69,28 @@ npm run dev               # server :3001 · web :5173</code></pre>
     <tr><td>Seed</td><td class="mono">npm run db:seed --workspace server</td><td>Upserts the lineup by <span class="mono">(provider, provider_model_id)</span>; edit <span class="mono">server/src/db/seed.ts</span> to change it.</td></tr>
   </table>
 
+  <h2>Rating worker</h2>
+  <p>The Bradley-Terry rating worker lives in <span class="mono">worker/</span> (Python, NumPy/SciPy). It aggregates votes in-database, fits ratings with Fisher-information CIs, and upserts <span class="mono">model_ratings</span>.</p>
+<pre><code>cd worker
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# One-shot (needs migrations applied + DATABASE_URL):
+DATABASE_URL=postgres://omni_arena:omni_arena@localhost:5432/omni_arena \
+  python -m omniarena_rating
+
+# Periodic loop with warm-started refits:
+python -m omniarena_rating --loop --interval 300 --ridge 0.01
+
+python -m pytest          # pure-Python tests, no database</code></pre>
+  <div class="callout"><span class="mono">docker compose up -d</span> also starts a <span class="mono">worker</span> service running the loop against Postgres. Ratings appear after the first successful refit; until then the leaderboard rating fields are null.</div>
+
   <h2>Commands</h2>
   <table>
     <tr><th>Command</th><th>What it does</th></tr>
     <tr><td class="mono">npm run dev</td><td>Server (tsx watch) + web (Vite), concurrently</td></tr>
     <tr><td class="mono">npm test</td><td>Server (Vitest + pg-mem) and web (Vitest + jsdom hook tests)</td></tr>
+    <tr><td class="mono">python -m pytest</td><td>Rating worker numerical tests (run in <span class="mono">worker/</span>)</td></tr>
     <tr><td class="mono">npm run build</td><td>Server tsc build + web production bundle</td></tr>
     <tr><td class="mono">npm run typecheck</td><td>Both workspaces</td></tr>
   </table>

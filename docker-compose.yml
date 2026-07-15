@@ -15,5 +15,20 @@ services:
     volumes:
       - omni_arena_postgres:/var/lib/postgresql/data
 
+  # Bradley-Terry rating worker. Reads aggregated votes, fits ratings with
+  # Fisher-information CIs, and upserts model_ratings on a periodic loop.
+  # Requires the server's migrations to have created model_ratings; until then
+  # it logs and retries on the next interval.
+  worker:
+    build: ./worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://omni_arena:omni_arena@postgres:5432/omni_arena
+      REFIT_INTERVAL_SECONDS: ${REFIT_INTERVAL_SECONDS:-300}
+      RATING_RIDGE: ${RATING_RIDGE:-0.01}
+    restart: unless-stopped
+
 volumes:
   omni_arena_postgres:

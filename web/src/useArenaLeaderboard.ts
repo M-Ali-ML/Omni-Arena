@@ -9,6 +9,11 @@ export interface LeaderboardModel {
   skips: number;
   totalVotes: number;
   winRate: number;
+  // Bradley-Terry rating from the Python worker; null until it has run.
+  rating: number | null;
+  ratingStdError: number | null;
+  confidenceInterval: { lower: number; upper: number } | null;
+  componentId: number | null;
 }
 
 export function useArenaLeaderboard() {
