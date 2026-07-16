@@ -3,6 +3,7 @@
   "private": true,
   "workspaces": [
     "server",
+    "packages/react-sdk",
     "web"
   ],
   "scripts": {

@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmniArena · SDK</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root { --text: #37352F; --surface: #F7F7F5; --border: #E9E9E7; --muted: #ACABA9; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #FFFFFF; color: var(--text); font: 400 16px/1.6 Inter, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 64px 24px; }
+  h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; margin: 64px 0 16px; }
+  h3 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; }
+  .crumb { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+  .crumb a { color: var(--muted); text-decoration: none; }
+  .crumb a:hover { color: var(--text); }
+  .lede { font-size: 18px; margin: 0; }
+  code, .mono { font-family: "Geist Mono", monospace; font-size: 13px; }
+  code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+  pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; font-size: 13px; }
+  pre code { background: none; border: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--surface); font-weight: 600; }
+  .callout { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 16px 0; font-size: 14px; }
+  .chip { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 9999px; padding: 2px 10px; font-size: 12px; margin: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a> · <a href="sdk.html">SDK</a></div>
+  <h1>SDK</h1>
+  <p class="lede"><span class="mono">@omni-arena/react</span> — the published, <strong>headless</strong> React SDK for OmniArena: blind side-by-side comparisons over one SSE stream, blind voting with identity reveal, multi-turn continuation, and the Bradley-Terry leaderboard. No UI, no styling — just state and actions.</p>
+
+  <div class="callout">Lives in the <span class="mono">packages/react-sdk/</span> workspace and is the single source of truth for the arena hooks; the demo app in <span class="mono">web/</span> is its reference consumer.</div>
+
+  <h2>Install</h2>
+<pre><code>npm install @omni-arena/react react</code></pre>
+  <p><span class="mono">react</span> (&gt;=18) is a peer dependency.</p>
+
+  <h2>Exports</h2>
+  <p>Two hooks and their public types:</p>
+  <div>
+    <span class="chip">useArenaChat</span>
+    <span class="chip">useArenaLeaderboard</span>
+    <span class="chip">ArenaSlot</span>
+    <span class="chip">ArenaVote</span>
+    <span class="chip">SlotState</span>
+    <span class="chip">RevealedModel</span>
+    <span class="chip">LeaderboardModel</span>
+    <span class="chip">UseArenaChatOptions</span>
+    <span class="chip">UseArenaLeaderboardOptions</span>
+  </div>
+  <div class="callout"><span class="mono">ArenaSlot</span> = <span class="mono">"A" | "B"</span>; <span class="mono">ArenaVote</span> = <span class="mono">"left" | "right" | "both_good" | "both_bad" | "skip"</span>.</div>
+
+  <h2><span class="mono">useArenaChat(options?)</span></h2>
+  <p>Starts and continues matchups, streams both responses into per-slot state, and records votes.</p>
+  <table>
+    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+    <tr><td class="mono">sendPrompt(prompt)</td><td class="mono">(string) =&gt; Promise&lt;void&gt;</td><td>Start or continue a matchup; streams tokens into <span class="mono">slots</span>.</td></tr>
+    <tr><td class="mono">vote(vote)</td><td class="mono">(ArenaVote) =&gt; Promise&lt;void&gt;</td><td>Record a vote and reveal identities.</td></tr>
+    <tr><td class="mono">resetConversation()</td><td class="mono">() =&gt; void</td><td>Abort any stream and clear all state.</td></tr>
+    <tr><td class="mono">slots</td><td class="mono">Record&lt;ArenaSlot, SlotState&gt;</td><td>Per-slot <span class="mono">content</span>, <span class="mono">status</span> (idle/streaming/done/error), <span class="mono">error</span>.</td></tr>
+    <tr><td class="mono">isStreaming</td><td class="mono">boolean</td><td>A matchup is currently streaming.</td></tr>
+    <tr><td class="mono">canVote</td><td class="mono">boolean</td><td>A matchup is ready to be voted on.</td></tr>
+    <tr><td class="mono">revealedModels</td><td class="mono">Record&lt;ArenaSlot, RevealedModel&gt; | undefined</td><td>Model identities, only after voting.</td></tr>
+    <tr><td class="mono">conversationId</td><td class="mono">string | undefined</td><td>The active multi-turn conversation, if any.</td></tr>
+    <tr><td class="mono">error</td><td class="mono">string | null</td><td>Last request error.</td></tr>
+  </table>
+  <div class="callout">Manages an anonymous session id in <span class="mono">localStorage</span> and continues a conversation only after a decisive <span class="mono">left</span>/<span class="mono">right</span> vote, matching the server's linear-history rules (see <a href="api.html">API</a>).</div>
+
+  <h2><span class="mono">useArenaLeaderboard(options?)</span></h2>
+  <p>Fetches standings once on mount; call <span class="mono">refresh()</span> after a vote to update them.</p>
+<pre><code>{ models: LeaderboardModel[]; refresh(): Promise&lt;void&gt;; error: string | null }</code></pre>
+  <div class="callout"><span class="mono">LeaderboardModel</span> carries win/loss/tie/skip counts, <span class="mono">winRate</span>, and the optional worker-computed <span class="mono">rating*</span> and <span class="mono">styleControlled*</span> fields (see <a href="api.html">API → leaderboard</a>).</div>
+
+  <h2>The <span class="mono">baseUrl</span> option</h2>
+  <p>Both hooks take <span class="mono">options.baseUrl?: string</span> — the origin/path prefix the arena API is served from. Default <span class="mono">""</span> hits the same-origin <span class="mono">/api/arena/*</span> routes (e.g. behind a dev proxy, as the demo does). Pass an absolute origin to target a remote server.</p>
+<pre><code>useArenaChat({ baseUrl: "https://arena.example.com" });
+useArenaLeaderboard({ baseUrl: "https://arena.example.com" });</code></pre>
+
+  <h2>Integration example</h2>
+  <p>A full blind-comparison-and-vote flow in under ten lines — bring your own markup:</p>
+<pre><code>import { useArenaChat } from "@omni-arena/react";
+
+export function Arena() {
+  const { sendPrompt, slots, canVote, vote } = useArenaChat();
+  return (
+    &lt;div&gt;
+      &lt;button onClick={() =&gt; sendPrompt("Explain quantum tunneling")}&gt;Ask&lt;/button&gt;
+      &lt;pre&gt;{slots.A.content}&lt;/pre&gt;&lt;pre&gt;{slots.B.content}&lt;/pre&gt;
+      &lt;button disabled={!canVote} onClick={() =&gt; vote("left")}&gt;A wins&lt;/button&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+  <div class="callout">The demo app <span class="mono">web/src/App.tsx</span> is the reference consumer: it wires the same two hooks into a prompt box, two anonymous markdown panes, five vote buttons, the identity reveal, and the leaderboard.</div>
+</main>
+</body>
+</html>

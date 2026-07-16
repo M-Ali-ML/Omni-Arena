@@ -52,19 +52,29 @@
 </head>
 <body>
 <main>
-  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a></div>
+  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a> · <a href="sdk.html">SDK</a></div>
   <h1>Architecture</h1>
-  <p class="lede">Through Phase 3 as implemented: blind multi-turn SSE comparisons, signed votes, style/version capture, multiple providers, smart matchmaking, and an off-path Bradley-Terry rating worker with a style-controlled pass and a pre-fit anomaly screen.</p>
+  <p class="lede">Through Phase 4 as implemented: blind multi-turn comparisons streamed through a five-protocol egress-adapter layer (native SSE default), a WebSocket control plane, a published headless React SDK, signed votes, multiple providers, smart matchmaking, and an off-path Bradley-Terry rating worker with a style-controlled pass and a pre-fit anomaly screen.</p>
 
   <h2>System overview</h2>
+  <table>
+    <tr><th>Package</th><th>Path</th><th>Role</th></tr>
+    <tr><td class="mono">@omni-arena/server</td><td class="mono">server/</td><td>Fastify API: matchmaking, dual-model streaming through the protocol-adapter layer, WebSocket control plane, voting, leaderboard</td></tr>
+    <tr><td class="mono">@omni-arena/react</td><td class="mono">packages/react-sdk/</td><td>Published headless React SDK (<a href="sdk.html">useArenaChat / useArenaLeaderboard</a>); the demo consumes it</td></tr>
+    <tr><td class="mono">@omni-arena/web</td><td class="mono">web/</td><td>Vite + React demo UI; the reference consumer of the SDK</td></tr>
+    <tr><td class="mono">omniarena-rating</td><td class="mono">worker/</td><td>Python Bradley-Terry rating worker (NumPy/SciPy)</td></tr>
+  </table>
   <div class="flow">
     <div class="row">
-      <div class="node"><div class="t">web (React demo)</div><div class="d">useArenaChat · useArenaLeaderboard · Vite proxy → :3001</div></div>
+      <div class="node"><div class="t">web (React demo)</div><div class="d">imports @omni-arena/react · Vite proxy → :3001</div></div>
+      <div class="node dim"><div class="t">@omni-arena/react (SDK)</div><div class="d">useArenaChat · useArenaLeaderboard · headless hooks</div></div>
     </div>
-    <div class="arrow">▼ HTTP + multiplexed SSE</div>
+    <div class="arrow">▼ HTTP + native SSE (default) · WebSocket control</div>
     <div class="row">
-      <div class="node"><div class="t">Fastify routes</div><div class="d">/api/arena/chat · /vote · /leaderboard · /health</div></div>
-      <div class="node"><div class="t">ArenaCore</div><div class="d">parallel fan-out, one event stream, fault isolation</div></div>
+      <div class="node"><div class="t">Fastify routes</div><div class="d">/api/arena/chat · /control (WS) · /vote · /leaderboard · /health</div></div>
+      <div class="node"><div class="t">ArenaCore</div><div class="d">parallel fan-out, one event stream, fault isolation, AbortSignal</div></div>
+      <div class="node"><div class="t">EventAdapter layer</div><div class="d">selectAdapter → SSE · AG-UI · A2UI · Vercel AI · OpenAI SSE</div></div>
+      <div class="node"><div class="t">MatchupRegistry</div><div class="d">AbortController per matchup (control plane)</div></div>
       <div class="node"><div class="t">SmartMatchmaker</div><div class="d">under-sampled / high-variance pairs (RandomMatchmaker fallback)</div></div>
       <div class="node"><div class="t">MatchupTokenService</div><div class="d">HMAC token, 15 min TTL, hash stored</div></div>
     </div>
@@ -88,8 +98,9 @@
     <tr><td class="mono">MatchmakingStatsPort</td><td>PostgresRepository (pair counts + CI widths)</td><td>unchanged</td></tr>
     <tr><td class="mono">PreferenceRepositoryPort</td><td>PostgresRepository</td><td>unchanged</td></tr>
     <tr><td class="mono">LeaderboardPort</td><td>win-rate SQL + model_ratings + model_style_ratings LEFT JOINs</td><td>more surfaced rating variants</td></tr>
+    <tr><td class="mono">EventAdapter (egress)</td><td>native SSE (default) + AG-UI · A2UI · Vercel AI SDK · OpenAI SSE, via selectAdapter</td><td>more wire protocols</td></tr>
   </table>
-  <div class="callout">Defined in <span class="mono">server/src/core/ports.ts</span>. Tests inject in-memory implementations behind the same interfaces.</div>
+  <div class="callout">Core ports are defined in <span class="mono">server/src/core/ports.ts</span>; the egress <span class="mono">EventAdapter</span> port in <span class="mono">server/src/adapters/event-adapter.ts</span>. Tests inject in-memory implementations behind the same interfaces.</div>
 
   <h2>Stream orchestration</h2>
   <p><span class="mono">ArenaCore.stream()</span> merges two concurrent provider streams into one async event queue. If one slot errors, the other keeps streaming.</p>
@@ -99,7 +110,44 @@
     <span class="chip">slot_done</span>
     <span class="chip">matchup_done</span>
   </div>
-  <div class="callout">Internal completion events capture TTFT, duration, provider/estimated tokens, Markdown density, and provider-reported model version. Public <span class="mono">slot_done</span> strips them; every matchup stores <span class="mono">HARNESS_VERSION</span>.</div>
+  <div class="callout">Internal completion events capture TTFT, duration, provider/estimated tokens, Markdown density, and provider-reported model version. Public <span class="mono">slot_done</span> strips them; every matchup stores <span class="mono">HARNESS_VERSION</span>. The chat route hands each public event to the selected protocol adapter for framing.</div>
+
+  <h2>Egress: protocol-adapter layer (Phase 4)</h2>
+  <p>One internal event stream (zod <span class="mono">publicArenaEventSchema</span> in <span class="mono">core/events.ts</span>) is fanned out to <strong>five wire protocols</strong> through a small egress port, so the chat route knows no framing details.</p>
+  <div class="flow">
+    <div class="row">
+      <div class="node"><div class="t">PublicArenaEvent stream</div><div class="d">matchup_started · token · slot_error · slot_done · matchup_done (schema-validated)</div></div>
+    </div>
+    <div class="arrow">▼ selectAdapter(?protocol → Accept → default)</div>
+    <div class="row">
+      <div class="node dim"><div class="t">native SSE</div><div class="d">default · byte-for-byte unchanged</div></div>
+      <div class="node dim"><div class="t">AG-UI</div><div class="d">typed run/text events over SSE</div></div>
+      <div class="node dim"><div class="t">A2UI</div><div class="d">schema-validated NDJSON</div></div>
+      <div class="node dim"><div class="t">Vercel AI SDK</div><div class="d">UI message stream v1</div></div>
+      <div class="node dim"><div class="t">OpenAI SSE</div><div class="d">chat.completion.chunk</div></div>
+    </div>
+  </div>
+  <table>
+    <tr><th><span class="mono">EventAdapter</span> member</th><th>Role</th></tr>
+    <tr><td class="mono">headers</td><td>Response headers the protocol needs before the first chunk</td></tr>
+    <tr><td class="mono">serialize(event)</td><td>Wire-ready bytes for one schema-validated event</td></tr>
+    <tr><td class="mono">finalize()</td><td>Trailing bytes before close (e.g. a <span class="mono">[DONE]</span> sentinel)</td></tr>
+  </table>
+  <div class="callout">Unknown <span class="mono">?protocol=</span> values fall back to native SSE, so the demo, the SDK, and existing clients are unaffected. Internal event <strong>semantics are identical across protocols</strong>; only the framing differs. See <a href="api.html">API → Protocol selection</a> for aliases, media types, and framing.</div>
+
+  <h2>WebSocket control plane (Phase 4)</h2>
+  <p><span class="mono">GET /api/arena/control</span> (registered via <span class="mono">@fastify/websocket</span> in <span class="mono">app.ts</span>) acts on an in-flight matchup out-of-band from the token stream.</p>
+  <div class="flow">
+    <div class="row">
+      <div class="node"><div class="t">MatchupRegistry</div><div class="d">one AbortController per matchup; chat route register()s on start, release()s in finally</div></div>
+      <div class="node"><div class="t">ArenaCore.stream(…, signal?)</div><div class="d">abort closes the queue; producers break on signal.aborted</div></div>
+    </div>
+  </div>
+  <table>
+    <tr><th>Message</th><th>Status</th></tr>
+    <tr><td class="mono">stop</td><td>Works: aborts the matchup's stream via its AbortController; <span class="mono">ok:false</span> for an unknown/finished matchup.</td></tr>
+    <tr><td class="mono">steer</td><td>Schema-validated, documented <strong>stub</strong>: returns a negative ack so the seam exists; not yet wired into the core.</td></tr>
+  </table>
 
   <h2>Linear history</h2>
   <div class="flow">
@@ -174,9 +222,13 @@
   <h2>Smart matchmaking (Phase 3)</h2>
   <p><span class="mono">SmartMatchmaker</span> replaces uniform pair selection behind the same <span class="mono">MatchmakingPort</span>. It samples a pair proportional to an <strong>information score</strong>: <span class="mono">coldness = 1/(1+games)</span> (favor under-evaluated pairs) plus normalized rating-interval width (favor high-variance matchups; unrated models count as maximally uncertain). A small floor keeps every pair reachable. Default; <span class="mono">MATCHMAKER=random</span> restores the uniform matchmaker.</p>
 
+  <h2>Frontend</h2>
+  <p>The headless hooks now live in the published <span class="mono"><a href="sdk.html">@omni-arena/react</a></span> SDK (<span class="mono">packages/react-sdk/</span>), and the demo imports them — a single source of truth. <span class="mono">useArenaChat</span> POSTs the prompt, parses the native SSE stream into per-slot state, votes with the matchup token, and reveals identities only after a successful vote; <span class="mono">useArenaLeaderboard</span> fetches standings. Both accept an optional <span class="mono">baseUrl</span> (default <span class="mono">""</span> = same-origin/proxied).</p>
+  <div class="callout"><span class="mono">web/src/App.tsx</span> is the reference consumer: prompt box, two anonymous markdown panes, five vote buttons, reveal, and a leaderboard that shows the Elo-like rating ±CI half-width (falling back to win-rate %), plus <span class="mono">style &lt;rating&gt;</span> when a style-controlled rating exists.</p>
+
   <details>
     <summary>Intentionally not built yet</summary>
-    <p>Protocol adapters (Vercel AI SDK, AG-UI/A2UI, OpenAI SSE), the WebSocket control plane, and the published SDK package (Phase 4+); OSS launch collateral (Phase 5). OmniArena does not scrub or redact stored prompts/responses — content is persisted as received.</p>
+    <p><strong>Mid-stream steering wiring</strong> — the control plane's <span class="mono">steer</span> message is a schema-validated, documented stub returning a negative ack; the instruction is not yet threaded into <span class="mono">ArenaCore</span>. <strong>Multimodal input</strong> — deferred to Phase 5. <strong>Phase 5 OSS-launch collateral.</strong> OmniArena does not scrub or redact stored prompts/responses — content is persisted as received.</p>
   </details>
 </main>
 </body>

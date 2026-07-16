@@ -323,4 +323,23 @@ describe("arena routes", () => {
       await app.close();
     }
   });
+
+  it("selects a non-default protocol via the query param", async () => {
+    const { app } = await setup();
+    try {
+      const chat = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat?protocol=openai",
+        payload: { prompt: "Hello", sessionId: "anon_proto" },
+      });
+      expect(chat.statusCode).toBe(200);
+      expect(chat.headers["content-type"]).toContain("text/event-stream");
+      expect(chat.body).toContain('"object":"chat.completion.chunk"');
+      expect(chat.body.trimEnd().endsWith("data: [DONE]")).toBe(true);
+      // The default path stays plain SSE (no chat-completion framing).
+      expect(chat.body).not.toContain("matchup_started");
+    } finally {
+      await app.close();
+    }
+  });
 });

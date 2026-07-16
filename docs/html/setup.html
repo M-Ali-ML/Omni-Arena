@@ -29,9 +29,9 @@
 </head>
 <body>
 <main>
-  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a></div>
+  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a> · <a href="sdk.html">SDK</a></div>
   <h1>Setup</h1>
-  <p class="lede">Node.js 20+, npm, Docker; Python 3.10+ for the rating worker. One Postgres container, two npm workspaces, one Python worker.</p>
+  <p class="lede">Node.js 20+, npm, Docker; Python 3.10+ for the rating worker. One Postgres container, three npm workspaces (server · react-sdk · web), one Python worker.</p>
 
   <h2>Quick start</h2>
 <pre><code>cp .env.example .env      # configure the seeded provider
@@ -40,6 +40,16 @@ docker compose up -d      # Postgres 16
 npm run db:migrate --workspace server
 npm run db:seed --workspace server
 npm run dev               # server :3001 · web :5173</code></pre>
+
+  <h2>Workspaces</h2>
+  <p>An npm workspace monorepo. The root <span class="mono">workspaces</span> array is in build order — <span class="mono">server</span>, <span class="mono">packages/react-sdk</span>, then <span class="mono">web</span> — so the SDK builds <strong>before</strong> the demo that depends on it.</p>
+  <table>
+    <tr><th>Workspace</th><th>Path</th><th>Notes</th></tr>
+    <tr><td class="mono">@omni-arena/server</td><td class="mono">server/</td><td>Fastify API. New dep <span class="mono">@fastify/websocket</span> powers the <span class="mono">/api/arena/control</span> control plane.</td></tr>
+    <tr><td class="mono">@omni-arena/react</td><td class="mono">packages/react-sdk/</td><td>Published headless React SDK; the demo consumes it. See <a href="sdk.html">SDK</a>.</td></tr>
+    <tr><td class="mono">@omni-arena/web</td><td class="mono">web/</td><td>Vite + React demo; imports <span class="mono">@omni-arena/react</span> (workspace <span class="mono">*</span>).</td></tr>
+    <tr><td class="mono">omniarena-rating</td><td class="mono">worker/</td><td>Python rating worker (not an npm workspace).</td></tr>
+  </table>
 
   <h2>Environment variables</h2>
   <table>
@@ -97,12 +107,14 @@ python -m pytest          # pure-Python tests, no database</code></pre>
   <table>
     <tr><th>Command</th><th>What it does</th></tr>
     <tr><td class="mono">npm run dev</td><td>Server (tsx watch) + web (Vite), concurrently</td></tr>
-    <tr><td class="mono">npm test</td><td>Server (Vitest + pg-mem) and web (Vitest + jsdom hook tests)</td></tr>
+    <tr><td class="mono">npm test</td><td><span class="mono">npm run test --workspaces</span> — server (Vitest + pg-mem), react-sdk (Vitest + jsdom hook tests), web (no tests)</td></tr>
+    <tr><td class="mono">npm test --workspace @omni-arena/react</td><td>Just the SDK hook tests</td></tr>
     <tr><td class="mono">python -m pytest</td><td>Rating worker numerical tests (run in <span class="mono">worker/</span>)</td></tr>
-    <tr><td class="mono">npm run build</td><td>Server tsc build + web production bundle</td></tr>
-    <tr><td class="mono">npm run typecheck</td><td>Both workspaces</td></tr>
+    <tr><td class="mono">npm run build</td><td>All workspaces in order: server tsc → react-sdk tsc → web bundle</td></tr>
+    <tr><td class="mono">npm run typecheck</td><td>All workspaces</td></tr>
   </table>
-  <div class="callout">Tests need no running Postgres or API keys. Web hook tests stub <span class="mono">fetch</span> with real SSE streams and stub <span class="mono">localStorage</span> (Node 24's experimental global shadows jsdom's).</div>
+  <div class="callout">Tests need no running Postgres or API keys. The hook tests moved from <span class="mono">web/</span> into <span class="mono">packages/react-sdk/src/useArenaChat.test.ts</span>; they stub <span class="mono">fetch</span> with real SSE streams and stub <span class="mono">localStorage</span> (Node 24's experimental global shadows jsdom's).</div>
+  <div class="callout"><strong>Gotcha:</strong> run tests per workspace, not a bare <span class="mono">vitest</span> at the repo root. The <span class="mono">jsdom</span> environment is set per workspace (each <span class="mono">vitest.config.ts</span>) and there is no root Vitest config, so a root-level <span class="mono">vitest</span> uses the default Node env and the SDK hook test fails with <span class="mono">ReferenceError: document is not defined</span>. Use <span class="mono">npm test</span> (delegates to <span class="mono">npm run test --workspaces</span>) or <span class="mono">npm test --workspace &lt;name&gt;</span> — both pass.</div>
 </main>
 </body>
 </html>

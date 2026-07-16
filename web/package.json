@@ -6,10 +6,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false",
-    "test": "vitest run src",
+    "test": "vitest run src --passWithNoTests",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@omni-arena/react": "*",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",

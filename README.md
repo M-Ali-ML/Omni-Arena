@@ -1,9 +1,13 @@
 # OmniArena
 
 OmniArena is a small, self-hosted service for blind side-by-side LLM
-comparisons. It streams two anonymous answers over one SSE connection, records
+comparisons. It streams two anonymous answers over one connection, records
 a vote, continues multi-turn chats from the winning response, and ranks models
 with a statistically principled Bradley-Terry rating engine.
+
+The stream is exposed through pluggable protocol adapters — native SSE, AG-UI,
+A2UI, the Vercel AI SDK, and OpenAI-compatible SSE — and a headless React SDK
+(`@omni-arena/react`) makes embedding the arena a few lines of code.
 
 ## Run locally
 
@@ -50,20 +54,31 @@ cd worker && python -m pytest   # rating worker tests (pure Python, no database)
 
 ## API
 
-- `POST /api/arena/chat` starts a matchup and streams multiplexed SSE events.
+- `POST /api/arena/chat` starts a matchup and streams both responses over one
+  connection. The wire format is chosen with a `?protocol=` query param (or the
+  `Accept` header), defaulting to native SSE; AG-UI, A2UI, Vercel AI SDK, and
+  OpenAI SSE are also available.
 - `POST /api/arena/vote` records one vote and reveals model identities.
 - `GET /api/arena/leaderboard` returns win/loss/tie counts and win rates, plus
   Bradley-Terry `rating`, `confidenceInterval`, and `componentId` fields (null
   until the rating worker has run).
+- `GET /api/arena/control` is a WebSocket control plane for stopping an
+  in-flight matchup (mid-stream steering is a documented stub for now).
 
+## Embedding
 
+The arena hooks are published as a headless React package,
+[`@omni-arena/react`](packages/react-sdk) (`useArenaChat`,
+`useArenaLeaderboard`). The demo `web/` app is the reference consumer; see
+[`docs/md/sdk.md`](docs/md/sdk.md) for the API and a copy-paste integration.
 
 ## Documentation
 
 Current-state docs live in [`docs/md/`](docs/md/) (with condensed visual
 counterparts in [`docs/html/`](docs/html/)):
 [architecture](docs/md/architecture.md) · [API](docs/md/api.md) ·
-[data model](docs/md/data-model.md) · [setup](docs/md/setup.md).
+[data model](docs/md/data-model.md) · [setup](docs/md/setup.md) ·
+[SDK](docs/md/sdk.md).
 
 Planning documents (target architecture, MVP scope, PRD) are in
 [`pre-docs/`](pre-docs/); the detailed MVP scope is

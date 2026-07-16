@@ -46,9 +46,21 @@ export class ArenaCore {
   async *stream(
     messages: ChatMessage[],
     assignment: MatchupAssignment,
+    signal?: AbortSignal,
   ): AsyncGenerator<ArenaEvent> {
     const queue = new AsyncEventQueue<ArenaEvent>();
     let activeSlots = 2;
+
+    // Control-plane cancellation: aborting unblocks the consumer immediately so
+    // the route stops emitting; in-flight producers observe `signal.aborted` and
+    // break out of their provider stream on the next chunk.
+    const onAbort = (): void => queue.close();
+    if (signal) {
+      if (signal.aborted) {
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
 
     const produce = async (slot: ArenaSlot, model: Model): Promise<void> => {
       const startedAt = performance.now();
@@ -61,6 +73,9 @@ export class ArenaCore {
       try {
         const provider = this.providers.resolve(model.provider);
         for await (const chunk of provider.stream(model, messages)) {
+          if (signal?.aborted) {
+            break;
+          }
           if (chunk.type === "metadata") {
             modelVersion = chunk.modelVersion ?? modelVersion;
             providerTokenCount =
@@ -108,12 +123,16 @@ export class ArenaCore {
     void produce("A", assignment.slotA);
     void produce("B", assignment.slotB);
 
-    while (true) {
-      const next = await queue.next();
-      if (next.done) {
-        return;
+    try {
+      while (true) {
+        const next = await queue.next();
+        if (next.done) {
+          return;
+        }
+        yield next.value;
       }
-      yield next.value;
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
     }
   }
 }

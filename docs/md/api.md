@@ -3,7 +3,7 @@
 Base URL: `http://localhost:3001`. All bodies are JSON. The web dev server
 proxies `/api` and `/health` to the API.
 
-Related: [Architecture](architecture.md) · [Data model](data-model.md) · [Setup](setup.md)
+Related: [Architecture](architecture.md) · [Data model](data-model.md) · [Setup](setup.md) · [SDK](sdk.md)
 
 ## POST /api/arena/chat
 
@@ -48,6 +48,106 @@ Errors before streaming:
 | `403` | `sessionId` does not own the requested conversation |
 | `404` | Unknown `conversationId` |
 | `409` | The prior turn has no decisive vote, or another request already advanced the conversation |
+
+### Protocol selection
+
+The same matchup stream can be framed in five wire protocols. Selection precedence:
+
+1. `?protocol=` query parameter (case-insensitive alias).
+2. The request `Accept` header media type.
+3. Default: **native SSE**.
+
+An unknown `?protocol=` value falls back to native SSE, so a bad value never
+breaks the default path. Native SSE is byte-for-byte unchanged, so existing
+clients (including the demo and the SDK) are unaffected — the table above still
+describes the default stream.
+
+| Protocol | `?protocol=` aliases | `Accept` media type(s) | Response `content-type` |
+|---|---|---|---|
+| Native SSE *(default)* | `sse`, `native`, `native-sse` | `text/event-stream` | `text/event-stream` |
+| AG-UI | `agui`, `ag-ui` | `application/vnd.ag-ui+json` | `text/event-stream` |
+| A2UI | `a2ui` | `application/vnd.a2ui+json`, `application/x-ndjson` | `application/x-ndjson` |
+| Vercel AI SDK | `vercel`, `vercel-ai`, `ai-sdk` | `application/vnd.vercel.ai.ui-message-stream+json` | `text/event-stream` (+ `x-vercel-ai-ui-message-stream: v1`) |
+| OpenAI SSE | `openai`, `openai-sse` | `application/vnd.openai.chat-chunk+json` | `text/event-stream` |
+
+The **internal event semantics are identical across protocols** — the same
+`matchup_started` / `token` / `slot_error` / `slot_done` / `matchup_done`
+sequence over the same two slots (A, B). Only the framing differs, and every
+frame is schema-validated at the transport boundary before it is written.
+
+Per-protocol framing, at a conceptual level:
+
+- **Native SSE** (default, unchanged): `event:`/`data:` pairs, one per event;
+  no trailing sentinel. This is the event table above.
+- **AG-UI**: typed AG-UI events, one `data:` line each, over SSE. `matchup_started`
+  → `RUN_STARTED` plus one `TEXT_MESSAGE_START` per slot (role `assistant`,
+  tagged `slot` A/B); `token` → `TEXT_MESSAGE_CONTENT` (`delta`, `slot`);
+  `slot_error` → `CUSTOM` named `slot_error` (`{ slot, message }`, so the
+  surviving slot keeps streaming); `slot_done` → `TEXT_MESSAGE_END`;
+  `matchup_done` → `RUN_FINISHED`. `runId` is the matchup ID, `threadId` the
+  conversation ID.
+- **A2UI**: schema-validated **NDJSON** (`application/x-ndjson`) — one flat,
+  self-describing JSON object per line, versioned `a2ui/1`, painting two
+  surfaces A/B. `surface_init` (`matchupId`, `conversationId`, `turnIndex`,
+  `surfaces`) → `text_append` (`surface`, `text`) → `error` (`surface`,
+  `message`) → `surface_done` (`surface`) → `session_done`.
+- **Vercel AI SDK**: the AI SDK **UI Message Stream** (header
+  `x-vercel-ai-ui-message-stream: v1`) over SSE. Slot A rides the primary text
+  channel (`start` → `data-arena-meta` → `text-start` → `text-delta` →
+  `text-end`); slot B is multiplexed through custom data parts
+  (`data-arena-b-delta` / `data-arena-b-done`); a single-slot failure is a
+  `data-arena-error` part; the run ends with `finish` and a trailing
+  `data: [DONE]` sentinel.
+- **OpenAI SSE**: `chat.completion.chunk` frames so an OpenAI-style client can
+  drive the arena. The two slots map onto two `choices` entries (slot A →
+  index 0, slot B → index 1) of one dual-stream completion: `role: "assistant"`
+  on start, `content` deltas per token, `finish_reason: "stop"` on `slot_done`.
+  A single-slot error is surfaced inline as `content` on that choice while the
+  other keeps streaming. Ends with a trailing `data: [DONE]` sentinel.
+
+The [`@omni-arena/react`](sdk.md) SDK and the demo app consume the default
+native SSE stream.
+
+## GET /api/arena/control (WebSocket)
+
+The **control plane**: a bidirectional WebSocket that acts on an in-flight
+matchup out-of-band from the token stream. Connect a WebSocket to
+`/api/arena/control`; messages are JSON in both directions.
+
+**`stop`** — abort an in-flight matchup:
+
+```json
+{ "type": "stop", "matchupId": "<uuid>" }
+```
+
+Aborts the matchup's stream via the matchup registry's `AbortController`
+(the `AbortSignal` is threaded through `ArenaCore.stream`). Reply:
+
+```json
+{ "type": "stopped", "matchupId": "<uuid>", "ok": true }
+```
+
+`ok` is `false` when the matchup is unknown — never started, already finished,
+or already stopped.
+
+**`steer`** — mid-stream steering (**stubbed extension point**):
+
+```json
+{ "type": "steer", "matchupId": "<uuid>", "instruction": "be more concise" }
+```
+
+The message is schema-validated (`instruction` must be non-empty) and
+documented, but steering is **not yet wired into the core**. It always returns a
+negative acknowledgement so the wire contract and seam exist ahead of the
+implementation:
+
+```json
+{ "type": "steer_ack", "matchupId": "<uuid>", "accepted": false, "reason": "…" }
+```
+
+Errors: invalid JSON returns `{ "type": "error", "message": "Invalid JSON control message" }`;
+an unknown or malformed message (including a `matchupId` that is not a UUID)
+returns `{ "type": "error", "message": "Unknown or malformed control message" }`.
 
 ## POST /api/arena/vote
 

@@ -2,31 +2,35 @@
 
 OmniArena is a small, self-hosted service for blind, multi-turn side-by-side LLM
 comparisons. This document describes the architecture **as implemented today**
-(through Phase 3). The target end-state lives in [`pre-docs/architecture.md`](../../pre-docs/architecture.md)
+(through Phase 4). The target end-state lives in [`pre-docs/architecture.md`](../../pre-docs/architecture.md)
 and `artifacts/vision.md` (local-only, gitignored — not committed).
 
-Related: [API](api.md) · [Data model](data-model.md) · [Setup](setup.md)
+Related: [API](api.md) · [Data model](data-model.md) · [Setup](setup.md) · [SDK](sdk.md)
 
 ## System overview
 
-The repo is an npm workspace monorepo with two packages:
+The repo is an npm workspace monorepo with four packages:
 
 | Package | Path | Role |
 |---|---|---|
-| `@omni-arena/server` | `server/` | Fastify API: matchmaking, dual-model SSE streaming, voting, leaderboard |
-| `@omni-arena/web` | `web/` | Vite + React demo UI with in-repo headless hooks |
+| `@omni-arena/server` | `server/` | Fastify API: matchmaking, dual-model streaming through the protocol-adapter layer, WebSocket control plane, voting, leaderboard |
+| `@omni-arena/react` | `packages/react-sdk/` | Published headless React SDK (`useArenaChat`, `useArenaLeaderboard`); the demo consumes it. See [SDK](sdk.md) |
+| `@omni-arena/web` | `web/` | Vite + React demo UI; the reference consumer of `@omni-arena/react` |
 | `omniarena-rating` | `worker/` | Python Bradley-Terry rating worker (NumPy/SciPy) |
 
 ```
-[ web (React demo) ]
+[ web (React demo) ] ── imports ──▶ [ @omni-arena/react (SDK hooks) ]
    │ useArenaChat / useArenaLeaderboard
    │ (Vite dev proxy → :3001)
    ▼
 [ server (Fastify) ]
-   ├─ routes/chat        POST /api/arena/chat   → multiplexed SSE
+   ├─ routes/chat        POST /api/arena/chat   → EventAdapter (5 wire protocols)
+   ├─ routes/control     GET  /api/arena/control (WebSocket: stop / steer-stub)
    ├─ routes/vote        POST /api/arena/vote   → reveal identities
    ├─ routes/leaderboard GET  /api/arena/leaderboard  (win-rate + ratings)
-   ├─ ArenaCore          fan-out to two providers, one event stream
+   ├─ ArenaCore          fan-out to two providers, one event stream (AbortSignal)
+   ├─ adapters/          selectAdapter → SSE (default) / AG-UI / A2UI / Vercel / OpenAI
+   ├─ MatchupRegistry    AbortController per in-flight matchup (control plane)
    ├─ SmartMatchmaker    prioritizes under-sampled / high-variance pairs
    │                     (RandomMatchmaker still available; MATCHMAKER=random)
    ├─ MatchupTokenService HMAC-signed matchup tokens
@@ -59,6 +63,7 @@ Even in the MVP, the core is separated from its edges by small interfaces in
 | `MatchmakingStatsPort` | `PostgresRepository` (pair game counts + rating-interval widths) | unchanged |
 | `PreferenceRepositoryPort` | `PostgresRepository` | unchanged |
 | `LeaderboardPort` | win-rate SQL + `model_ratings` + `model_style_ratings` LEFT JOINs in `PostgresRepository` | more surfaced rating variants |
+| `EventAdapter` (egress port) | native SSE (default) + AG-UI, A2UI, Vercel AI SDK, OpenAI SSE, chosen by `selectAdapter` | more wire protocols |
 
 Tests inject in-memory implementations behind the same ports.
 
@@ -74,11 +79,57 @@ internal async queue. Internal events (`server/src/core/events.ts`):
   variant strips content and metrics so identities can't be inferred)
 - `matchup_done` — both slots finished
 
-The chat route converts internal events to public SSE events with
-`toPublicEvent()` and persists each `slot_done` as a `responses` row. Internal
-completion events include TTFT, stream duration, token count/source, Markdown
-density, and provider-reported model version. Each matchup stores the configured
-`HARNESS_VERSION`.
+The chat route converts internal events to public events with `toPublicEvent()`,
+persists each `slot_done` as a `responses` row, and hands the public event to the
+selected protocol adapter for framing. Internal completion events include TTFT,
+stream duration, token count/source, Markdown density, and provider-reported
+model version. Each matchup stores the configured `HARNESS_VERSION`.
+
+## Egress: the protocol-adapter layer (Phase 4)
+
+There is exactly one internal event stream. Every event an adapter is allowed to
+emit is described by the zod `publicArenaEventSchema` in
+`server/src/core/events.ts` (`matchup_started`, `token`, `slot_error`,
+`slot_done`, `matchup_done`). That single stream is fanned out to **five wire
+protocols** through a small egress port, so the chat route never knows any
+framing details.
+
+- **`EventAdapter` port** (`server/src/adapters/event-adapter.ts`) — three
+  members: `headers` (response headers the protocol needs before the first
+  chunk), `serialize(event)` (wire-ready bytes for one schema-validated event),
+  and `finalize()` (trailing bytes before close, e.g. a `[DONE]` sentinel).
+- **Adapters** — `sse.ts` (native, default), `ag-ui.ts`, `a2ui.ts`,
+  `vercel-ai.ts`, `openai-sse.ts`. Each validates against
+  `publicArenaEventSchema` at the boundary before framing, so a malformed chunk
+  fails loudly instead of reaching a client.
+- **`selectAdapter(protocol, accept)`** (`server/src/adapters/registry.ts`) —
+  picks an adapter from the `?protocol=` query param, then the `Accept` header
+  media type, then the default. An unknown value falls back to native SSE, which
+  is preserved **byte-for-byte**, so the demo, the SDK, and any existing client
+  are unaffected.
+
+See [API → Protocol selection](api.md) for the aliases, media types, and
+per-protocol framing. The key invariant: internal event **semantics are
+identical across protocols**; only the framing differs.
+
+## WebSocket control plane (Phase 4)
+
+`GET /api/arena/control` (`server/src/routes/control.ts`, registered via
+`@fastify/websocket` in `server/src/app.ts`) is a bidirectional channel that
+acts on an in-flight matchup out-of-band from the token stream.
+
+- **`MatchupRegistry`** (`server/src/control/registry.ts`) hands out one
+  `AbortController` per matchup. The chat route `register`s the controller when
+  it starts streaming and `release`s it in a `finally` when the stream ends.
+- The controller's `AbortSignal` is threaded through
+  `ArenaCore.stream(messages, assignment, signal?)`: aborting closes the internal
+  queue so the route stops emitting immediately, and in-flight producers observe
+  `signal.aborted` and break out of their provider stream on the next chunk.
+- **`stop`** works today: the control plane looks a matchup up by id and aborts
+  it, replying `{ ok: true }` (or `ok: false` for an unknown/finished matchup).
+- **`steer`** is a **schema-validated, documented stub**: it returns a negative
+  ack (`accepted: false`) so the wire contract and seam exist, but the
+  instruction is not yet wired into the running producers.
 
 ## Multi-turn linear history
 
@@ -211,19 +262,28 @@ every pair reachable so the comparison graph stays connected. It is the default;
 
 ## Frontend
 
-`web/src/useArenaChat.ts` is a headless React hook: it POSTs the prompt,
-parses the multiplexed SSE stream into per-slot state, submits votes with the
-matchup token, and exposes revealed identities only after a successful vote.
-`web/src/useArenaLeaderboard.ts` fetches the leaderboard. `App.tsx` is a
-single-page demo (prompt box, two anonymous panes with markdown rendering,
-five vote buttons, reveal, leaderboard). When a model has a worker-computed
-rating, the leaderboard shows the Elo-like rating with its ±CI half-width;
-otherwise it falls back to the win-rate percentage. When a style-controlled
-rating exists, it is shown alongside as `style <rating>`.
+The headless hooks now live in the published **`@omni-arena/react`** SDK
+(`packages/react-sdk/`), and the demo imports them — a single source of truth.
+`useArenaChat` POSTs the prompt, parses the native SSE stream into per-slot
+state, submits votes with the matchup token, and exposes revealed identities
+only after a successful vote; `useArenaLeaderboard` fetches the leaderboard.
+Both accept an optional `baseUrl` (default `""` = same-origin/proxied). See
+[SDK](sdk.md).
+
+`web/src/App.tsx` is a single-page demo (prompt box, two anonymous panes with
+markdown rendering, five vote buttons, reveal, leaderboard) that consumes those
+hooks from `@omni-arena/react`. When a model has a worker-computed rating, the
+leaderboard shows the Elo-like rating with its ±CI half-width; otherwise it
+falls back to the win-rate percentage. When a style-controlled rating exists, it
+is shown alongside as `style <rating>`.
 
 ## What is intentionally not built yet
 
-Protocol adapters (Vercel AI SDK, AG-UI/A2UI, OpenAI SSE), the WebSocket control
-plane, and the published SDK package (Phase 4+); the OSS launch collateral
-(Phase 5). OmniArena does not scrub or redact stored prompts/responses — content
-is persisted as received.
+- **Mid-stream steering wiring** — the control plane's `steer` message is a
+  schema-validated, documented stub returning a negative ack; the instruction is
+  not yet threaded into the running producers in `ArenaCore`.
+- **Multimodal input** — deferred to Phase 5.
+- **Phase 5 OSS-launch collateral.**
+
+OmniArena does not scrub or redact stored prompts/responses — content is
+persisted as received.

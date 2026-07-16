@@ -3,10 +3,10 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   useArenaChat,
+  useArenaLeaderboard,
   type ArenaSlot,
   type ArenaVote,
-} from "./useArenaChat";
-import { useArenaLeaderboard } from "./useArenaLeaderboard";
+} from "@omni-arena/react";
 
 const voteOptions: Array<{ vote: ArenaVote; label: string }> = [
   { vote: "left", label: "A is better" },

@@ -21,13 +21,23 @@ export interface LeaderboardModel {
   styleControlledConfidenceInterval: { lower: number; upper: number } | null;
 }
 
-export function useArenaLeaderboard() {
+export interface UseArenaLeaderboardOptions {
+  /**
+   * Origin (or path prefix) the arena API is served from, e.g.
+   * `https://arena.example.com`. Defaults to "" so requests hit the
+   * same-origin `/api/arena/leaderboard` route the demo app proxies.
+   */
+  baseUrl?: string;
+}
+
+export function useArenaLeaderboard(options: UseArenaLeaderboardOptions = {}) {
+  const { baseUrl = "" } = options;
   const [models, setModels] = useState<LeaderboardModel[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      const response = await fetch("/api/arena/leaderboard");
+      const response = await fetch(`${baseUrl}/api/arena/leaderboard`);
       if (!response.ok) {
         throw new Error(`Leaderboard failed (${response.status})`);
       }
@@ -41,7 +51,7 @@ export function useArenaLeaderboard() {
         caught instanceof Error ? caught.message : "Leaderboard unavailable",
       );
     }
-  }, []);
+  }, [baseUrl]);
 
   useEffect(() => {
     void refresh();

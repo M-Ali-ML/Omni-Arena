@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { selectAdapter } from "../adapters/registry.js";
+import type { MatchupRegistry } from "../control/registry.js";
 import type { ArenaCore } from "../core/arena.js";
-import { toPublicEvent, type PublicArenaEvent } from "../core/events.js";
+import { toPublicEvent } from "../core/events.js";
 import type {
   ChatMessage,
   MatchmakingPort,
@@ -17,19 +19,14 @@ const chatRequest = z.object({
   conversationId: z.string().uuid().optional(),
 });
 
-function writeEvent(
-  response: NodeJS.WritableStream,
-  event: PublicArenaEvent,
-): void {
-  response.write(`event: ${event.type}\n`);
-  response.write(`data: ${JSON.stringify(event)}\n\n`);
-}
+const chatQuery = z.object({ protocol: z.string().optional() });
 
 export interface ChatRouteDependencies {
   core: ArenaCore;
   matchmaker: MatchmakingPort;
   repository: PreferenceRepositoryPort;
   tokens: MatchupTokenService;
+  registry: MatchupRegistry;
   harnessVersion: string;
 }
 
@@ -109,31 +106,35 @@ export function registerChatRoute(
       throw error;
     }
 
+    const query = chatQuery.safeParse(request.query);
+    const adapter = selectAdapter(
+      query.success ? query.data.protocol : undefined,
+      request.headers.accept,
+    );
     reply.hijack();
-    reply.raw.writeHead(200, {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-cache, no-transform",
-      connection: "keep-alive",
-      "x-accel-buffering": "no",
-    });
+    reply.raw.writeHead(200, adapter.headers);
 
-    writeEvent(reply.raw, {
-      type: "matchup_started",
-      matchupId,
-      matchupToken: issuedToken.token,
-      conversationId,
-      turnIndex,
-      slots: ["A", "B"],
-    });
+    reply.raw.write(
+      adapter.serialize({
+        type: "matchup_started",
+        matchupId,
+        matchupToken: issuedToken.token,
+        conversationId,
+        turnIndex,
+        slots: ["A", "B"],
+      }),
+    );
 
     const messages: ChatMessage[] = [
       ...history,
       { role: "user", content: parsed.data.prompt },
     ];
+    const controller = dependencies.registry.register(matchupId);
     try {
       for await (const event of dependencies.core.stream(
         messages,
         assignment,
+        controller.signal,
       )) {
         if (event.type === "slot_done") {
           await dependencies.repository.saveResponse({
@@ -152,9 +153,14 @@ export function registerChatRoute(
             error: event.error,
           });
         }
-        writeEvent(reply.raw, toPublicEvent(event));
+        reply.raw.write(adapter.serialize(toPublicEvent(event)));
       }
     } finally {
+      dependencies.registry.release(matchupId);
+      const tail = adapter.finalize();
+      if (tail) {
+        reply.raw.write(tail);
+      }
       reply.raw.end();
     }
   });

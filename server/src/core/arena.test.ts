@@ -117,4 +117,74 @@ describe("ArenaCore", () => {
     });
     expect(events.at(-1)).toEqual({ type: "matchup_done" });
   });
+
+  it("stops streaming promptly when the control-plane signal aborts", async () => {
+    const controller = new AbortController();
+    const core = new ArenaCore(
+      new Resolver({
+        a: {
+          async *stream() {
+            for (let index = 0; index < 100; index += 1) {
+              yield { type: "token" as const, token: `A${index}` };
+              await new Promise((resolve) => setTimeout(resolve, 1));
+            }
+          },
+        },
+        b: {
+          async *stream() {
+            yield { type: "token" as const, token: "B" };
+            await new Promise((resolve) => setTimeout(resolve, 10_000));
+          },
+        },
+      }),
+    );
+
+    const events = [];
+    for await (const event of core.stream(
+      [{ role: "user", content: "prompt" }],
+      assignment,
+      controller.signal,
+    )) {
+      events.push(event);
+      if (event.type === "token") {
+        controller.abort();
+      }
+    }
+
+    expect(events.length).toBeGreaterThan(0);
+    // Abort cuts the stream short — the 100-token producer never drains.
+    expect(events.filter((event) => event.type === "token").length).toBeLessThan(
+      100,
+    );
+  });
+
+  it("yields nothing when the signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const core = new ArenaCore(
+      new Resolver({
+        a: {
+          async *stream() {
+            yield { type: "token" as const, token: "A" };
+          },
+        },
+        b: {
+          async *stream() {
+            yield { type: "token" as const, token: "B" };
+          },
+        },
+      }),
+    );
+
+    const events = [];
+    for await (const event of core.stream(
+      [{ role: "user", content: "prompt" }],
+      assignment,
+      controller.signal,
+    )) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([]);
+  });
 });

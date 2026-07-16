@@ -2,7 +2,7 @@
 
 Requirements: Node.js 20+, npm, Docker. Python 3.10+ for the rating worker.
 
-Related: [Architecture](architecture.md) · [API](api.md) · [Data model](data-model.md)
+Related: [Architecture](architecture.md) · [API](api.md) · [Data model](data-model.md) · [SDK](sdk.md)
 
 ## Quick start
 
@@ -16,6 +16,19 @@ npm run dev               # server on :3001, web on :5173
 ```
 
 Open http://localhost:5173.
+
+## Workspaces
+
+The repo is an npm workspace monorepo. The root `workspaces` array lists them in
+build order — `server`, `packages/react-sdk`, then `web` — so `npm run build`
+compiles the SDK **before** the demo that depends on it:
+
+| Workspace | Path | Notes |
+|---|---|---|
+| `@omni-arena/server` | `server/` | Fastify API. New dependency `@fastify/websocket` powers the `/api/arena/control` WebSocket control plane. |
+| `@omni-arena/react` | `packages/react-sdk/` | Published headless React SDK (`useArenaChat`, `useArenaLeaderboard`). The demo consumes it. See [SDK](sdk.md). |
+| `@omni-arena/web` | `web/` | Vite + React demo; imports `@omni-arena/react` (workspace `*`). |
+| `omniarena-rating` | `worker/` | Python rating worker (not an npm workspace). |
 
 ## Environment variables
 
@@ -104,17 +117,29 @@ after the first successful refit; until then the rating fields are null.
 | Command | What it does |
 |---|---|
 | `npm run dev` | Server (`tsx watch`) and web (Vite) concurrently |
-| `npm test` | Server (Vitest, includes pg-mem integration test) and web (Vitest + jsdom hook tests) |
-| `npm run build` | Server `tsc` build and web production bundle |
-| `npm run typecheck` | Both workspaces |
+| `npm test` | `npm run test --workspaces` — runs each workspace's Vitest in its own dir: server (pg-mem integration test), react-sdk (jsdom hook tests), web (no tests, `--passWithNoTests`) |
+| `npm run build` | Builds all workspaces in order: server `tsc`, react-sdk `tsc`, web production bundle |
+| `npm run typecheck` | All workspaces |
+
+Run one workspace with `npm test --workspace <name>`, e.g.
+`npm test --workspace @omni-arena/react`.
 
 ## Testing notes
 
 - Server tests use in-memory ports and `pg-mem`; no running Postgres or API
   keys needed.
-- Web hook tests (`web/src/useArenaChat.test.ts`) run under jsdom and stub
+- The hook tests moved out of `web/` into the SDK:
+  `packages/react-sdk/src/useArenaChat.test.ts`. They run under jsdom and stub
   `fetch` with real SSE `ReadableStream` bodies. `localStorage` is stubbed
   because Node 24's experimental global shadows jsdom's implementation.
+- **Gotcha — run tests per workspace, not a bare `vitest` at the repo root.**
+  The `jsdom` environment is configured per workspace (in each workspace's
+  `vitest.config.ts`), and there is no root Vitest config. Running `vitest`
+  directly from the repo root picks up the default Node environment and the SDK
+  hook test fails with `ReferenceError: document is not defined`. Use the
+  per-workspace scripts instead — `npm test` (which delegates to
+  `npm run test --workspaces`) or `npm test --workspace @omni-arena/react` — both
+  of which run in the workspace dir with the right jsdom config and pass.
 - Rating worker tests (`worker/tests/`) are pure Python via `pytest`: no live
   database. They check the analytic gradient against finite differences,
   recover known synthetic ratings, verify tie modeling and anchoring, confirm

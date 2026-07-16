@@ -13,6 +13,7 @@
   main { max-width: 900px; margin: 0 auto; padding: 64px 24px; }
   h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 8px; }
   h2 { font-size: 24px; font-weight: 600; margin: 64px 0 16px; }
+  h3 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; }
   .crumb { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
   .crumb a { color: var(--muted); text-decoration: none; }
   .crumb a:hover { color: var(--text); }
@@ -31,7 +32,7 @@
 </head>
 <body>
 <main>
-  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a></div>
+  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a> · <a href="sdk.html">SDK</a></div>
   <h1>API</h1>
   <p class="lede">Base URL <span class="mono">http://localhost:3001</span>. JSON bodies. The web dev server proxies <span class="mono">/api</span> and <span class="mono">/health</span>.</p>
 
@@ -56,6 +57,41 @@
     <tr><td class="mono">404</td><td>Unknown conversation</td></tr>
     <tr><td class="mono">409</td><td>No decisive winner yet, or the conversation already advanced</td></tr>
   </table>
+
+  <h3>Protocol selection</h3>
+  <p>The same matchup stream can be framed in five wire protocols. Precedence: <span class="mono">?protocol=</span> query param → <span class="mono">Accept</span> media type → default <strong>native SSE</strong>. An unknown <span class="mono">?protocol=</span> falls back to SSE, so native SSE is byte-for-byte unchanged and existing clients (demo + SDK) are unaffected.</p>
+  <table>
+    <tr><th>Protocol</th><th><span class="mono">?protocol=</span> aliases</th><th><span class="mono">Accept</span> media type(s)</th><th>Response <span class="mono">content-type</span></th></tr>
+    <tr><td>Native SSE <span class="chip">default</span></td><td class="mono">sse · native · native-sse</td><td class="mono">text/event-stream</td><td class="mono">text/event-stream</td></tr>
+    <tr><td>AG-UI</td><td class="mono">agui · ag-ui</td><td class="mono">application/vnd.ag-ui+json</td><td class="mono">text/event-stream</td></tr>
+    <tr><td>A2UI</td><td class="mono">a2ui</td><td class="mono">application/vnd.a2ui+json · application/x-ndjson</td><td class="mono">application/x-ndjson</td></tr>
+    <tr><td>Vercel AI SDK</td><td class="mono">vercel · vercel-ai · ai-sdk</td><td class="mono">application/vnd.vercel.ai.ui-message-stream+json</td><td class="mono">text/event-stream + x-vercel-ai-ui-message-stream: v1</td></tr>
+    <tr><td>OpenAI SSE</td><td class="mono">openai · openai-sse</td><td class="mono">application/vnd.openai.chat-chunk+json</td><td class="mono">text/event-stream</td></tr>
+  </table>
+  <div class="callout"><strong>Same semantics, different framing.</strong> Every protocol carries the identical <span class="mono">matchup_started</span> → <span class="mono">token</span> → <span class="mono">slot_error</span> → <span class="mono">slot_done</span> → <span class="mono">matchup_done</span> sequence over two slots (A, B); only the wire shape differs, and every frame is schema-validated before it is written.</div>
+  <table>
+    <tr><th>Protocol</th><th>Framing</th></tr>
+    <tr><td>Native SSE</td><td><span class="mono">event:</span>/<span class="mono">data:</span> pairs, one per event; no trailing sentinel (the event table above).</td></tr>
+    <tr><td>AG-UI</td><td>Typed AG-UI events, one <span class="mono">data:</span> line each, over SSE: <span class="mono">RUN_STARTED</span> + a <span class="mono">TEXT_MESSAGE_START</span> per slot → <span class="mono">TEXT_MESSAGE_CONTENT</span> (delta, slot) → <span class="mono">CUSTOM</span> <span class="mono">slot_error</span> → <span class="mono">TEXT_MESSAGE_END</span> → <span class="mono">RUN_FINISHED</span>. <span class="mono">runId</span>=matchup, <span class="mono">threadId</span>=conversation.</td></tr>
+    <tr><td>A2UI</td><td>Schema-validated <strong>NDJSON</strong> (one flat JSON object per line, versioned <span class="mono">a2ui/1</span>), two surfaces A/B: <span class="mono">surface_init</span> → <span class="mono">text_append</span> → <span class="mono">error</span> → <span class="mono">surface_done</span> → <span class="mono">session_done</span>.</td></tr>
+    <tr><td>Vercel AI SDK</td><td>AI SDK UI Message Stream over SSE. Slot A on the primary text channel (<span class="mono">start</span> → <span class="mono">data-arena-meta</span> → <span class="mono">text-start/-delta/-end</span>); slot B via custom data parts (<span class="mono">data-arena-b-delta</span> / <span class="mono">-b-done</span>); errors via <span class="mono">data-arena-error</span>; ends <span class="mono">finish</span> + <span class="mono">data: [DONE]</span>.</td></tr>
+    <tr><td>OpenAI SSE</td><td><span class="mono">chat.completion.chunk</span> frames; slots on <span class="mono">choices[0]</span> (A) / <span class="mono">choices[1]</span> (B). <span class="mono">role: assistant</span> on start, <span class="mono">content</span> deltas, <span class="mono">finish_reason: "stop"</span> on done; single-slot errors inline as <span class="mono">content</span>; ends <span class="mono">data: [DONE]</span>.</td></tr>
+  </table>
+  <div class="callout">The <a href="sdk.html">@omni-arena/react</a> SDK and the demo app consume the default native SSE stream.</div>
+
+  <h2><span class="method">WS</span><span class="mono">/api/arena/control</span></h2>
+  <p>The <strong>control plane</strong>: a bidirectional WebSocket that acts on an in-flight matchup out-of-band from the token stream. Messages are JSON in both directions.</p>
+<pre><code>→ { "type": "stop", "matchupId": "&lt;uuid&gt;" }
+← { "type": "stopped", "matchupId": "&lt;uuid&gt;", "ok": true }
+
+→ { "type": "steer", "matchupId": "&lt;uuid&gt;", "instruction": "be more concise" }
+← { "type": "steer_ack", "matchupId": "&lt;uuid&gt;", "accepted": false, "reason": "…" }</code></pre>
+  <table>
+    <tr><th>Message</th><th>Behavior</th></tr>
+    <tr><td class="mono">stop</td><td>Aborts the matchup's stream via the matchup registry's <span class="mono">AbortController</span> (signal threaded through <span class="mono">ArenaCore.stream</span>). <span class="mono">ok:false</span> when the matchup is unknown — never started, already finished, or already stopped.</td></tr>
+    <tr><td class="mono">steer</td><td><strong>Stubbed extension point.</strong> Schema-validated (<span class="mono">instruction</span> non-empty) and documented, but not yet wired into the core — always a negative ack so the wire contract and seam exist ahead of the implementation.</td></tr>
+  </table>
+  <div class="callout">Invalid JSON → <span class="mono">{ type: "error", message: "Invalid JSON control message" }</span>; an unknown/malformed message (including a non-UUID <span class="mono">matchupId</span>) → <span class="mono">{ type: "error", message: "Unknown or malformed control message" }</span>.</div>
 
   <h2><span class="method">POST</span><span class="mono">/api/arena/vote</span></h2>
   <p>Records one vote, then reveals model identities.</p>
