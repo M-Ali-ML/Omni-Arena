@@ -10,5 +10,7 @@ __pycache__/
 coverage/
 *.log
 *.tsbuildinfo
+
+# Local-only working material (planning, research, agent logs, explainers).
 artifacts/
 plans/

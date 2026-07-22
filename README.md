@@ -112,14 +112,10 @@ the end-to-end suite (`npm run e2e`). See
 
 ## Documentation
 
-Current-state docs live in [`docs/md/`](docs/md/) (with condensed visual
-counterparts in [`docs/html/`](docs/html/)):
+Docs live in [`docs/md/`](docs/md/) (with condensed visual counterparts in
+[`docs/html/`](docs/html/)):
 [architecture](docs/md/architecture.md) · [API](docs/md/api.md) ·
 [integration](docs/md/integration.md) ·
 [rating methodology](docs/md/rating-methodology.md) ·
 [data model](docs/md/data-model.md) · [setup](docs/md/setup.md) ·
 [SDK](docs/md/sdk.md).
-
-Planning documents (target architecture, MVP scope, PRD) are in
-[`pre-docs/`](pre-docs/); the detailed MVP scope is
-[`pre-docs/mvp.md`](pre-docs/mvp.md).

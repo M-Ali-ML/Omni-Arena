@@ -13,7 +13,6 @@ coverage
 # Not needed to build or run the app image.
 worker
 docs
-pre-docs
 artifacts
 plans
 **/*.test.ts

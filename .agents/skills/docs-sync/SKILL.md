@@ -37,7 +37,7 @@ Both files must always carry the same information — the HTML is a denser, more
 
 ## HTML Docs (`docs/html/`)
 
-Self-contained HTML files (inline `<style>`, no build step, no external CSS/JS) that follow the **Structured Clarity** design system defined in `pre-docs/design.md`. Read that file for the full token set. Key rules:
+Self-contained HTML files (inline `<style>`, no build step, no external CSS/JS) that follow the **Structured Clarity** design system defined in `artifacts/pre-docs/design.md` (local-only, gitignored). Read that file for the full token set. Key rules:
 
 - **Fonts:** Inter for text, Geist for code/IDs/metrics (load from Google Fonts via `<link>`).
 - **Colors:** white `#FFFFFF` canvas; `#F7F7F5` surfaces for callouts and sidebars; `#37352F` charcoal for text and primary elements; `#E9E9E7` borders; `#ACABA9` muted metadata. Monochromatic base — color only for status indicators.

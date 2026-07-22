@@ -151,7 +151,7 @@ data: {"type":"RUN_FINISHED","threadId":"c1","runId":"m1"}
 - **Suits:** agentic frontends that speak AG-UI — CopilotKit, LangGraph,
   CrewAI, and assistant-ui's first-party
   [`@assistant-ui/react-ag-ui`](https://github.com/assistant-ui/assistant-ui)
-  runtime (see the [integration research](../../artifacts/research/2026-07-15-integration-targets.md)).
+  runtime.
   The [`examples/assistant-ui/`](../../examples/assistant-ui/) app runs on
   assistant-ui; it uses the AI SDK runtime for the votable round-trip, but
   assistant-ui also ships the AG-UI runtime that consumes this adapter.
@@ -242,8 +242,7 @@ data: [DONE]
   vs `data`) — so the AI SDK path is **votable** without a second channel.
 - **Suits:** the React + Vercel AI SDK family — the
   [Vercel AI Chatbot template](https://github.com/vercel/ai-chatbot), Lobe Chat,
-  and any `useChat` app. The highest-leverage surface per the
-  [integration research](../../artifacts/research/2026-07-15-integration-targets.md).
+  and any `useChat` app.
 - **Runnable example:** [`examples/vercel-ai-chatbot/`](../../examples/vercel-ai-chatbot/)
   — a Next.js 16 App Router app whose server route forwards to this adapter and
   pipes the UI Message Stream straight to a stock `useChat` client.
@@ -287,8 +286,7 @@ data: [DONE]
 - **Suits:** the OpenAI-compatible chat-UI "big three" — Open WebUI (the largest
   audience, SvelteKit + FastAPI, reachable only via this adapter), LibreChat, and
   Lobe Chat — plus Chatbot-UI-class frontends. The universal fallback that
-  reaches non-React stacks cheaply (see the
-  [integration research](../../artifacts/research/2026-07-15-integration-targets.md)).
+  reaches non-React stacks cheaply.
 
 ---
 

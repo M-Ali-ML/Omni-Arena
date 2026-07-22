@@ -9,7 +9,7 @@ description: Conducts deep web research on the product being built — market la
 
 Strong, evidence-based market research using live web search. Every claim must be backed by a source; every conclusion must distinguish fact from inference. The output is a decision-ready report, not a link dump.
 
-Before starting, read the product context so the research is grounded in what is actually being built: `README.md`, `pre-docs/PRD.md`, `pre-docs/mvp.md`, and `pre-docs/user-stories.md` (or their equivalents in the current project).
+Before starting, read the product context so the research is grounded in what is actually being built: `README.md`, `artifacts/pre-docs/PRD.md`, `artifacts/pre-docs/mvp.md`, and `artifacts/pre-docs/user-stories.md` (local-only, gitignored — or their equivalents in the current project).
 
 ## Research Dimensions
 
@@ -69,7 +69,7 @@ a chat answer or a mere offer. Save it under `artifacts/research/` as
 - `artifacts/` is git-ignored, so reports persist locally without cluttering the
   repo history — write there by default, no need to ask first.
 - If the user explicitly wants the report tracked in git, save it somewhere
-  outside `artifacts/` (e.g. `pre-docs/research/`) and tell them it will be
+  outside `artifacts/` (e.g. a tracked `docs/` path) and tell them it will be
   committed.
 - After writing, tell the user the path and give a one-line summary. For trivial
   or exploratory questions that don't warrant a file, just answer in chat.
