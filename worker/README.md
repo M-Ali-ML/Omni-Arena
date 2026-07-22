@@ -1,9 +1,9 @@
 # OmniArena Rating Worker
 
 A standalone Python worker that turns aggregated pairwise votes into a
-statistically principled leaderboard. This is the Phase 2 **style-agnostic**
-default rating engine (vision §4.1, §4.2, §4.4). Style-controlled ratings,
-anomaly detection, and smart matchmaking are Phase 3 and are **not** here.
+statistically principled leaderboard. The default path is the **style-agnostic**
+Bradley-Terry fit; a heavier periodic pass adds style-controlled ratings and a
+pre-fit anomaly screen. Smart matchmaking lives in the Node server, not here.
 
 ## What it does
 

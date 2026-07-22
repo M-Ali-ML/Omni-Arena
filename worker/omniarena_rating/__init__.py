@@ -6,10 +6,10 @@ prior for identifiability and regularisation, Fisher-information confidence
 intervals validated by a multinomial bootstrap, and comparison-graph
 connectivity detection (the fast, style-agnostic default path).
 
-Phase 3 adds a heavier periodic pass: a joint style-controlled Bradley-Terry
-regression that folds verbosity/formatting/latency/position confounders into
-the same logistic fit, plus a p-value based anomaly screen that drops spam or
-malicious voting sessions before any fit runs.
+A heavier periodic pass adds a joint style-controlled Bradley-Terry regression
+that folds verbosity/formatting/latency/position confounders into the same
+logistic fit, plus a p-value based anomaly screen that drops spam or malicious
+voting sessions before any fit runs.
 """
 
 from __future__ import annotations

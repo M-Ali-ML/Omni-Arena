@@ -95,7 +95,7 @@ selected protocol adapter for framing. Internal completion events include TTFT,
 stream duration, token count/source, Markdown density, and provider-reported
 model version. Each matchup stores the configured `HARNESS_VERSION`.
 
-## Egress: the protocol-adapter layer (Phase 4)
+## Egress: the protocol-adapter layer
 
 There is exactly one internal event stream. Every event an adapter is allowed to
 emit is described by the zod `publicArenaEventSchema` in
@@ -122,7 +122,7 @@ See [API → Protocol selection](api.md) for the aliases, media types, and
 per-protocol framing. The key invariant: internal event **semantics are
 identical across protocols**; only the framing differs.
 
-## WebSocket control plane (Phase 4)
+## WebSocket control plane
 
 `GET /api/arena/control` (`server/src/routes/control.ts`, registered via
 `@fastify/websocket` in `server/src/app.ts`) is a bidirectional channel that
@@ -189,12 +189,12 @@ the Fastify request path, and follows a strict *aggregate-then-compute* design.
 
 | Step | Module | What it does |
 |---|---|---|
-| Anomaly screen | `anomaly.py` | Runs **before** aggregation: p-value tests over anonymous sessions flag spam/malicious voters, whose votes are excluded from the fit. See [Anomaly detection](#anomaly-detection-phase-3). |
+| Anomaly screen | `anomaly.py` | Runs **before** aggregation: p-value tests over anonymous sessions flag spam/malicious voters, whose votes are excluded from the fit. See [Anomaly detection](#anomaly-detection). |
 | Aggregate | `aggregate.py` | One SQL `GROUP BY` collapses `preferences` ⋈ `matchups` into canonical `(model_lo, model_hi, wins_lo, wins_hi, ties)` triples. `skip` and flagged sessions excluded. O(votes) → O(model pairs); raw rows never leave Postgres. |
 | Fit | `bradley_terry.py` | Log-parameterized BT (`r_i = log θ_i`) MLE via SciPy **L-BFGS-B** with an analytic gradient. **Rao-Kupper** tie modeling (symmetric ordered logit, threshold `±η`). Weak **ridge prior** for identifiability + regularization. **Sum-to-zero anchoring**. **Warm-start** for incremental refits. |
 | Intervals | `confidence.py` | Primary CIs from the **inverse Hessian** (observed Fisher information / Laplace approximation), projected through the anchoring contrast. A **multinomial bootstrap** over the aggregated triples validates them. |
 | Connectivity | `connectivity.py` | Union-find over the comparison graph; ratings only comparable within a connected component. Isolated models get their own component id and wide intervals. |
-| Style control | `style.py` | Heavier **periodic pass** on raw votes: joint style-controlled BT regression. See [Style-controlled ratings](#style-controlled-ratings-phase-3). |
+| Style control | `style.py` | Heavier **periodic pass** on raw votes: joint style-controlled BT regression. See [Style-controlled ratings](#style-controlled-ratings). |
 | Write back | `writeback.py` | Idempotent upsert into `model_ratings` (default) and `model_style_ratings` + `style_control_coefficients` (style pass). |
 
 Ratings are reported on an Elo-like display scale
@@ -221,7 +221,7 @@ covariance exists. Standard errors are projected through the sum-to-zero
 contrast so they describe the identified ratings, and the multinomial bootstrap
 independently confirms them.
 
-### Style-controlled ratings (Phase 3)
+### Style-controlled ratings
 
 Human voters reward superficial traits — longer answers, heavier markdown,
 faster first tokens, and the left-hand slot — that inflate a model's apparent
@@ -248,7 +248,7 @@ per connected component) and the fitted coefficients in
 `style_control_coefficients`. The leaderboard exposes them as
 `styleControlledRating`.
 
-### Anomaly detection (Phase 3)
+### Anomaly detection
 
 `anomaly.py` screens anonymous voting sessions **before** any fit, using
 `preferences.anonymous_session_id`. Each session runs three p-value tests, and
@@ -264,7 +264,7 @@ any rejection (Bonferroni-adjusted at $\alpha/3$) excludes the session:
 Excluded sessions are dropped from both the default aggregation and the style
 pass. The screen is on by default; `--no-anomaly-filter` disables it.
 
-### Smart matchmaking (Phase 3)
+### Smart matchmaking
 
 `SmartMatchmaker` (`server/src/matchmaking/smart.ts`) replaces uniform pair
 selection behind the same `MatchmakingPort`. It reads pair game counts and each

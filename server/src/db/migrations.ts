@@ -7,6 +7,13 @@ const migrationsDir = path.dirname(
   fileURLToPath(new URL("./migrations/001_initial.sql", import.meta.url)),
 );
 
+/** Old filenames → current names (existing DBs may still record the old ones). */
+const MIGRATION_RENAMES: ReadonlyArray<readonly [string, string]> = [
+  ["002_phase_one.sql", "002_conversations_and_turns.sql"],
+  ["003_phase_two.sql", "003_model_ratings.sql"],
+  ["004_phase_three.sql", "004_style_ratings.sql"],
+];
+
 export async function runMigrations(pool: Pool): Promise<string[]> {
   // Existence check instead of IF NOT EXISTS: pg-mem (used in tests) fails
   // AST coverage when CREATE TABLE IF NOT EXISTS hits an existing table.
@@ -21,6 +28,13 @@ export async function runMigrations(pool: Pool): Promise<string[]> {
         applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`,
     );
+  } else {
+    for (const [from, to] of MIGRATION_RENAMES) {
+      await pool.query(
+        `UPDATE schema_migrations SET name = $1 WHERE name = $2`,
+        [to, from],
+      );
+    }
   }
 
   const files = (await readdir(migrationsDir))

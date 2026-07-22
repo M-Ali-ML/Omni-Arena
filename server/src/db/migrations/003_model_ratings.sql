@@ -1,4 +1,4 @@
--- Phase 2: persisted Bradley-Terry ratings written by the Python worker.
+-- Persisted Bradley-Terry ratings written by the Python worker.
 -- One row per model, upserted on every refit. Absent rows mean the worker has
 -- not rated that model yet; the leaderboard exposes null rating fields then.
 CREATE TABLE model_ratings (

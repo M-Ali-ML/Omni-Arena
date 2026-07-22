@@ -115,7 +115,7 @@
   </div>
   <div class="callout">Internal completion events capture TTFT, duration, provider/estimated tokens, Markdown density, and provider-reported model version. Public <span class="mono">slot_done</span> strips them; every matchup stores <span class="mono">HARNESS_VERSION</span>. The chat route hands each public event to the selected protocol adapter for framing.</div>
 
-  <h2>Egress: protocol-adapter layer (Phase 4)</h2>
+  <h2>Egress: protocol-adapter layer</h2>
   <p>One internal event stream (zod <span class="mono">publicArenaEventSchema</span> in <span class="mono">core/events.ts</span>) is fanned out to <strong>five wire protocols</strong> through a small egress port, so the chat route knows no framing details.</p>
   <div class="flow">
     <div class="row">
@@ -138,7 +138,7 @@
   </table>
   <div class="callout">Unknown <span class="mono">?protocol=</span> values fall back to native SSE, so the demo, the SDK, and existing clients are unaffected. Internal event <strong>semantics are identical across protocols</strong>; only the framing differs. See <a href="api.html">API → Protocol selection</a> for aliases, media types, and framing.</div>
 
-  <h2>WebSocket control plane (Phase 4)</h2>
+  <h2>WebSocket control plane</h2>
   <p><span class="mono">GET /api/arena/control</span> (registered via <span class="mono">@fastify/websocket</span> in <span class="mono">app.ts</span>) acts on an in-flight matchup out-of-band from the token stream.</p>
   <div class="flow">
     <div class="row">
@@ -203,7 +203,7 @@
     <span class="chip">warm-start refits</span>
   </div>
 
-  <h2>Style-controlled ratings (Phase 3)</h2>
+  <h2>Style-controlled ratings</h2>
   <p>Following LMSYS, <span class="mono">style.py</span> folds voter confounders into the <strong>same</strong> BT logistic regression as covariates: <span class="mono">d = (r_a − r_b) + β·x</span>, <span class="mono">P(A≻B) = σ(d − η)</span>. Strengths and style coefficients are fit jointly with a ridge on all of them; because the per-vote deltas <span class="mono">x</span> vary, it runs on raw <span class="mono">preferences ⋈ matchups ⋈ responses</span> rows — a heavier pass (<span class="mono">--style</span>) kept off the fast path. Exposed as <span class="mono">styleControlledRating</span>.</p>
   <div>
     <span class="chip">position (left-slot)</span>
@@ -213,7 +213,7 @@
     <span class="chip">latency (duration)</span>
   </div>
 
-  <h2>Anomaly detection (Phase 3)</h2>
+  <h2>Anomaly detection</h2>
   <p><span class="mono">anomaly.py</span> screens anonymous sessions <strong>before</strong> any fit (Bonferroni-adjusted at α/3); a rejection excludes the session from both passes.</p>
   <table>
     <tr><th>Test</th><th>Null hypothesis</th><th>Catches</th></tr>
@@ -223,7 +223,7 @@
   </table>
   <div class="callout">On by default; <span class="mono">--no-anomaly-filter</span> disables it.</div>
 
-  <h2>Smart matchmaking (Phase 3)</h2>
+  <h2>Smart matchmaking</h2>
   <p><span class="mono">SmartMatchmaker</span> replaces uniform pair selection behind the same <span class="mono">MatchmakingPort</span>. It samples a pair proportional to an <strong>information score</strong>: <span class="mono">coldness = 1/(1+games)</span> (favor under-evaluated pairs) plus normalized rating-interval width (favor high-variance matchups; unrated models count as maximally uncertain). A small floor keeps every pair reachable. Default; <span class="mono">MATCHMAKER=random</span> restores the uniform matchmaker.</p>
 
   <h2>Frontend</h2>

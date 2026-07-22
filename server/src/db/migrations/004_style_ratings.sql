@@ -1,4 +1,4 @@
--- Phase 3: style-controlled ratings written by the heavier periodic worker pass.
+-- Style-controlled ratings written by the heavier periodic worker pass.
 --
 -- Kept in a sibling table (not merged into model_ratings) because the
 -- style-controlled fit is a separate, slower computation over raw votes and may

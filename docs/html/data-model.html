@@ -66,10 +66,10 @@
     <tr><td class="mono">preferences</td><td class="mono">winner_model_id</td><td>Null for ties and skips.</td></tr>
     <tr><td class="mono">preferences</td><td class="mono">position_bias_meta</td><td>JSONB, currently <span class="mono">{ selectedSlot }</span> — future style/bias analytics hook.</td></tr>
     <tr><td class="mono">preferences</td><td class="mono">anonymous_session_id</td><td>Carried from the matchup token claims.</td></tr>
-    <tr><td class="mono">model_ratings</td><td class="mono">rating + ci_lower/ci_upper</td><td>Elo-like rating <span class="mono">1000 + (400/ln10)·r</span> with 95% Fisher-information CI. Worker-written (migration <span class="mono">003_phase_two.sql</span>).</td></tr>
+    <tr><td class="mono">model_ratings</td><td class="mono">rating + ci_lower/ci_upper</td><td>Elo-like rating <span class="mono">1000 + (400/ln10)·r</span> with 95% Fisher-information CI. Worker-written (migration <span class="mono">003_model_ratings.sql</span>).</td></tr>
     <tr><td class="mono">model_ratings</td><td class="mono">component_id</td><td>Connected-component id; ratings only comparable within a component.</td></tr>
     <tr><td class="mono">model_ratings</td><td class="mono">games + computed_at</td><td>Non-skip votes involving the model and the refit timestamp; upserted per model.</td></tr>
-    <tr><td class="mono">model_style_ratings</td><td class="mono">style_controlled_rating + style_ci_lower/upper</td><td>Elo-like rating with verbosity/formatting/latency/position regressed out, with 95% CI. Style-pass-written (migration <span class="mono">004_phase_three.sql</span>).</td></tr>
+    <tr><td class="mono">model_style_ratings</td><td class="mono">style_controlled_rating + style_ci_lower/upper</td><td>Elo-like rating with verbosity/formatting/latency/position regressed out, with 95% CI. Style-pass-written (migration <span class="mono">004_style_ratings.sql</span>).</td></tr>
     <tr><td class="mono">style_control_coefficients</td><td class="mono">feature + coefficient</td><td>One row per confounder (position, verbosity, formatting, latency_ttft, latency_duration); upserted each style pass.</td></tr>
   </table>
   <div class="callout"><strong>Persistence:</strong> prompts and responses are stored as received; OmniArena does not transform or redact content.</div>

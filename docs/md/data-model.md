@@ -99,7 +99,7 @@ One vote per matchup, enforced by a unique constraint on `matchup_id`.
 ### model_ratings
 
 Bradley-Terry ratings written by the Python worker (`worker/`, migration
-`003_phase_two.sql`). One row per model, upserted on every refit. A missing row
+`003_model_ratings.sql`). One row per model, upserted on every refit. A missing row
 means the worker has not yet rated that model; the leaderboard then returns
 null rating fields.
 
@@ -119,7 +119,7 @@ wins_hi, ties)` triples — never from raw vote rows.
 ### model_style_ratings
 
 Style-controlled Bradley-Terry ratings written by the worker's heavier periodic
-pass (`worker/style.py`, migration `004_phase_three.sql`). Kept in a sibling
+pass (`worker/style.py`, migration `004_style_ratings.sql`). Kept in a sibling
 table (not merged into `model_ratings`) because the style fit is a slower,
 separate computation over raw votes and may lag the default leaderboard. A
 missing row means the style pass has not rated that model; the leaderboard then
