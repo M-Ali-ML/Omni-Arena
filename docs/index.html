@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmniArena · Docs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --text: #37352F; --surface: #F7F7F5; --border: #E9E9E7; --muted: #ACABA9;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #FFFFFF; color: var(--text);
+    font: 400 16px/1.6 Inter, sans-serif;
+  }
+  main { max-width: 900px; margin: 0 auto; padding: 64px 24px; }
+  h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 8px; }
+  .lede { font-size: 18px; margin: 0 0 40px; }
+  .meta { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+  .meta a { color: var(--muted); text-decoration: none; }
+  .meta a:hover { color: var(--text); }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+  }
+  a.card {
+    display: block;
+    background: #FFFFFF;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    text-decoration: none;
+    color: var(--text);
+    transition: box-shadow 0.15s ease;
+  }
+  a.card:hover { box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+  a.card .t { font-weight: 600; font-size: 16px; margin: 0 0 6px; }
+  a.card .d { color: var(--muted); font-size: 13px; line-height: 1.45; margin: 0; }
+  .mono { font-family: "Geist Mono", monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="meta"><a href="https://github.com/M-Ali-ML/Omni-Arena">GitHub</a> · Visual docs</div>
+  <h1>OmniArena</h1>
+  <p class="lede">Blind side-by-side LLM comparisons — architecture, API, integration, ratings, and the React SDK.</p>
+
+  <div class="grid">
+    <a class="card" href="html/architecture.html">
+      <div class="t">Architecture</div>
+      <p class="d">System overview: protocol adapters, control plane, matchmaking, and the rating worker.</p>
+    </a>
+    <a class="card" href="html/api.html">
+      <div class="t">API</div>
+      <p class="d">Chat, vote, leaderboard, and WebSocket control — routes, events, and protocol selection.</p>
+    </a>
+    <a class="card" href="html/integration.html">
+      <div class="t">Integration</div>
+      <p class="d">Five wire protocols (SSE, AG-UI, A2UI, Vercel AI, OpenAI) and when to use each.</p>
+    </a>
+    <a class="card" href="html/rating-methodology.html">
+      <div class="t">Rating methodology</div>
+      <p class="d">Bradley-Terry / Rao-Kupper fit, Fisher CIs, style control, and anomaly screening.</p>
+    </a>
+    <a class="card" href="html/data-model.html">
+      <div class="t">Data model</div>
+      <p class="d">Postgres tables for matchups, votes, ratings, and style-controlled scores.</p>
+    </a>
+    <a class="card" href="html/setup.html">
+      <div class="t">Setup</div>
+      <p class="d">Docker one-command self-host and the npm development path.</p>
+    </a>
+    <a class="card" href="html/sdk.html">
+      <div class="t">SDK</div>
+      <p class="d"><span class="mono">@omni-arena/react</span> — headless hooks for chat, voting, and the leaderboard.</p>
+    </a>
+  </div>
+</main>
+</body>
+</html>

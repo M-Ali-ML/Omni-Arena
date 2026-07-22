@@ -112,8 +112,11 @@ the end-to-end suite (`npm run e2e`). See
 
 ## Documentation
 
-Docs live in [`docs/md/`](docs/md/) (with condensed visual counterparts in
-[`docs/html/`](docs/html/)):
+Browse the visual docs on GitHub Pages:
+[https://m-ali-ml.github.io/Omni-Arena/](https://m-ali-ml.github.io/Omni-Arena/).
+
+Source lives in [`docs/md/`](docs/md/) (Markdown) with condensed counterparts in
+[`docs/html/`](docs/html/):
 [architecture](docs/md/architecture.md) · [API](docs/md/api.md) ·
 [integration](docs/md/integration.md) ·
 [rating methodology](docs/md/rating-methodology.md) ·
