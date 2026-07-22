@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmniArena · Integration guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root { --text: #37352F; --surface: #F7F7F5; --border: #E9E9E7; --muted: #ACABA9; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #FFFFFF; color: var(--text); font: 400 16px/1.6 Inter, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 64px 24px; }
+  h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; margin: 64px 0 16px; }
+  h3 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; }
+  .crumb { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+  .crumb a { color: var(--muted); text-decoration: none; }
+  .crumb a:hover { color: var(--text); }
+  .lede { font-size: 18px; margin: 0; }
+  code, .mono { font-family: "Geist Mono", monospace; font-size: 13px; }
+  code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+  pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; font-size: 12px; }
+  pre code { background: none; border: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--surface); font-weight: 600; }
+  .callout { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 16px 0; font-size: 14px; }
+  .chip { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 9999px; padding: 2px 10px; font-size: 12px; margin: 2px; }
+  .flow { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .node { flex: 1 1 150px; background: #FFFFFF; border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; font-size: 14px; min-width: 140px; }
+  .node.dim { background: var(--surface); }
+  .node .t { font-weight: 600; }
+  .node .d { color: var(--muted); font-size: 12px; }
+  .arrow { text-align: center; color: var(--muted); font-size: 13px; }
+  .ok { color: #37352F; font-weight: 600; }
+  .no { color: #ACABA9; }
+</style>
+</head>
+<body>
+<main>
+  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="integration.html">Integration</a> · <a href="rating-methodology.html">Rating methodology</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a> · <a href="sdk.html">SDK</a></div>
+  <h1>Integration guide</h1>
+  <p class="lede">One blind matchup — two anonymous models, one connection — framed in <strong>five wire protocols</strong> through a pluggable egress-adapter layer (<span class="mono">server/src/adapters/</span>). Pick the protocol that matches your stack.</p>
+
+  <h2>One stream, five framings</h2>
+  <p>Every protocol carries the identical internal sequence over two slots (A, B); only the framing differs. Each frame is schema-validated (<span class="mono">publicArenaEventSchema</span>) before it is written.</p>
+  <div class="flow">
+    <div class="row"><div class="node"><div class="t">PublicArenaEvent stream</div><div class="d">matchup_started · token · slot_error · slot_done · matchup_done</div></div></div>
+    <div class="arrow">▼ selectAdapter(?protocol → Accept → default)</div>
+    <div class="row">
+      <div class="node dim"><div class="t">Native SSE</div><div class="d">default · votable</div></div>
+      <div class="node dim"><div class="t">AG-UI</div><div class="d">typed run/text events</div></div>
+      <div class="node dim"><div class="t">A2UI</div><div class="d">schema NDJSON surfaces</div></div>
+      <div class="node dim"><div class="t">Vercel AI SDK</div><div class="d">UI message stream · votable</div></div>
+      <div class="node dim"><div class="t">OpenAI SSE</div><div class="d">chat.completion.chunk</div></div>
+    </div>
+  </div>
+
+  <h3>Selecting a protocol</h3>
+  <p>Precedence: <span class="mono">?protocol=</span> query param → <span class="mono">Accept</span> media type → default native SSE. An unknown <span class="mono">?protocol=</span> falls back to SSE.</p>
+  <table>
+    <tr><th>Protocol</th><th><span class="mono">?protocol=</span> aliases</th><th><span class="mono">Accept</span> media type(s)</th><th>Response <span class="mono">content-type</span></th><th>Vote token on wire?</th><th>Slot A / B carried by</th></tr>
+    <tr><td>Native SSE <span class="chip">default</span></td><td class="mono">sse · native · native-sse</td><td class="mono">text/event-stream</td><td class="mono">text/event-stream</td><td class="ok">Yes</td><td><span class="mono">slot</span> field per event</td></tr>
+    <tr><td>AG-UI</td><td class="mono">agui · ag-ui</td><td class="mono">application/vnd.ag-ui+json</td><td class="mono">text/event-stream</td><td class="no">No</td><td>two <span class="mono">slot</span>-tagged messages</td></tr>
+    <tr><td>A2UI</td><td class="mono">a2ui</td><td class="mono">application/vnd.a2ui+json · application/x-ndjson</td><td class="mono">application/x-ndjson</td><td class="no">No (id only)</td><td>two <span class="mono">surface</span>s A/B</td></tr>
+    <tr><td>Vercel AI SDK</td><td class="mono">vercel · vercel-ai · ai-sdk</td><td class="mono">application/vnd.vercel.ai.ui-message-stream+json</td><td class="mono">text/event-stream + header v1</td><td class="ok">Yes</td><td>A = text · B = data parts</td></tr>
+    <tr><td>OpenAI SSE</td><td class="mono">openai · openai-sse</td><td class="mono">application/vnd.openai.chat-chunk+json</td><td class="mono">text/event-stream</td><td class="no">No</td><td><span class="mono">choices[0]</span> / <span class="mono">choices[1]</span></td></tr>
+  </table>
+
+  <h2>Model A vs B, and voting</h2>
+  <div class="callout"><strong>Vote flow (all protocols):</strong> obtain <span class="mono">matchupId</span> + <span class="mono">matchupToken</span> → user picks a winner once both slots finish → <span class="mono">POST /api/arena/vote</span> with <span class="mono">{ matchupId, matchupToken, vote }</span> → <span class="mono">{ accepted, models: { A, B } }</span> reveal. Votes: <span class="chip">left</span><span class="chip">right</span><span class="chip">both_good</span><span class="chip">both_bad</span><span class="chip">skip</span></div>
+  <div class="callout"><strong>Vote-token availability differs.</strong> Native SSE, A2UI, and Vercel AI SDK put the token on the wire (SSE + Vercel are fully self-contained; A2UI carries only the id). <strong>AG-UI and OpenAI SSE do NOT expose the vote token</strong> — their vocabularies have no field for it, so voting over those protocols needs the token from another channel (a parallel native-SSE request or a server wrapper). Verified: <span class="mono">vercel-ai.ts</span> includes <span class="mono">matchupToken</span> in <span class="mono">data-arena-meta</span>; <span class="mono">ag-ui.ts</span> / <span class="mono">openai-sse.ts</span> emit no token field.</div>
+
+  <h2>Native SSE <span class="chip">default</span></h2>
+  <p><span class="mono">?protocol=sse</span> · <span class="mono">sse.ts</span>. One <span class="mono">event:</span>/<span class="mono">data:</span> pair per event; no trailing sentinel.</p>
+<pre><code>event: matchup_started
+data: {"type":"matchup_started","matchupId":"m1","matchupToken":"eyJ….sig",
+       "conversationId":"c1","turnIndex":0,"slots":["A","B"]}
+
+event: token
+data: {"type":"token","slot":"A","token":"He"}
+
+event: matchup_done
+data: {"type":"matchup_done"}</code></pre>
+  <table>
+    <tr><td><strong>Slots</strong></td><td>every event carries a <span class="mono">slot</span> field</td></tr>
+    <tr><td><strong>Vote token</strong></td><td><span class="ok">On <span class="mono">matchup_started</span></span> — self-contained</td></tr>
+    <tr><td><strong>Suits</strong></td><td>the demo, the <a href="sdk.html">@omni-arena/react</a> SDK, custom <span class="mono">EventSource</span>/fetch clients</td></tr>
+  </table>
+
+  <h2>AG-UI</h2>
+  <p><span class="mono">?protocol=ag-ui</span> · <span class="mono">ag-ui.ts</span> · SSE, one <span class="mono">data:</span> line per typed AG-UI event. Two slots become two text messages in one run.</p>
+<pre><code>data: {"type":"RUN_STARTED","threadId":"c1","runId":"m1"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"m1:A","role":"assistant","slot":"A"}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"m1:B","delta":"Yo","slot":"B"}
+data: {"type":"CUSTOM","name":"slot_error","value":{"slot":"B","message":"boom"}}
+data: {"type":"TEXT_MESSAGE_END","messageId":"m1:A","slot":"A"}
+data: {"type":"RUN_FINISHED","threadId":"c1","runId":"m1"}</code></pre>
+  <table>
+    <tr><td><strong>Mapping</strong></td><td>started → <span class="mono">RUN_STARTED</span> + <span class="mono">TEXT_MESSAGE_START</span>×2 · token → <span class="mono">TEXT_MESSAGE_CONTENT</span> · error → <span class="mono">CUSTOM</span> · done → <span class="mono">TEXT_MESSAGE_END</span> / <span class="mono">RUN_FINISHED</span></td></tr>
+    <tr><td><strong>Slots</strong></td><td>tagged <span class="mono">slot</span>; <span class="mono">messageId = "&lt;runId&gt;:&lt;slot&gt;"</span>; <span class="mono">runId</span>=matchup, <span class="mono">threadId</span>=conversation</td></tr>
+    <tr><td><strong>Vote token</strong></td><td><span class="no">Not exposed</span> — needs another channel</td></tr>
+    <tr><td><strong>Suits</strong></td><td>agentic frontends — CopilotKit, LangGraph, CrewAI, assistant-ui's <span class="mono">react-ag-ui</span> runtime (see <a href="../../examples/assistant-ui/">examples/assistant-ui</a>)</td></tr>
+  </table>
+
+  <h2>A2UI</h2>
+  <p><span class="mono">?protocol=a2ui</span> · <span class="mono">a2ui.ts</span> · <strong>NDJSON</strong>, one flat JSON object per line, versioned <span class="mono">a2ui/1</span>. Two side-by-side surfaces.</p>
+<pre><code>{"v":"a2ui/1","kind":"surface_init","matchupId":"m1","conversationId":"c1","turnIndex":0,"surfaces":["A","B"]}
+{"v":"a2ui/1","kind":"text_append","surface":"A","text":"He"}
+{"v":"a2ui/1","kind":"error","surface":"B","message":"boom"}
+{"v":"a2ui/1","kind":"surface_done","surface":"A"}
+{"v":"a2ui/1","kind":"session_done"}</code></pre>
+  <table>
+    <tr><td><strong>Mapping</strong></td><td>started → <span class="mono">surface_init</span> · token → <span class="mono">text_append</span> · error → <span class="mono">error</span> · done → <span class="mono">surface_done</span> / <span class="mono">session_done</span></td></tr>
+    <tr><td><strong>Slots</strong></td><td>each message names its <span class="mono">surface</span> (A/B)</td></tr>
+    <tr><td><strong>Vote token</strong></td><td><span class="no">Id only</span> — <span class="mono">surface_init</span> carries <span class="mono">matchupId</span>, not the token</td></tr>
+    <tr><td><strong>Suits</strong></td><td>generative-UI frontends painting their own design system per surface</td></tr>
+  </table>
+
+  <h2>Vercel AI SDK</h2>
+  <p><span class="mono">?protocol=vercel-ai</span> · <span class="mono">vercel-ai.ts</span> · AI SDK UI Message Stream over SSE (header <span class="mono">x-vercel-ai-ui-message-stream: v1</span>), trailing <span class="mono">data: [DONE]</span>. A stock <span class="mono">useChat</span> consumes it.</p>
+<pre><code>data: {"type":"start"}
+data: {"type":"data-arena-meta","data":{"matchupId":"m1","matchupToken":"eyJ….sig",
+       "conversationId":"c1","turnIndex":0,"mainSlot":"A","dataSlot":"B"}}
+data: {"type":"text-start","id":"m1"}
+data: {"type":"text-delta","id":"m1","delta":"He"}
+data: {"type":"data-arena-b-delta","data":{"text":"Yo"}}
+data: {"type":"data-arena-error","data":{"slot":"B","message":"boom"}}
+data: {"type":"text-end","id":"m1"}
+data: {"type":"finish"}
+data: [DONE]</code></pre>
+  <table>
+    <tr><td><strong>Slots</strong></td><td><strong>A</strong> = primary text (<span class="mono">text-delta</span>) · <strong>B</strong> = <span class="mono">data-arena-b-delta</span> parts (then <span class="mono">data-arena-b-done</span>)</td></tr>
+    <tr><td><strong>Errors</strong></td><td>single-slot → <span class="mono">data-arena-error</span></td></tr>
+    <tr><td><strong>Vote token</strong></td><td><span class="ok">On <span class="mono">data-arena-meta</span></span> — the AI SDK path is votable with no second channel</td></tr>
+    <tr><td><strong>Suits</strong></td><td>the React + Vercel AI SDK family — <a href="https://github.com/vercel/ai-chatbot">AI Chatbot template</a>, Lobe Chat, any <span class="mono">useChat</span> app. Highest-leverage.</td></tr>
+    <tr><td><strong>Example</strong></td><td><a href="../../examples/vercel-ai-chatbot/">examples/vercel-ai-chatbot</a> (Next.js 16)</td></tr>
+  </table>
+
+  <h2>OpenAI-compatible SSE</h2>
+  <p><span class="mono">?protocol=openai</span> · <span class="mono">openai-sse.ts</span> · <span class="mono">chat.completion.chunk</span> frames, trailing <span class="mono">data: [DONE]</span>. Slots map onto two <span class="mono">choices</span> (A→0, B→1).</p>
+<pre><code>data: {"id":"chatcmpl-…","object":"chat.completion.chunk","created":1770000000,
+       "model":"omni-arena","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+data: {"id":"chatcmpl-…","object":"chat.completion.chunk","created":1770000000,
+       "model":"omni-arena","choices":[{"index":1,"delta":{"content":"Yo"},"finish_reason":null}]}
+data: {"id":"chatcmpl-…","object":"chat.completion.chunk","created":1770000000,
+       "model":"omni-arena","choices":[{"index":1,"delta":{},"finish_reason":"stop"}]}
+data: [DONE]</code></pre>
+  <table>
+    <tr><td><strong>Slots</strong></td><td>A = <span class="mono">choices[0]</span>, B = <span class="mono">choices[1]</span>; <span class="mono">role</span> on start, <span class="mono">content</span> deltas, <span class="mono">finish_reason:"stop"</span> on done</td></tr>
+    <tr><td><strong>Errors</strong></td><td>inline as <span class="mono">content</span> on that choice (no error frame)</td></tr>
+    <tr><td><strong>Vote token</strong></td><td><span class="no">Not exposed</span> — OpenAI schema has no field; vote via another channel or not at all</td></tr>
+    <tr><td><strong>Suits</strong></td><td>OpenAI-compatible chat UIs — Open WebUI (largest, non-React), LibreChat, Lobe Chat, Chatbot-UI. Universal fallback.</td></tr>
+  </table>
+
+  <h2>Reference example apps</h2>
+  <table>
+    <tr><th>Example</th><th>Stack</th><th>Adapter</th><th>Notes</th></tr>
+    <tr><td><a href="../../examples/vercel-ai-chatbot/">vercel-ai-chatbot</a></td><td>Next.js 16 App Router · <span class="mono">@ai-sdk/react</span></td><td class="mono">?protocol=vercel-ai</td><td>Server route forwards to OmniArena; A on main channel, B from <span class="mono">data-arena-b-delta</span>, token from <span class="mono">data-arena-meta</span>.</td></tr>
+    <tr><td><a href="../../examples/assistant-ui/">assistant-ui</a></td><td>Vite + React · assistant-ui</td><td class="mono">?protocol=vercel-ai</td><td><span class="mono">useAISDKRuntime</span> renders Model A; Model B alongside from the same data parts. assistant-ui also ships an AG-UI runtime.</td></tr>
+  </table>
+  <div class="callout">Zero-key local run: start the server with the deterministic <strong>mock provider</strong> (<span class="mono">ARENA_MOCK_PROVIDER=1</span> + <span class="mono">npm run db:seed:mock --workspace server</span>). <span class="mono">npm run e2e</span> from the repo root boots OmniArena (pg-mem + mock) plus both example servers and drives stream → vote → reveal in headless Chromium (Playwright, <span class="mono">e2e/</span>), and asserts the raw <span class="mono">vercel-ai</span> / <span class="mono">ag-ui</span> wire streams. See <a href="setup.html">Setup</a>.</div>
+</main>
+</body>
+</html>

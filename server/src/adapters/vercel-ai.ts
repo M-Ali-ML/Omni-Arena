@@ -22,6 +22,9 @@ const uiMessagePartSchema = z.discriminatedUnion("type", [
     type: z.literal("data-arena-meta"),
     data: z.object({
       matchupId: z.string(),
+      // Carried here (as in native SSE's matchup_started) so an AI SDK client
+      // can cast a vote once the round finishes; the reveal endpoint needs it.
+      matchupToken: z.string(),
       conversationId: z.string(),
       turnIndex: z.number(),
       mainSlot: z.literal("A"),
@@ -75,6 +78,7 @@ export function createVercelAiAdapter(): EventAdapter {
               type: "data-arena-meta",
               data: {
                 matchupId: event.matchupId,
+                matchupToken: event.matchupToken,
                 conversationId: event.conversationId,
                 turnIndex: event.turnIndex,
                 mainSlot: "A",

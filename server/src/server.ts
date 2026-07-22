@@ -1,4 +1,6 @@
 import "./env.js";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createApp } from "./app.js";
 import { ArenaCore } from "./core/arena.js";
 import type { MatchmakingPort } from "./core/ports.js";
@@ -32,6 +34,13 @@ if (!process.env.MATCHUP_TOKEN_SECRET) {
   );
 }
 
+// Resolve the built web bundle relative to this file so the same layout works
+// both in the repo (server/dist -> web/dist) and in the Docker image. Override
+// with WEB_DIST_DIR when the bundle lives elsewhere.
+const here = path.dirname(fileURLToPath(import.meta.url));
+const webDistDir =
+  process.env.WEB_DIST_DIR ?? path.resolve(here, "../../web/dist");
+
 const app = await createApp({
   core: new ArenaCore(providers),
   matchmaker: createMatchmaker(process.env.MATCHMAKER, repository),
@@ -39,6 +48,7 @@ const app = await createApp({
   tokens: new MatchupTokenService(secret),
   harnessVersion: process.env.HARNESS_VERSION ?? "v1",
   webOrigin: process.env.WEB_ORIGIN,
+  webDistDir,
   logger: true,
 });
 

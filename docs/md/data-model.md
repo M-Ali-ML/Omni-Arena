@@ -4,7 +4,7 @@ PostgreSQL owns all arena state. Migrations are plain SQL files in
 `server/src/db/migrations/`, applied in filename order by
 `npm run db:migrate --workspace server` and tracked in `schema_migrations`.
 
-Related: [Architecture](architecture.md) · [API](api.md) · [Setup](setup.md)
+Related: [Architecture](architecture.md) · [API](api.md) · [Rating methodology](rating-methodology.md) · [Integration](integration.md) · [Setup](setup.md) · [SDK](sdk.md)
 
 ## Tables
 
@@ -16,7 +16,7 @@ The catalog of comparable models. Seeded by `server/src/db/seed.ts`.
 |---|---|---|
 | `id` | UUID PK | |
 | `display_name` | TEXT | Shown only after a vote |
-| `provider` | TEXT | Registry key: `google`, `openai`, `ollama`, `vllm`, or `host-proxy` |
+| `provider` | TEXT | Registry key: `google`, `openai`, `ollama`, `vllm`, `host-proxy`, or `mock` (demos/e2e; see [Setup](setup.md)) |
 | `provider_model_id` | TEXT | e.g. `gemini-3.5-flash`; unique with `provider` |
 | `enabled` | BOOLEAN | Only enabled models enter matchmaking |
 | `created_at` | TIMESTAMPTZ | |

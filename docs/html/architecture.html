@@ -52,7 +52,7 @@
 </head>
 <body>
 <main>
-  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a> · <a href="sdk.html">SDK</a></div>
+  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="integration.html">Integration</a> · <a href="rating-methodology.html">Rating methodology</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a> · <a href="sdk.html">SDK</a></div>
   <h1>Architecture</h1>
   <p class="lede">Through Phase 4 as implemented: blind multi-turn comparisons streamed through a five-protocol egress-adapter layer (native SSE default), a WebSocket control plane, a published headless React SDK, signed votes, multiple providers, smart matchmaking, and an off-path Bradley-Terry rating worker with a style-controlled pass and a pre-fit anomaly screen.</p>
 
@@ -88,6 +88,9 @@
       <div class="node"><div class="t">worker (Python)</div><div class="d">anomaly screen · Bradley-Terry + Rao-Kupper ties · Fisher-info CIs · connectivity · style-controlled pass · periodic refit</div></div>
     </div>
   </div>
+
+  <h2>Distribution topology (single container)</h2>
+  <div class="callout">Self-hosted as a <strong>single container per deployment</strong>: one Fastify process serves the API <em>and</em> the built web UI on one port (<span class="mono">PORT</span>, default 3001), same-origin. Static serving (via <span class="mono">@fastify/static</span>) activates only when <span class="mono">web/dist</span> exists (production/Docker), with an SPA fallback to <span class="mono">index.html</span> for non-<span class="mono">/api</span>/<span class="mono">/health</span> GET routes (<span class="mono">WEB_DIST_DIR</span> overrides the path). In npm dev the bundle is absent, so Vite serves <span class="mono">:5173</span> and the API stays on <span class="mono">:3001</span>. <span class="mono">docker compose up</span> brings up Postgres + rating worker + app (entrypoint: migrate → seed → start). See <a href="setup.html">Setup</a>.</div>
 
   <h2>Ports (hexagonal boundaries)</h2>
   <table>
@@ -164,6 +167,7 @@
     <tr><th>Mode</th><th>Behavior</th></tr>
     <tr><td>Direct custody</td><td>Google, OpenAI-compatible, or Ollama adapters call providers with OmniArena-held configuration; vLLM reuses OpenAI compatibility.</td></tr>
     <tr><td>Host custody</td><td>HostProxyModelProvider calls the host's OpenAI-compatible proxy; upstream keys never enter OmniArena.</td></tr>
+    <tr><td>Mock (demos/e2e)</td><td>MockModelProvider streams deterministic tokens with no network; registered only when <span class="mono">ARENA_MOCK_PROVIDER=1</span> so it never shadows a real provider. See <a href="setup.html">Setup</a>.</td></tr>
     <tr><td>Persistence</td><td>Prompts and responses are stored as received; OmniArena does not transform or redact content.</td></tr>
   </table>
 
@@ -188,7 +192,7 @@
     <tr><td>Style control</td><td class="mono">style.py</td><td>Heavier <strong>periodic pass</strong> on raw votes: joint style-controlled BT regression (see below).</td></tr>
     <tr><td>Write back</td><td class="mono">writeback.py</td><td>Idempotent upsert into <span class="mono">model_ratings</span> (default) and <span class="mono">model_style_ratings</span> + <span class="mono">style_control_coefficients</span> (style pass).</td></tr>
   </table>
-  <div class="callout"><strong>Rating methodology:</strong> Rao-Kupper gives <span class="mono">P(a≻b)=σ(d−η)</span>, <span class="mono">P(b≻a)=σ(−d−η)</span>, <span class="mono">P(tie)=σ(d+η)−σ(d−η)</span> with <span class="mono">d = r_a − r_b</span>. The ridge-penalized log-likelihood is convex; the ridge (a Gaussian prior) identifies ratings, regularizes sparsely-compared models, and keeps the Hessian invertible for Fisher-information CIs. Reported on an Elo-like scale <span class="mono">1000 + (400/ln10)·r</span>, centered per component.</div>
+  <div class="callout"><strong>Rating methodology:</strong> Rao-Kupper gives <span class="mono">P(a≻b)=σ(d−η)</span>, <span class="mono">P(b≻a)=σ(−d−η)</span>, <span class="mono">P(tie)=σ(d+η)−σ(d−η)</span> with <span class="mono">d = r_a − r_b</span>. The ridge-penalized log-likelihood is convex; the ridge (a Gaussian prior) identifies ratings, regularizes sparsely-compared models, and keeps the Hessian invertible for Fisher-information CIs. Reported on an Elo-like scale <span class="mono">1000 + (400/ln10)·r</span>, centered per component. Full story in the <a href="rating-methodology.html">rating methodology</a> doc.</div>
   <div>
     <span class="chip">L-BFGS-B</span>
     <span class="chip">Rao-Kupper ties</span>
@@ -224,11 +228,12 @@
 
   <h2>Frontend</h2>
   <p>The headless hooks now live in the published <span class="mono"><a href="sdk.html">@omni-arena/react</a></span> SDK (<span class="mono">packages/react-sdk/</span>), and the demo imports them — a single source of truth. <span class="mono">useArenaChat</span> POSTs the prompt, parses the native SSE stream into per-slot state, votes with the matchup token, and reveals identities only after a successful vote; <span class="mono">useArenaLeaderboard</span> fetches standings. Both accept an optional <span class="mono">baseUrl</span> (default <span class="mono">""</span> = same-origin/proxied).</p>
-  <div class="callout"><span class="mono">web/src/App.tsx</span> is the reference consumer: prompt box, two anonymous markdown panes, five vote buttons, reveal, and a leaderboard that shows the Elo-like rating ±CI half-width (falling back to win-rate %), plus <span class="mono">style &lt;rating&gt;</span> when a style-controlled rating exists.</p>
+  <div class="callout"><span class="mono">web/src/App.tsx</span> is the reference consumer: prompt box, two anonymous markdown panes, five vote buttons, reveal, and a leaderboard that shows the Elo-like rating ±CI half-width (falling back to win-rate %), plus <span class="mono">style &lt;rating&gt;</span> when a style-controlled rating exists.</div>
+  <div class="callout"><strong>Reference integrations:</strong> two runnable example apps in <a href="../../examples/">examples/</a> — a Next.js + Vercel AI SDK app and an assistant-ui app — drive arena mode through the Vercel AI SDK adapter and are exercised by the deterministic <span class="mono">e2e/</span> suite (<span class="mono">npm run e2e</span>, Playwright + mock provider), which also asserts the raw <span class="mono">vercel-ai</span>/<span class="mono">ag-ui</span> wire streams. See the <a href="integration.html">integration guide</a>.</div>
 
   <details>
     <summary>Intentionally not built yet</summary>
-    <p><strong>Mid-stream steering wiring</strong> — the control plane's <span class="mono">steer</span> message is a schema-validated, documented stub returning a negative ack; the instruction is not yet threaded into <span class="mono">ArenaCore</span>. <strong>Multimodal input</strong> — deferred to Phase 5. <strong>Phase 5 OSS-launch collateral.</strong> OmniArena does not scrub or redact stored prompts/responses — content is persisted as received.</p>
+    <p><strong>Mid-stream steering wiring</strong> — the control plane's <span class="mono">steer</span> message is a schema-validated, documented stub returning a negative ack; the instruction is not yet threaded into <span class="mono">ArenaCore</span>. <strong>Multimodal input</strong> — deferred. OmniArena does not scrub or redact stored prompts/responses — content is persisted as received.</p>
   </details>
 </main>
 </body>

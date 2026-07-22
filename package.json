@@ -10,7 +10,8 @@
     "build": "npm run build --workspaces",
     "dev": "concurrently -n server,web \"npm run dev --workspace server\" \"npm run dev --workspace web\"",
     "test": "npm run test --workspaces",
-    "typecheck": "npm run typecheck --workspaces"
+    "typecheck": "npm run typecheck --workspaces",
+    "e2e": "node e2e/run.mjs"
   },
   "engines": {
     "node": ">=20"

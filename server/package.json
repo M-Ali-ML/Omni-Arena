@@ -9,10 +9,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run src",
     "db:migrate": "tsx src/db/migrate.ts",
-    "db:seed": "tsx src/db/seed.ts"
+    "db:seed": "tsx src/db/seed.ts",
+    "db:seed:mock": "tsx src/db/seed.mock.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",
+    "@fastify/static": "^10.1.2",
     "@fastify/websocket": "^11.3.0",
     "@google/genai": "^2.11.0",
     "dotenv": "^17.4.2",

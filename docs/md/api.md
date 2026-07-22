@@ -3,7 +3,7 @@
 Base URL: `http://localhost:3001`. All bodies are JSON. The web dev server
 proxies `/api` and `/health` to the API.
 
-Related: [Architecture](architecture.md) · [Data model](data-model.md) · [Setup](setup.md) · [SDK](sdk.md)
+Related: [Architecture](architecture.md) · [Integration](integration.md) · [Rating methodology](rating-methodology.md) · [Data model](data-model.md) · [Setup](setup.md) · [SDK](sdk.md)
 
 ## POST /api/arena/chat
 
@@ -106,7 +106,16 @@ Per-protocol framing, at a conceptual level:
   other keeps streaming. Ends with a trailing `data: [DONE]` sentinel.
 
 The [`@omni-arena/react`](sdk.md) SDK and the demo app consume the default
-native SSE stream.
+native SSE stream. For a per-protocol walkthrough — concrete wire examples, how
+Model A vs B is carried, how to vote, which stacks each suits, and the two
+shipped example apps — see the [integration guide](integration.md).
+
+**Vote-token availability differs by protocol.** Native SSE, A2UI, and the
+Vercel AI SDK adapter put the `matchupToken` on the wire (native SSE in
+`matchup_started`, Vercel in `data-arena-meta`, A2UI carries only the
+`matchupId`), so those paths can vote directly. The **AG-UI and OpenAI SSE
+adapters do not expose the vote token** — voting over them requires obtaining the
+token from another channel. See the [integration guide](integration.md).
 
 ## GET /api/arena/control (WebSocket)
 
@@ -234,7 +243,8 @@ The rating fields are populated by the Python rating worker (`worker/`):
 The `rating*`/`componentId` fields are `null` until the default worker pass has
 rated the model; the `styleControlled*` fields are `null` until the heavier
 style pass has run. Clients must treat all of them as optional and keep using
-`winRate` as a fallback.
+`winRate` as a fallback. See the [rating methodology](rating-methodology.md) for
+how these numbers are computed.
 
 ## GET /health
 

@@ -1,5 +1,6 @@
 import { GoogleModelProvider } from "./google.js";
 import { HostProxyModelProvider } from "./host-proxy.js";
+import { MockModelProvider } from "./mock.js";
 import { OllamaModelProvider } from "./ollama.js";
 import { OpenAICompatibleModelProvider } from "./openai-compatible.js";
 import { ProviderRegistry } from "./registry.js";
@@ -8,6 +9,15 @@ export function createProviderRegistry(
   environment: NodeJS.ProcessEnv,
 ): ProviderRegistry {
   const registry = new ProviderRegistry();
+
+  // Opt-in deterministic stub for demos and CI/e2e; off by default so it never
+  // shadows a real provider in production.
+  if (
+    environment.ARENA_MOCK_PROVIDER === "1" ||
+    environment.ARENA_MOCK_PROVIDER === "true"
+  ) {
+    registry.register("mock", new MockModelProvider());
+  }
 
   if (environment.GOOGLE_API_KEY) {
     registry.register(

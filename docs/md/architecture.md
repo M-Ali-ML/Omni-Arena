@@ -5,7 +5,7 @@ comparisons. This document describes the architecture **as implemented today**
 (through Phase 4). The target end-state lives in [`pre-docs/architecture.md`](../../pre-docs/architecture.md)
 and `artifacts/vision.md` (local-only, gitignored — not committed).
 
-Related: [API](api.md) · [Data model](data-model.md) · [Setup](setup.md) · [SDK](sdk.md)
+Related: [API](api.md) · [Integration](integration.md) · [Rating methodology](rating-methodology.md) · [Data model](data-model.md) · [Setup](setup.md) · [SDK](sdk.md)
 
 ## System overview
 
@@ -49,6 +49,18 @@ waits on it. It periodically screens anomalous voting sessions, aggregates votes
 in-database, refits ratings, and upserts a `model_ratings` snapshot the
 leaderboard reads via LEFT JOIN. A heavier periodic pass fits style-controlled
 ratings into `model_style_ratings`.
+
+## Distribution topology (single container)
+
+OmniArena is self-hosted as a **single container per deployment**: one Fastify
+process serves both the JSON/streaming API and the built web UI on one port
+(`PORT`, default 3001), same-origin. Static serving activates only when the
+`web/dist` bundle exists (production/Docker) via `@fastify/static`, with an SPA
+fallback that returns `index.html` for non-`/api`, non-`/health` GET routes;
+`WEB_DIST_DIR` overrides the bundle path. In the npm dev path the bundle is
+absent, so Vite serves the UI on `:5173` and the API stays on `:3001`.
+`docker compose up` brings up Postgres, the rating worker, and the app, whose
+entrypoint runs migrate → seed → start. See [Setup](setup.md).
 
 ## Hexagonal boundaries (ports)
 
@@ -151,6 +163,10 @@ ownership is checked against the anonymous session ID.
 - Host custody: `HostProxyModelProvider` calls an OpenAI-compatible endpoint
   owned by the host. OmniArena receives only an optional proxy token, never the
   upstream provider credential.
+- Mock: `MockModelProvider` (`server/src/providers/mock.ts`) is a deterministic,
+  network-free stub for demos, the reference examples, and CI/e2e. It is
+  registered only when `ARENA_MOCK_PROVIDER=1`, so it never shadows a real
+  provider in production. See [Setup → Mock provider](setup.md).
 - All providers receive the same typed `ChatMessage[]` and emit normalized
   token/metadata chunks.
 
@@ -185,7 +201,8 @@ the Fastify request path, and follows a strict *aggregate-then-compute* design.
 
 Ratings are reported on an Elo-like display scale
 `display = 1000 + (400/ln 10)·r`, centered per connected component. See the
-[rating methodology](#rating-methodology) below.
+[rating methodology](#rating-methodology) summary below, or the dedicated
+[rating methodology](rating-methodology.md) doc for the full statistical story.
 
 The worker runs one-shot (`python -m omniarena_rating`) or as a periodic loop
 (`--loop`) with warm-started refits; the Docker Compose `worker` service runs
@@ -277,13 +294,21 @@ leaderboard shows the Elo-like rating with its ±CI half-width; otherwise it
 falls back to the win-rate percentage. When a style-controlled rating exists, it
 is shown alongside as `style <rating>`.
 
+Beyond the bundled demo, two reference integrations live in
+[`examples/`](../../examples/): a Next.js + Vercel AI SDK app
+(`examples/vercel-ai-chatbot/`) and an assistant-ui app (`examples/assistant-ui/`),
+both driving arena mode through the Vercel AI SDK adapter. They are exercised by
+the deterministic end-to-end suite in `e2e/` (`npm run e2e`, Playwright + the
+mock provider), which also asserts the raw `vercel-ai` and `ag-ui` wire streams.
+See the [integration guide](integration.md) and [Setup](setup.md).
+
 ## What is intentionally not built yet
 
 - **Mid-stream steering wiring** — the control plane's `steer` message is a
   schema-validated, documented stub returning a negative ack; the instruction is
   not yet threaded into the running producers in `ArenaCore`.
-- **Multimodal input** — deferred to Phase 5.
-- **Phase 5 OSS-launch collateral.**
+- **Multimodal input** — deferred.
+- **Mid-stream steering execution** — see above.
 
 OmniArena does not scrub or redact stored prompts/responses — content is
 persisted as received.

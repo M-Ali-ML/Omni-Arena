@@ -32,7 +32,7 @@
 </head>
 <body>
 <main>
-  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a> · <a href="sdk.html">SDK</a></div>
+  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="integration.html">Integration</a> · <a href="rating-methodology.html">Rating methodology</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a> · <a href="sdk.html">SDK</a></div>
   <h1>API</h1>
   <p class="lede">Base URL <span class="mono">http://localhost:3001</span>. JSON bodies. The web dev server proxies <span class="mono">/api</span> and <span class="mono">/health</span>.</p>
 
@@ -77,7 +77,8 @@
     <tr><td>Vercel AI SDK</td><td>AI SDK UI Message Stream over SSE. Slot A on the primary text channel (<span class="mono">start</span> → <span class="mono">data-arena-meta</span> → <span class="mono">text-start/-delta/-end</span>); slot B via custom data parts (<span class="mono">data-arena-b-delta</span> / <span class="mono">-b-done</span>); errors via <span class="mono">data-arena-error</span>; ends <span class="mono">finish</span> + <span class="mono">data: [DONE]</span>.</td></tr>
     <tr><td>OpenAI SSE</td><td><span class="mono">chat.completion.chunk</span> frames; slots on <span class="mono">choices[0]</span> (A) / <span class="mono">choices[1]</span> (B). <span class="mono">role: assistant</span> on start, <span class="mono">content</span> deltas, <span class="mono">finish_reason: "stop"</span> on done; single-slot errors inline as <span class="mono">content</span>; ends <span class="mono">data: [DONE]</span>.</td></tr>
   </table>
-  <div class="callout">The <a href="sdk.html">@omni-arena/react</a> SDK and the demo app consume the default native SSE stream.</div>
+  <div class="callout">The <a href="sdk.html">@omni-arena/react</a> SDK and the demo app consume the default native SSE stream. See the <a href="integration.html">integration guide</a> for per-protocol wire examples, Model A/B carrying, voting, and the shipped example apps.</div>
+  <div class="callout"><strong>Vote token differs by protocol.</strong> Native SSE (<span class="mono">matchup_started</span>), Vercel AI SDK (<span class="mono">data-arena-meta</span>), and A2UI (id only) put the token on the wire; <strong>AG-UI and OpenAI SSE do not expose it</strong>, so voting over them needs the token from another channel. See the <a href="integration.html">integration guide</a>.</div>
 
   <h2><span class="method">WS</span><span class="mono">/api/arena/control</span></h2>
   <p>The <strong>control plane</strong>: a bidirectional WebSocket that acts on an in-flight matchup out-of-band from the token stream. Messages are JSON in both directions.</p>
@@ -129,7 +130,7 @@
     <tr><td class="mono">styleControlledStdError</td><td>Standard error of the style-controlled rating (same scale)</td></tr>
     <tr><td class="mono">styleControlledConfidenceInterval</td><td>95% CI <span class="mono">{ lower, upper }</span> for the style-controlled rating</td></tr>
   </table>
-  <div class="callout">The <span class="mono">rating*</span>/<span class="mono">componentId</span> fields are <span class="mono">null</span> until the default worker pass runs; the <span class="mono">styleControlled*</span> fields are <span class="mono">null</span> until the heavier style pass runs. Clients treat them as optional and fall back to <span class="mono">winRate</span>.</div>
+  <div class="callout">The <span class="mono">rating*</span>/<span class="mono">componentId</span> fields are <span class="mono">null</span> until the default worker pass runs; the <span class="mono">styleControlled*</span> fields are <span class="mono">null</span> until the heavier style pass runs. Clients treat them as optional and fall back to <span class="mono">winRate</span>. See the <a href="rating-methodology.html">rating methodology</a> for how these are computed.</div>
 
   <h2><span class="method">GET</span><span class="mono">/health</span></h2>
   <p>Returns <code>{ "status": "ok" }</code>.</p>

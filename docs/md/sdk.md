@@ -9,7 +9,7 @@ your own components.
 The SDK lives in the `packages/react-sdk/` workspace and is the single source of
 truth for the arena hooks; the demo app in `web/` is its reference consumer.
 
-Related: [Architecture](architecture.md) · [API](api.md) · [Data model](data-model.md) · [Setup](setup.md)
+Related: [Architecture](architecture.md) · [API](api.md) · [Integration](integration.md) · [Rating methodology](rating-methodology.md) · [Data model](data-model.md) · [Setup](setup.md)
 
 ## Install
 

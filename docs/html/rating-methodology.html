@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmniArena · Rating methodology</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root { --text: #37352F; --surface: #F7F7F5; --border: #E9E9E7; --muted: #ACABA9; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #FFFFFF; color: var(--text); font: 400 16px/1.6 Inter, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 64px 24px; }
+  h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; margin: 64px 0 16px; }
+  h3 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; }
+  .crumb { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+  .crumb a { color: var(--muted); text-decoration: none; }
+  .crumb a:hover { color: var(--text); }
+  .lede { font-size: 18px; margin: 0; }
+  code, .mono { font-family: "Geist Mono", monospace; font-size: 13px; }
+  code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+  pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; font-size: 13px; }
+  pre code { background: none; border: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--surface); font-weight: 600; }
+  .callout { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 16px 0; font-size: 14px; }
+  .chip { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 9999px; padding: 2px 10px; font-size: 12px; margin: 2px; }
+  .flow { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: stretch; }
+  .node { flex: 1 1 130px; background: #FFFFFF; border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font-size: 14px; min-width: 120px; }
+  .node.dim { background: var(--surface); }
+  .node .t { font-weight: 600; }
+  .node .d { color: var(--muted); font-size: 12px; }
+  .arrow { text-align: center; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="integration.html">Integration</a> · <a href="rating-methodology.html">Rating methodology</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a> · <a href="sdk.html">SDK</a></div>
+  <h1>Rating methodology</h1>
+  <p class="lede">Blind pairwise votes become a statistically principled leaderboard. A standalone Python worker (<span class="mono">worker/</span>, <span class="mono">omniarena_rating</span>) runs off the request hot path: screen → aggregate → fit → interval → connectivity → write back.</p>
+
+  <h2>Pipeline</h2>
+  <div class="flow">
+    <div class="row">
+      <div class="node"><div class="t">Anomaly screen</div><div class="d">anomaly.py · p-value session tests</div></div>
+      <div class="node"><div class="t">Aggregate</div><div class="d">aggregate.py · SQL GROUP BY → triples</div></div>
+      <div class="node"><div class="t">Fit BT</div><div class="d">bradley_terry.py · L-BFGS-B MLE</div></div>
+    </div>
+    <div class="arrow">▼</div>
+    <div class="row">
+      <div class="node"><div class="t">Intervals</div><div class="d">confidence.py · Fisher info + bootstrap</div></div>
+      <div class="node"><div class="t">Connectivity</div><div class="d">connectivity.py · union-find components</div></div>
+      <div class="node"><div class="t">Style pass</div><div class="d">style.py · joint confounder regression</div></div>
+      <div class="node"><div class="t">Write back</div><div class="d">writeback.py · upsert ratings</div></div>
+    </div>
+  </div>
+  <div>
+    <span class="chip">Bradley-Terry</span><span class="chip">log-param MLE</span><span class="chip">L-BFGS-B</span><span class="chip">Rao-Kupper ties</span><span class="chip">ridge prior</span><span class="chip">sum-to-zero anchor</span><span class="chip">Fisher-info CIs</span><span class="chip">multinomial bootstrap</span><span class="chip">warm-start refits</span><span class="chip">style-controlled</span>
+  </div>
+
+  <h2>Bradley-Terry + Rao-Kupper ties</h2>
+  <p>Votes are pairwise preferences, so each model gets a latent log-strength <span class="mono">r_i = log θ_i</span> and outcomes follow the logistic of <span class="mono">d = r_a − r_b</span>. Ties (<span class="mono">both_good</span>/<span class="mono">both_bad</span>) use the Rao-Kupper threshold <span class="mono">η ≥ 0</span> (a fitted parameter), not a <span class="mono">y=0.5</span> hack; <span class="mono">skip</span> is dropped.</p>
+<pre><code>P(i beats j) = σ(d − η)
+P(j beats i) = σ(−d − η)          d = r_i − r_j
+P(tie)       = σ(d + η) − σ(d − η)</code></pre>
+  <div class="callout">Working in log-space makes the log-likelihood <strong>convex</strong>, so SciPy <strong>L-BFGS-B</strong> with an <strong>analytic gradient</strong> (unit-tested vs finite differences) finds the unique optimum in a few iterations — no learning rate. Parameter vector: <span class="mono">[r_0…r_{n−1}, η]</span>.</div>
+
+  <h2>Identifiability: anchoring + ridge</h2>
+  <p>Raw BT strengths are defined only up to an additive constant. Two mechanisms pin them down:</p>
+  <table>
+    <tr><th>Mechanism</th><th>What it does</th></tr>
+    <tr><td><strong>Anchoring</strong></td><td>Re-centre <strong>sum-to-zero</strong> (default) or pin a reference model, done <em>per connected component</em> (offsets between components are unidentified).</td></tr>
+    <tr><td><strong>Ridge prior</strong> <span class="mono">½·ridge·‖r‖²</span></td><td>One term, three jobs: (1) <strong>identifiability</strong> — strictly convex objective; (2) <strong>regularization</strong> — sparse models pulled to mean 0 with wide CIs; (3) <strong>conditioning</strong> — invertible Hessian for Fisher CIs. Never applied to <span class="mono">η</span>. <span class="mono">RATING_RIDGE</span>=0.01, <span class="mono">STYLE_RIDGE</span>=0.05.</td></tr>
+  </table>
+
+  <h2>Confidence intervals</h2>
+  <table>
+    <tr><th>Method</th><th>How</th></tr>
+    <tr><td><strong>Primary — Fisher information</strong></td><td>Laplace approximation at the optimum ⇒ covariance = <strong>inverse Hessian</strong> of the penalized NLL (observed Fisher info). Hessian built by central-differencing the analytic gradient (O(n)); covariance <strong>projected through the anchoring contrast</strong> so the common-mode direction doesn't dominate. One matrix computation, not hundreds of refits.</td></tr>
+    <tr><td><strong>Validation — multinomial bootstrap</strong></td><td>Flatten triples → draw each dataset from <span class="mono">Multinomial(N, proportions)</span> → re-aggregate → warm-started refit. Column std-devs confirm the analytic SEs, never touching raw rows. A test asserts they agree.</td></tr>
+  </table>
+  <div class="callout">Reported as <span class="mono">rating ± z·stderr</span>, <span class="mono">z ≈ 1.96</span> (95%).</div>
+
+  <h2>Connectivity → per-component leaderboards</h2>
+  <p><span class="mono">connectivity.py</span> runs <strong>union-find</strong> over the aggregated pairs; ratings are only comparable within a connected component. Each model gets a <span class="mono">componentId</span> so clients can render per-component boards. Isolated models get their own component and wide intervals.</p>
+
+  <h2>Display scale</h2>
+<pre><code>display = 1000 + (400 / ln 10) · r        SCALE = 400/ln10 ≈ 173.72</code></pre>
+  <div class="callout">The classic Elo constant: a <strong>400-point gap ≈ 10× expected win odds</strong>, matching <span class="mono">P = σ(r_i − r_j)</span>. SEs and CI half-widths scale by the same factor; centering is per-component, then baseline 1000 added.</div>
+
+  <h2>Refit cadence &amp; scaling</h2>
+  <table>
+    <tr><th>Aspect</th><th>Detail</th></tr>
+    <tr><td>One-shot vs loop</td><td><span class="mono">python -m omniarena_rating</span> (once) or <span class="mono">--loop</span> every <span class="mono">REFIT_INTERVAL_SECONDS</span> (300). Docker's <span class="mono">worker</span> service runs the loop.</td></tr>
+    <tr><td>Warm start</td><td>Loop refits warm-start from the previous <span class="mono">[r…, η]</span> vector (in-memory only) ⇒ few iterations; skipped (cold refit) when the model set changes.</td></tr>
+    <tr><td>Aggregate-then-compute</td><td>SQL <span class="mono">GROUP BY</span> → <span class="mono">(model_lo, model_hi, wins_lo, wins_hi, ties)</span> triples; fit input bounded by ~<span class="mono">3·C(n,2)</span> rows regardless of vote volume (O(votes) → O(pairs)). Raw rows stay in Postgres.</td></tr>
+  </table>
+
+  <h2>Pre-fit anomaly screen</h2>
+  <p><span class="mono">anomaly.py</span> screens anonymous sessions before aggregation (Bonferroni α/3); a rejection excludes the session from both passes. On by default (<span class="mono">--no-anomaly-filter</span> off).</p>
+  <table>
+    <tr><th>Test</th><th>Null</th><th>Catches</th></tr>
+    <tr><td>Volume</td><td>Poisson upper tail <span class="mono">P(X≥n)</span> vs mean votes/session</td><td>vote-stuffing</td></tr>
+    <tr><td>Position bias</td><td>two-sided binomial on left/right vs p=0.5</td><td>always-left/right bots</td></tr>
+    <tr><td>Speed</td><td>median inter-vote gap below floor (1.5s)</td><td>automated clicking</td></tr>
+  </table>
+
+  <h2>Style-controlled ratings</h2>
+  <p>Voters reward superficial traits. Following LMSYS, <span class="mono">style.py</span> folds them into the <strong>same</strong> BT regression as covariates so strengths and style betas fit <strong>jointly</strong>:</p>
+<pre><code>d = (r_a − r_b) + β · x            P(A ≻ B) = σ(d − η)</code></pre>
+  <table>
+    <tr><th>Feature</th><th>Delta of (A − B)</th></tr>
+    <tr><td class="mono">position</td><td>constant 1.0 → coefficient = systematic left-slot advantage</td></tr>
+    <tr><td class="mono">verbosity</td><td><span class="mono">output_token_count</span></td></tr>
+    <tr><td class="mono">formatting</td><td><span class="mono">markdown_density</span></td></tr>
+    <tr><td class="mono">latency_ttft</td><td><span class="mono">ttft_ms</span></td></tr>
+    <tr><td class="mono">latency_duration</td><td><span class="mono">stream_duration_ms</span></td></tr>
+  </table>
+  <div class="callout">Deltas vary per vote, so this fit <strong>can't</strong> use pair aggregation — it runs on raw <span class="mono">preferences ⋈ matchups ⋈ responses</span> rows, a heavier periodic <span class="mono">--style</span> pass. Ridge on all coefficients; SEs via the same inverse-Hessian machinery. Results → <span class="mono">model_style_ratings</span>; coefficients → <span class="mono">style_control_coefficients</span>; exposed as <span class="mono">styleControlledRating</span>.</div>
+
+  <h2>Leaderboard fields</h2>
+  <table>
+    <tr><th>Field</th><th>Meaning</th></tr>
+    <tr><td class="mono">rating</td><td>Bradley-Terry rating, Elo-like scale</td></tr>
+    <tr><td class="mono">ratingStdError</td><td>Standard error (same scale)</td></tr>
+    <tr><td class="mono">confidenceInterval</td><td>95% CI <span class="mono">{ lower, upper }</span> from Fisher information</td></tr>
+    <tr><td class="mono">componentId</td><td>Connected component; ratings comparable only within it</td></tr>
+    <tr><td class="mono">styleControlledRating*</td><td>Style-controlled rating, SE, and CI (heavier <span class="mono">--style</span> pass)</td></tr>
+  </table>
+  <div class="callout"><span class="mono">rating*</span>/<span class="mono">componentId</span> are <span class="mono">null</span> until the default pass runs; <span class="mono">styleControlled*</span> until the style pass runs. Clients fall back to <span class="mono">winRate</span>. See <a href="api.html">API → leaderboard</a> and <a href="data-model.html">Data model</a>.</div>
+</main>
+</body>
+</html>

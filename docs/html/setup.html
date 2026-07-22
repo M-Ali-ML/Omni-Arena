@@ -29,17 +29,25 @@
 </head>
 <body>
 <main>
-  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a> · <a href="sdk.html">SDK</a></div>
+  <div class="crumb"><a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="integration.html">Integration</a> · <a href="rating-methodology.html">Rating methodology</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a> · <a href="sdk.html">SDK</a></div>
   <h1>Setup</h1>
-  <p class="lede">Node.js 20+, npm, Docker; Python 3.10+ for the rating worker. One Postgres container, three npm workspaces (server · react-sdk · web), one Python worker.</p>
+  <p class="lede">Self-hosted as a <strong>single container per deployment</strong>: one Fastify process serves the API and the built web UI on one port. <span class="mono">docker compose up</span> brings up Postgres, the rating worker, and the app in one command; an npm path stays available for development.</p>
 
-  <h2>Quick start</h2>
-<pre><code>cp .env.example .env      # configure the seeded provider
+  <h2>Quick start · Docker (single-tenant self-host)</h2>
+  <div class="callout">One container serves the API <em>and</em> the web UI on one port, so chat data never leaves adopter infra (decision record #5). The <span class="mono">app</span> service waits for Postgres, then its entrypoint runs migrations, seeds the lineup, and starts the server.</div>
+<pre><code>cp .env.example .env      # set GOOGLE_API_KEY and MATCHUP_TOKEN_SECRET
+docker compose up</code></pre>
+  <p>Open <span class="mono">http://localhost:3001</span> — web UI and <span class="mono">/api/...</span> share the same origin and port (<span class="mono">PORT</span>, default 3001). The multi-stage <span class="mono">Dockerfile</span> builds all workspaces, ships the migration <span class="mono">.sql</span> files next to <span class="mono">dist</span>, and prunes dev deps into a slim runtime. The server serves <span class="mono">web/dist</span> via <span class="mono">@fastify/static</span> only when the bundle exists (production/Docker), with an SPA fallback to <span class="mono">index.html</span> for non-<span class="mono">/api</span> GET routes; override the location with <span class="mono">WEB_DIST_DIR</span>.</p>
+
+  <h2>Quick start · npm (development)</h2>
+  <div class="callout">Postgres + worker in Docker, Node/Vite dev servers on the host for hot reload. The bundle is absent, so Vite serves the UI on <span class="mono">:5173</span> and same-origin static serving stays off.</div>
+<pre><code>cp .env.example .env                    # configure the seeded provider
 npm install
-docker compose up -d      # Postgres 16
+docker compose up -d postgres worker    # Postgres 16 + rating worker
 npm run db:migrate --workspace server
 npm run db:seed --workspace server
-npm run dev               # server :3001 · web :5173</code></pre>
+npm run dev                             # server :3001 · web :5173</code></pre>
+  <p>Open <span class="mono">http://localhost:5173</span>; Vite proxies <span class="mono">/api</span> and <span class="mono">/health</span> to <span class="mono">:3001</span>.</p>
 
   <h2>Workspaces</h2>
   <p>An npm workspace monorepo. The root <span class="mono">workspaces</span> array is in build order — <span class="mono">server</span>, <span class="mono">packages/react-sdk</span>, then <span class="mono">web</span> — so the SDK builds <strong>before</strong> the demo that depends on it.</p>
@@ -63,11 +71,14 @@ npm run dev               # server :3001 · web :5173</code></pre>
     <tr><td class="mono">REFIT_INTERVAL_SECONDS</td><td>no (300)</td><td>Rating worker loop interval between refits</td></tr>
     <tr><td class="mono">RATING_RIDGE</td><td>no (0.01)</td><td>Rating worker ridge-prior strength (log-odds scale)</td></tr>
     <tr><td class="mono">STYLE_RIDGE</td><td>no (0.05)</td><td>Ridge-prior strength for the style-controlled fit</td></tr>
+    <tr><td class="mono">LOG_LEVEL / LOG_FORMAT</td><td>no (INFO / text)</td><td>Rating worker log level and format (<span class="mono">text</span> or <span class="mono">json</span>)</td></tr>
     <tr><td class="mono">MATCHMAKER</td><td>no (smart)</td><td><span class="mono">smart</span> (under-sampled / high-variance pairs) or <span class="mono">random</span> (uniform)</td></tr>
-    <tr><td class="mono">DATABASE_URL</td><td>yes</td><td>Postgres connection; compose default <span class="mono">postgres://omni_arena:omni_arena@localhost:5432/omni_arena</span></td></tr>
+    <tr><td class="mono">DATABASE_URL</td><td>yes</td><td>Postgres connection. npm dev: host <span class="mono">localhost</span>. Docker Compose: <span class="mono">app</span>/<span class="mono">worker</span> override the host to <span class="mono">postgres</span></td></tr>
     <tr><td class="mono">MATCHUP_TOKEN_SECRET</td><td>production</td><td>HMAC secret, min 16 chars; insecure dev default otherwise</td></tr>
-    <tr><td class="mono">PORT</td><td>no (3001)</td><td>API port</td></tr>
-    <tr><td class="mono">WEB_ORIGIN</td><td>no (:5173)</td><td>Allowed CORS origin</td></tr>
+    <tr><td class="mono">PORT</td><td>no (3001)</td><td>Port the app listens on / publishes; web UI + API share it</td></tr>
+    <tr><td class="mono">WEB_ORIGIN</td><td>no (:5173)</td><td>Allowed CORS origin (moot when the single container serves both same-origin)</td></tr>
+    <tr><td class="mono">WEB_DIST_DIR</td><td>no</td><td>Override the built web bundle dir; default <span class="mono">../../web/dist</span> is correct for the repo and image</td></tr>
+    <tr><td class="mono">ARENA_MOCK_PROVIDER</td><td>no</td><td>Set <span class="mono">1</span>/<span class="mono">true</span> to register the deterministic <span class="mono">mock</span> provider for demos/examples/e2e (no LLM key). Off by default.</td></tr>
   </table>
   <div class="callout">The default seed contains Google models, so it needs <span class="mono">GOOGLE_API_KEY</span>. Change <span class="mono">provider</span> + <span class="mono">provider_model_id</span> in the seed for OpenAI, Ollama, vLLM, or host proxy. The root <span class="mono">.env</span> loads regardless of workspace cwd.</div>
 
@@ -79,7 +90,15 @@ npm run dev               # server :3001 · web :5173</code></pre>
     <tr><th>Task</th><th>Command</th><th>Notes</th></tr>
     <tr><td>Migrate</td><td class="mono">npm run db:migrate --workspace server</td><td>Applies unapplied <span class="mono">migrations/*.sql</span> in filename order, each in a transaction. Add <span class="mono">NNN_description.sql</span>; never edit applied files.</td></tr>
     <tr><td>Seed</td><td class="mono">npm run db:seed --workspace server</td><td>Upserts the lineup by <span class="mono">(provider, provider_model_id)</span>; edit <span class="mono">server/src/db/seed.ts</span> to change it.</td></tr>
+    <tr><td>Seed (mock)</td><td class="mono">npm run db:seed:mock --workspace server</td><td>Disables every other model, seeds two <span class="mono">mock</span> models (Alpha/Beta). Pair with <span class="mono">ARENA_MOCK_PROVIDER=1</span>.</td></tr>
   </table>
+
+  <h2>Mock provider</h2>
+  <div class="callout">A deterministic stub provider (<span class="mono">server/src/providers/mock.ts</span>) streams fixed per-model tokens with no network, so a full round-trip (stream → vote → reveal) runs with no LLM key. Enable with <span class="mono">ARENA_MOCK_PROVIDER=1</span> (registers the <span class="mono">mock</span> provider; off by default so it never shadows real providers) and seed with <span class="mono">db:seed:mock</span>. Both <a href="../../examples/">examples</a> and the e2e suite use it.</div>
+<pre><code>docker compose up -d postgres
+ARENA_MOCK_PROVIDER=1 npm run db:migrate --workspace server
+ARENA_MOCK_PROVIDER=1 npm run db:seed:mock --workspace server
+ARENA_MOCK_PROVIDER=1 npm run dev --workspace server   # :3001</code></pre>
 
   <h2>Rating worker</h2>
   <p>The Bradley-Terry rating worker lives in <span class="mono">worker/</span> (Python, NumPy/SciPy). It screens anomalous voting sessions, aggregates votes in-database, fits ratings with Fisher-information CIs, and upserts <span class="mono">model_ratings</span>. <span class="mono">--style</span> adds the heavier style-controlled pass into <span class="mono">model_style_ratings</span>.</p>
@@ -112,9 +131,21 @@ python -m pytest          # pure-Python tests, no database</code></pre>
     <tr><td class="mono">python -m pytest</td><td>Rating worker numerical tests (run in <span class="mono">worker/</span>)</td></tr>
     <tr><td class="mono">npm run build</td><td>All workspaces in order: server tsc → react-sdk tsc → web bundle</td></tr>
     <tr><td class="mono">npm run typecheck</td><td>All workspaces</td></tr>
+    <tr><td class="mono">npm run e2e</td><td>Builds both example apps, boots OmniArena (pg-mem + mock provider) + example servers, drives the full arena flow in headless Chromium (Playwright)</td></tr>
   </table>
   <div class="callout">Tests need no running Postgres or API keys. The hook tests moved from <span class="mono">web/</span> into <span class="mono">packages/react-sdk/src/useArenaChat.test.ts</span>; they stub <span class="mono">fetch</span> with real SSE streams and stub <span class="mono">localStorage</span> (Node 24's experimental global shadows jsdom's).</div>
   <div class="callout"><strong>Gotcha:</strong> run tests per workspace, not a bare <span class="mono">vitest</span> at the repo root. The <span class="mono">jsdom</span> environment is set per workspace (each <span class="mono">vitest.config.ts</span>) and there is no root Vitest config, so a root-level <span class="mono">vitest</span> uses the default Node env and the SDK hook test fails with <span class="mono">ReferenceError: document is not defined</span>. Use <span class="mono">npm test</span> (delegates to <span class="mono">npm run test --workspaces</span>) or <span class="mono">npm test --workspace &lt;name&gt;</span> — both pass.</div>
+
+  <h2>Reference examples</h2>
+  <table>
+    <tr><th>Example</th><th>Stack</th><th>Adapter</th></tr>
+    <tr><td class="mono"><a href="../../examples/vercel-ai-chatbot/">examples/vercel-ai-chatbot</a></td><td>Next.js 16 App Router + <span class="mono">@ai-sdk/react</span></td><td class="mono">?protocol=vercel-ai</td></tr>
+    <tr><td class="mono"><a href="../../examples/assistant-ui/">examples/assistant-ui</a></td><td>Vite + React + assistant-ui</td><td class="mono">?protocol=vercel-ai</td></tr>
+  </table>
+  <div class="callout">Both talk to a running server (use the mock provider for a zero-key run). See the <a href="integration.html">integration guide</a> for how each adapter maps to these apps.</div>
+
+  <h2>End-to-end tests</h2>
+  <div class="callout"><span class="mono">npm run e2e</span> (orchestrated by <span class="mono">e2e/run.mjs</span>) is deterministic and CI-friendly — no real keys or external LLM calls. It installs harness + example deps, builds each example (a smoke check), installs Playwright Chromium, then boots the OmniArena harness (pg-mem + <span class="mono">mock</span>) and both example servers and drives the full flow. <span class="mono">protocol.spec.ts</span> asserts the raw <span class="mono">vercel-ai</span>/<span class="mono">ag-ui</span> wire streams (Vercel path is votable, leaderboard updates); <span class="mono">examples.spec.ts</span> drives both UIs through stream → vote → reveal.</div>
 </main>
 </body>
 </html>

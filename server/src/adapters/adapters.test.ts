@@ -143,6 +143,14 @@ describe("Vercel AI SDK adapter", () => {
     expect(adapter.headers["x-vercel-ai-ui-message-stream"]).toBe("v1");
     const parts = dataPayloads(adapter) as Array<Record<string, unknown>>;
     expect(parts[0]).toEqual({ type: "start" });
+    // The arena meta carries the vote token so an AI SDK client can vote.
+    const meta = parts.find((part) => part.type === "data-arena-meta") as
+      | { data?: Record<string, unknown> }
+      | undefined;
+    expect(meta?.data).toMatchObject({
+      matchupId: "m1",
+      matchupToken: "tok-secret",
+    });
     expect(parts).toContainEqual({ type: "text-start", id: "m1" });
     expect(parts).toContainEqual({
       type: "text-delta",
