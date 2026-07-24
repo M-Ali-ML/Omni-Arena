@@ -47,9 +47,11 @@ export class ArenaCore {
     messages: ChatMessage[],
     assignment: MatchupAssignment,
     signal?: AbortSignal,
+    options: { activeSlots?: 1 | 2 } = {},
   ): AsyncGenerator<ArenaEvent> {
+    const slotCount = options.activeSlots ?? 2;
     const queue = new AsyncEventQueue<ArenaEvent>();
-    let activeSlots = 2;
+    let activeSlots = slotCount;
 
     // Control-plane cancellation: aborting unblocks the consumer immediately so
     // the route stops emitting; in-flight producers observe `signal.aborted` and
@@ -121,7 +123,9 @@ export class ArenaCore {
     };
 
     void produce("A", assignment.slotA);
-    void produce("B", assignment.slotB);
+    if (slotCount === 2) {
+      void produce("B", assignment.slotB);
+    }
 
     try {
       while (true) {

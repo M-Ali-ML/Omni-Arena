@@ -3,6 +3,7 @@ import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance } from "fastify";
+import type { ArenaModeConfig } from "./arena/mode.js";
 import { MatchupRegistry } from "./control/registry.js";
 import type { ArenaCore } from "./core/arena.js";
 import type {
@@ -22,6 +23,13 @@ export interface AppDependencies {
   repository: PreferenceRepositoryPort & LeaderboardPort;
   tokens: MatchupTokenService;
   harnessVersion: string;
+  /**
+   * Trigger/exposure config. Defaults to `always` (today's behavior) when
+   * omitted so callers that predate arena modes are unaffected.
+   */
+  modeConfig?: ArenaModeConfig;
+  /** Injectable RNG for the arena-plan resolver; defaults to Math.random. */
+  rng?: () => number;
   /** Shared in-flight matchup tracker for the WS control plane; created if absent. */
   registry?: MatchupRegistry;
   webOrigin?: string;
@@ -46,9 +54,13 @@ export async function createApp(
   await app.register(websocket);
 
   const registry = dependencies.registry ?? new MatchupRegistry();
+  const modeConfig = dependencies.modeConfig ?? {
+    trigger: "always" as const,
+    defaultModel: null,
+  };
 
   app.get("/health", async () => ({ status: "ok" }));
-  registerChatRoute(app, { ...dependencies, registry });
+  registerChatRoute(app, { ...dependencies, registry, modeConfig });
   registerVoteRoute(app, dependencies);
   registerLeaderboardRoute(app, dependencies.repository);
   registerControlRoute(app, { registry });

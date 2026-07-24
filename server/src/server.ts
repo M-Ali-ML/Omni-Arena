@@ -2,6 +2,10 @@ import "./env.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createApp } from "./app.js";
+import {
+  assertArenaModeConfig,
+  parseArenaModeConfig,
+} from "./arena/mode.js";
 import { ArenaCore } from "./core/arena.js";
 import type { MatchmakingPort } from "./core/ports.js";
 import { pool } from "./db/pool.js";
@@ -41,12 +45,18 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const webDistDir =
   process.env.WEB_DIST_DIR ?? path.resolve(here, "../../web/dist");
 
+// Fail fast at boot when a non-`always` trigger has no model to serve `single`
+// plans; roster membership is validated lazily on the first single request.
+const modeConfig = parseArenaModeConfig(process.env);
+assertArenaModeConfig(modeConfig);
+
 const app = await createApp({
   core: new ArenaCore(providers),
   matchmaker: createMatchmaker(process.env.MATCHMAKER, repository),
   repository,
   tokens: new MatchupTokenService(secret),
   harnessVersion: process.env.HARNESS_VERSION ?? "v1",
+  modeConfig,
   webOrigin: process.env.WEB_ORIGIN,
   webDistDir,
   logger: true,

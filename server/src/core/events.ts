@@ -17,6 +17,8 @@ export const publicArenaEventSchema = z.discriminatedUnion("type", [
     conversationId: z.string(),
     turnIndex: z.number(),
     slots: z.array(slotSchema),
+    mode: z.enum(["matchup", "single", "shadow"]),
+    votable: z.boolean(),
   }),
   z.object({ type: z.literal("token"), slot: slotSchema, token: z.string() }),
   z.object({

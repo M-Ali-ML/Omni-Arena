@@ -39,6 +39,9 @@ interface StreamEvent {
   matchupToken?: string;
   conversationId?: string;
   turnIndex?: number;
+  slots?: ArenaSlot[];
+  mode?: "matchup" | "single" | "shadow";
+  votable?: boolean;
   slot?: ArenaSlot;
   token?: string;
   message?: string;
@@ -76,24 +79,34 @@ export function useArenaChat(options: UseArenaChatOptions = {}) {
 
   const handleEvent = useCallback((event: StreamEvent) => {
     if (event.type === "matchup_started") {
+      // `votable` defaults to true so streams from servers that predate arena
+      // modes (which omit the field) still expose voting.
+      const votable = event.votable ?? true;
+      const activeSlots = event.slots ?? ["A", "B"];
       if (
         !event.matchupId ||
-        !event.matchupToken ||
+        (votable && !event.matchupToken) ||
         !event.conversationId ||
         event.turnIndex === undefined
       ) {
         throw new Error("Server returned an invalid matchup");
       }
-      matchup.current = { id: event.matchupId, token: event.matchupToken };
+      matchup.current = { id: event.matchupId, token: event.matchupToken ?? "" };
       conversation.current = {
         id: event.conversationId,
         turnIndex: event.turnIndex,
       };
       setConversationId(event.conversationId);
-      setCanVote(true);
+      setCanVote(votable);
       setSlots((current) => ({
-        A: { ...current.A, status: "streaming" },
-        B: { ...current.B, status: "streaming" },
+        A: {
+          ...current.A,
+          status: activeSlots.includes("A") ? "streaming" : "idle",
+        },
+        B: {
+          ...current.B,
+          status: activeSlots.includes("B") ? "streaming" : "idle",
+        },
       }));
       return;
     }

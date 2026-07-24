@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
+import type { ArenaModeConfig } from "../arena/mode.js";
 import { ArenaCore } from "../core/arena.js";
 import type {
   ArenaVote,
@@ -169,7 +170,9 @@ function parseEvents(body: string): Array<Record<string, unknown>> {
     .map((data) => JSON.parse(data) as Record<string, unknown>);
 }
 
-async function setup() {
+async function setup(
+  modeConfig: ArenaModeConfig = { trigger: "always", defaultModel: null },
+) {
   const repository = new MemoryRepository();
   const receivedMessages: ChatMessage[][] = [];
   const provider = {
@@ -192,6 +195,7 @@ async function setup() {
     repository,
     tokens: new MatchupTokenService("test-secret-long-enough"),
     harnessVersion: "test-harness-v1",
+    modeConfig,
   });
   return { app, repository, receivedMessages };
 }
@@ -319,6 +323,105 @@ describe("arena routes", () => {
         { role: "assistant", content: "Answer from alpha" },
         { role: "user", content: "Follow up" },
       ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("manual trigger without opt-in streams a single, non-votable slot", async () => {
+    const { app, repository } = await setup({
+      trigger: "manual",
+      defaultModel: slotA.id,
+    });
+    try {
+      const chat = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat",
+        payload: { prompt: "Hello", sessionId: "anon_single" },
+      });
+      expect(chat.statusCode).toBe(200);
+
+      const events = parseEvents(chat.body);
+      const started = events[0];
+      expect(started).toMatchObject({
+        type: "matchup_started",
+        mode: "single",
+        votable: false,
+        slots: ["A"],
+        matchupToken: "",
+      });
+
+      const slotDone = events.filter((event) => event.type === "slot_done");
+      expect(slotDone).toHaveLength(1);
+      expect(slotDone[0]).toMatchObject({ slot: "A" });
+      expect(events.some((event) => event.slot === "B")).toBe(false);
+      expect(events.at(-1)).toMatchObject({ type: "matchup_done" });
+
+      // Single is fire-and-forget: no matchup row, no persisted responses.
+      expect(repository.matchups.size).toBe(0);
+      expect(repository.responses).toHaveLength(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("manual trigger with arena:true runs a full matchup", async () => {
+    const { app } = await setup({ trigger: "manual", defaultModel: slotA.id });
+    try {
+      const chat = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat",
+        payload: { prompt: "Hello", sessionId: "anon_optin", arena: true },
+      });
+      expect(chat.statusCode).toBe(200);
+      const started = parseEvents(chat.body)[0];
+      expect(started).toMatchObject({
+        type: "matchup_started",
+        mode: "matchup",
+        votable: true,
+        slots: ["A", "B"],
+      });
+      expect(started?.matchupToken).toBeTruthy();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("manual trigger opts in via the x-arena header", async () => {
+    const { app } = await setup({ trigger: "manual", defaultModel: slotA.id });
+    try {
+      const chat = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat",
+        headers: { "x-arena": "on" },
+        payload: { prompt: "Hello", sessionId: "anon_header" },
+      });
+      expect(chat.statusCode).toBe(200);
+      expect(parseEvents(chat.body)[0]).toMatchObject({
+        type: "matchup_started",
+        mode: "matchup",
+        votable: true,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("default env keeps the blind matchup path (regression)", async () => {
+    const { app } = await setup();
+    try {
+      const chat = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat",
+        payload: { prompt: "Hello", sessionId: "anon_default" },
+      });
+      expect(chat.statusCode).toBe(200);
+      expect(parseEvents(chat.body)[0]).toMatchObject({
+        type: "matchup_started",
+        mode: "matchup",
+        votable: true,
+        slots: ["A", "B"],
+      });
     } finally {
       await app.close();
     }

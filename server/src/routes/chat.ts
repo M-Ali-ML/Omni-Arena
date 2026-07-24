@@ -2,12 +2,15 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { selectAdapter } from "../adapters/registry.js";
+import type { ArenaModeConfig } from "../arena/mode.js";
+import { resolveArenaPlan } from "../arena/mode.js";
 import type { MatchupRegistry } from "../control/registry.js";
 import type { ArenaCore } from "../core/arena.js";
 import { toPublicEvent } from "../core/events.js";
 import type {
   ChatMessage,
   MatchmakingPort,
+  MatchupAssignment,
   PreferenceRepositoryPort,
 } from "../core/ports.js";
 import { ConversationConflictError } from "../repo/postgres.js";
@@ -17,6 +20,7 @@ const chatRequest = z.object({
   prompt: z.string().trim().min(1).max(20_000),
   sessionId: z.string().trim().min(1).max(200).optional(),
   conversationId: z.string().uuid().optional(),
+  arena: z.boolean().optional(),
 });
 
 const chatQuery = z.object({ protocol: z.string().optional() });
@@ -28,6 +32,9 @@ export interface ChatRouteDependencies {
   tokens: MatchupTokenService;
   registry: MatchupRegistry;
   harnessVersion: string;
+  modeConfig: ArenaModeConfig;
+  /** Injectable RNG for the resolver (Phase 2 sampled trigger); defaults to Math.random. */
+  rng?: () => number;
 }
 
 export function registerChatRoute(
@@ -44,6 +51,81 @@ export function registerChatRoute(
     }
 
     const sessionId = parsed.data.sessionId ?? null;
+
+    const headerValue = request.headers["x-arena"];
+    const plan = resolveArenaPlan(
+      dependencies.modeConfig,
+      {
+        arena: parsed.data.arena,
+        header: Array.isArray(headerValue) ? headerValue[0] : headerValue,
+      },
+      dependencies.rng,
+    );
+
+    if (plan.kind === "single") {
+      const models = await dependencies.repository.listEnabledModels();
+      const model = models.find(
+        (candidate) => candidate.id === dependencies.modeConfig.defaultModel,
+      );
+      if (!model) {
+        return reply.code(500).send({
+          error: `ARENA_DEFAULT_MODEL '${dependencies.modeConfig.defaultModel ?? ""}' is not in the enabled roster`,
+        });
+      }
+
+      const singleAssignment: MatchupAssignment = {
+        modelA: model,
+        modelB: model,
+        slotA: model,
+        slotB: model,
+      };
+      const singleId = randomUUID();
+      const singleConversationId = parsed.data.conversationId ?? randomUUID();
+
+      const query = chatQuery.safeParse(request.query);
+      const adapter = selectAdapter(
+        query.success ? query.data.protocol : undefined,
+        request.headers.accept,
+      );
+      reply.hijack();
+      reply.raw.writeHead(200, adapter.headers);
+      reply.raw.write(
+        adapter.serialize({
+          type: "matchup_started",
+          matchupId: singleId,
+          matchupToken: "",
+          conversationId: singleConversationId,
+          turnIndex: 0,
+          slots: ["A"],
+          mode: "single",
+          votable: false,
+        }),
+      );
+
+      const messages: ChatMessage[] = [
+        { role: "user", content: parsed.data.prompt },
+      ];
+      const controller = dependencies.registry.register(singleId);
+      try {
+        for await (const event of dependencies.core.stream(
+          messages,
+          singleAssignment,
+          controller.signal,
+          { activeSlots: 1 },
+        )) {
+          reply.raw.write(adapter.serialize(toPublicEvent(event)));
+        }
+      } finally {
+        dependencies.registry.release(singleId);
+        const tail = adapter.finalize();
+        if (tail) {
+          reply.raw.write(tail);
+        }
+        reply.raw.end();
+      }
+      return;
+    }
+
     let conversationId = parsed.data.conversationId ?? randomUUID();
     let turnIndex = 0;
     let parentResponseId: string | null = null;
@@ -122,6 +204,8 @@ export function registerChatRoute(
         conversationId,
         turnIndex,
         slots: ["A", "B"],
+        mode: "matchup",
+        votable: true,
       }),
     );
 

@@ -15,6 +15,8 @@ const started: PublicArenaEvent = {
   conversationId: "c1",
   turnIndex: 0,
   slots: ["A", "B"],
+  mode: "matchup",
+  votable: true,
 };
 
 const sequence: PublicArenaEvent[] = [

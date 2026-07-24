@@ -81,6 +81,47 @@ describe("ArenaCore", () => {
     expect(events.at(-1)).toEqual({ type: "matchup_done" });
   });
 
+  it("streams only slot A when a single slot is requested", async () => {
+    let bTouched = false;
+    const core = new ArenaCore(
+      new Resolver({
+        a: {
+          async *stream() {
+            yield { type: "token" as const, token: "A-only" };
+          },
+        },
+        b: {
+          async *stream() {
+            bTouched = true;
+          },
+        },
+      }),
+    );
+
+    const events = [];
+    for await (const event of core.stream(
+      [{ role: "user", content: "prompt" }],
+      assignment,
+      undefined,
+      { activeSlots: 1 },
+    )) {
+      events.push(event);
+    }
+
+    expect(bTouched).toBe(false);
+    expect(events.some((event) => event.type === "token" && event.slot === "B")).toBe(
+      false,
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "token", slot: "A", token: "A-only" }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "slot_done", slot: "A" }),
+    );
+    expect(events.filter((event) => event.type === "slot_done")).toHaveLength(1);
+    expect(events.at(-1)).toEqual({ type: "matchup_done" });
+  });
+
   it("keeps one stream alive when the other fails", async () => {
     const core = new ArenaCore(
       new Resolver({
