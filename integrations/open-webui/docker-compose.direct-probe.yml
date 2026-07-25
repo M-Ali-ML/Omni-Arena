@@ -1,0 +1,13 @@
+# Throwaway overlay used once, to answer the obvious question honestly: what
+# happens if you skip the bridge and point Open WebUI straight at Omni-Arena?
+#
+#   docker compose -f docker-compose.yml -f docker-compose.direct-probe.yml up -d open-webui
+#
+# The result is recorded in README.md under "Findings". Keep this file for
+# reproducibility; it is not part of the normal stack.
+services:
+  open-webui:
+    environment:
+      OPENAI_API_BASE_URLS: http://host.docker.internal:3021/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

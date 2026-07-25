@@ -1,0 +1,8 @@
+# Local-only working material for this integration. The upstream Open WebUI
+# checkout and the container volumes are reproducible from upstream.json and
+# docker-compose.yml, so they are never committed.
+.upstream/
+.data/
+node_modules/
+test-results/
+playwright-report/

@@ -1,0 +1,121 @@
+# Contained stack for the Open WebUI integration. Nothing here touches the
+# repository's root docker-compose.yml: its own project name, its own volumes,
+# and only the three host ports allocated to this integration.
+#
+#   host 5452  -> Postgres for Omni-Arena
+#   host 3200  -> Open WebUI
+#   (internal) -> the OpenAI-compatible bridge, reachable only inside this network
+#
+# Omni-Arena itself runs on the host on port 3021 (see scripts/arena.mjs), so it
+# is the repository's own source that is under test rather than a stale image
+# built from it. The bridge reaches it over host.docker.internal.
+name: omni-arena-open-webui
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: omni_arena
+      POSTGRES_USER: omni_arena
+      POSTGRES_PASSWORD: omni_arena
+    ports:
+      - "5452:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omni_arena -d omni_arena"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - openwebui_arena_postgres:/var/lib/postgresql/data
+
+  # The OpenAI-compatible façade in front of Omni-Arena. Deliberately not
+  # published on a host port: only Open WebUI needs to reach it, and the
+  # integration is limited to three host ports.
+  bridge:
+    image: node:22-alpine
+    working_dir: /app
+    command: ["node", "/app/bridge/server.mjs"]
+    environment:
+      BRIDGE_PORT: "8080"
+      ARENA_BASE_URL: ${ARENA_BASE_URL:-http://host.docker.internal:3021}
+      BRIDGE_PAIR_TIMEOUT_MS: "2000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./bridge:/app/bridge:ro
+      - ./test:/app/test:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.10.2
+    depends_on:
+      bridge:
+        condition: service_healthy
+    ports:
+      - "3200:8080"
+    environment:
+      # Open WebUI normally persists admin settings in its own database and
+      # ignores the environment on later boots. Turning that off keeps this
+      # file the single source of truth for the demo.
+      ENABLE_PERSISTENT_CONFIG: "False"
+      WEBUI_AUTH: "False"
+      WEBUI_NAME: "Omni-Arena x Open WebUI"
+      WEBUI_SECRET_KEY: omni-arena-open-webui-demo
+
+      # Omni-Arena is the only backend.
+      ENABLE_OLLAMA_API: "False"
+      ENABLE_OPENAI_API: "True"
+      OPENAI_API_BASE_URLS: http://bridge:8080/v1
+      OPENAI_API_KEYS: omni-arena-demo
+
+      # Required. Without it Open WebUI sends no chat identifier, the bridge
+      # cannot tell two conversations apart, and a vote can be attributed to
+      # the wrong matchup. See README, "What does not work".
+      ENABLE_FORWARD_USER_INFO_HEADERS: "True"
+
+      # Open WebUI's helper tasks (title, tags, follow-ups, autocomplete,
+      # retrieval queries) all post to the chat model. Against an arena that
+      # means extra matchups nobody voted on, so they are off.
+      ENABLE_TITLE_GENERATION: "False"
+      ENABLE_TAGS_GENERATION: "False"
+      ENABLE_FOLLOW_UP_GENERATION: "False"
+      ENABLE_AUTOCOMPLETE_GENERATION: "False"
+      ENABLE_RETRIEVAL_QUERY_GENERATION: "False"
+
+      # Open WebUI ships its own single-model "Arena Model" feature. Disabled
+      # so the two are not confused in this demo (see README, "Findings").
+      ENABLE_EVALUATION_ARENA_MODELS: "False"
+    volumes:
+      - openwebui_data:/app/backend/data
+    restart: unless-stopped
+
+  # Optional: the Bradley-Terry rating worker, so `!leaderboard` shows real
+  # ratings instead of falling back to win rate. Off by default — the demo
+  # works without it. Enable with:
+  #     docker compose --profile ratings up -d worker
+  # Built from the repository's own worker/ (read-only; nothing is modified).
+  worker:
+    profiles: ["ratings"]
+    build: ../../worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://omni_arena:omni_arena@postgres:5432/omni_arena
+      REFIT_INTERVAL_SECONDS: "60"
+    restart: unless-stopped
+
+volumes:
+  openwebui_arena_postgres:
+  openwebui_data:

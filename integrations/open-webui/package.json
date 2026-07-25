@@ -1,0 +1,20 @@
+{
+  "name": "@omni-arena/integration-open-webui",
+  "private": true,
+  "type": "module",
+  "description": "Omni-Arena inside the real Open WebUI, driven through an OpenAI-compatible bridge over the openai-sse adapter.",
+  "scripts": {
+    "up": "docker compose up -d",
+    "down": "docker compose down",
+    "clean": "docker compose down -v",
+    "arena": "node scripts/arena.mjs",
+    "logs": "docker compose logs -f bridge open-webui",
+    "test": "node scripts/test.mjs",
+    "test:http": "docker compose exec -T bridge node /app/test/openai-surface.test.mjs",
+    "test:e2e": "playwright test -c e2e/playwright.config.js",
+    "clone-upstream": "node scripts/clone-upstream.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "app": "open-webui",
+  "repo": "https://github.com/open-webui/open-webui",
+  "tag": "v0.10.2",
+  "commit": "ecd48e2f718220a6400ecf49eafd4867a38feb10",
+  "commitDate": "2026-07-01",
+  "image": "ghcr.io/open-webui/open-webui:v0.10.2",
+  "note": "The container image is the artifact this integration runs. The source checkout (scripts/clone-upstream.mjs -> .upstream/) is only used to verify behaviour claims made in README.md against the exact code that ships in that tag."
+}
