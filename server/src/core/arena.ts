@@ -1,10 +1,5 @@
 import type { ArenaEvent, ArenaSlot } from "./events.js";
-import type {
-  ChatMessage,
-  MatchupAssignment,
-  Model,
-  ProviderResolverPort,
-} from "./ports.js";
+import type { ChatMessage, Model, ProviderResolverPort } from "./ports.js";
 import { calculateMarkdownDensity, estimateTokenCount } from "./style.js";
 
 class AsyncEventQueue<T> {
@@ -43,15 +38,19 @@ class AsyncEventQueue<T> {
 export class ArenaCore {
   constructor(private readonly providers: ProviderResolverPort) {}
 
+  /**
+   * Multiplex one model per slot into a single event stream. Omitting `B` is
+   * how a single (non-comparison) round is expressed — the alternative, a
+   * two-slot assignment with the same model twice plus a slot count, made the
+   * unused slot look meaningful in logs and types.
+   */
   async *stream(
     messages: ChatMessage[],
-    assignment: MatchupAssignment,
+    slots: { A: Model; B?: Model },
     signal?: AbortSignal,
-    options: { activeSlots?: 1 | 2 } = {},
   ): AsyncGenerator<ArenaEvent> {
-    const slotCount = options.activeSlots ?? 2;
     const queue = new AsyncEventQueue<ArenaEvent>();
-    let activeSlots = slotCount;
+    let activeSlots = slots.B ? 2 : 1;
 
     // Control-plane cancellation: aborting unblocks the consumer immediately so
     // the route stops emitting; in-flight producers observe `signal.aborted` and
@@ -122,9 +121,9 @@ export class ArenaCore {
       }
     };
 
-    void produce("A", assignment.slotA);
-    if (slotCount === 2) {
-      void produce("B", assignment.slotB);
+    void produce("A", slots.A);
+    if (slots.B) {
+      void produce("B", slots.B);
     }
 
     try {

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ArenaCore } from "./arena.js";
 import type {
-  MatchupAssignment,
   Model,
   ModelProviderPort,
   ProviderResolverPort,
@@ -15,12 +14,7 @@ const model = (id: string): Model => ({
   enabled: true,
 });
 
-const assignment: MatchupAssignment = {
-  modelA: model("a"),
-  modelB: model("b"),
-  slotA: model("a"),
-  slotB: model("b"),
-};
+const duel = { A: model("a"), B: model("b") };
 
 class Resolver implements ProviderResolverPort {
   constructor(private readonly providers: Record<string, ModelProviderPort>) {}
@@ -59,7 +53,7 @@ describe("ArenaCore", () => {
     const events = [];
     for await (const event of core.stream(
       [{ role: "user", content: "prompt" }],
-      assignment,
+      duel,
     )) {
       events.push(event);
     }
@@ -81,7 +75,7 @@ describe("ArenaCore", () => {
     expect(events.at(-1)).toEqual({ type: "matchup_done" });
   });
 
-  it("streams only slot A when a single slot is requested", async () => {
+  it("streams only slot A when no slot B model is given", async () => {
     let bTouched = false;
     const core = new ArenaCore(
       new Resolver({
@@ -101,9 +95,7 @@ describe("ArenaCore", () => {
     const events = [];
     for await (const event of core.stream(
       [{ role: "user", content: "prompt" }],
-      assignment,
-      undefined,
-      { activeSlots: 1 },
+      { A: model("a") },
     )) {
       events.push(event);
     }
@@ -141,7 +133,7 @@ describe("ArenaCore", () => {
     const events = [];
     for await (const event of core.stream(
       [{ role: "user", content: "prompt" }],
-      assignment,
+      duel,
     )) {
       events.push(event);
     }
@@ -183,7 +175,7 @@ describe("ArenaCore", () => {
     const events = [];
     for await (const event of core.stream(
       [{ role: "user", content: "prompt" }],
-      assignment,
+      duel,
       controller.signal,
     )) {
       events.push(event);
@@ -220,7 +212,7 @@ describe("ArenaCore", () => {
     const events = [];
     for await (const event of core.stream(
       [{ role: "user", content: "prompt" }],
-      assignment,
+      duel,
       controller.signal,
     )) {
       events.push(event);
