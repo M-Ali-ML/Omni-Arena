@@ -356,10 +356,831 @@ textarea:focus {
   text-align: right;
 }
 
+.component-note {
+  margin: 0 0 4px;
+  color: #7a776e;
+  font-size: 13px;
+}
+
+/* Per-row scale label, shown only when the comparison graph is split. */
+.component-tag {
+  margin-left: 8px;
+  border: 1px solid #efe3c0;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #7a5d00;
+  background: #faf3df;
+  font: 400 11px/1.4 "Geist Mono", monospace;
+  vertical-align: middle;
+}
+
+.leaderboard + .chart-card {
+  margin-top: 16px;
+}
+
+/* ---------------------------------------------------------------- */
+/* Top navigation                                                    */
+/* ---------------------------------------------------------------- */
+
+.top-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 24px;
+  border-bottom: 1px solid #e4e2e0;
+  background: #fff;
+}
+
+.brand {
+  color: #37352f;
+  font: 600 13px/1 "Geist Mono", monospace;
+  letter-spacing: 0.08em;
+}
+
+.top-nav-links {
+  display: flex;
+  gap: 4px;
+}
+
+.top-nav-links a {
+  border-radius: 4px;
+  padding: 6px 12px;
+  color: #5d5f5d;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.top-nav-links a:hover {
+  background: #f5f3f1;
+}
+
+.top-nav-links a.active {
+  color: #fff;
+  background: #37352f;
+}
+
+/* ---------------------------------------------------------------- */
+/* Insights dashboard                                                */
+/* ---------------------------------------------------------------- */
+
+.insights .hero {
+  margin-bottom: 24px;
+}
+
+.tab-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid #e4e2e0;
+}
+
+.tab-nav a {
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  padding: 8px 14px;
+  color: #7a776e;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.tab-nav a:hover {
+  color: #37352f;
+}
+
+.tab-nav a.active {
+  border-bottom-color: #37352f;
+  color: #37352f;
+}
+
+.tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+  gap: 16px;
+}
+
+.chart-card {
+  min-width: 0;
+  border: 1px solid #e4e2e0;
+  border-radius: 8px;
+  padding: 20px 24px;
+  background: #fff;
+}
+
+.chart-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.chart-card h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+.chart-subtitle {
+  margin: 0;
+  color: #7a776e;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.chart-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.chart-actions button {
+  padding: 5px 10px;
+  font-size: 13px;
+}
+
+.chart-actions button.active {
+  border-color: #37352f;
+  color: #fff;
+  background: #37352f;
+}
+
+.chart-empty {
+  margin: 0;
+  padding: 24px 0;
+  color: #acaba9;
+  font-size: 14px;
+  text-align: center;
+}
+
+.chart-warning {
+  margin: 0 0 12px;
+  border: 1px solid #efe3c0;
+  border-radius: 4px;
+  padding: 8px 12px;
+  color: #7a5d00;
+  background: #faf3df;
+  font-size: 13px;
+}
+
+.chart-footnote {
+  margin: 16px 0 0;
+  color: #7a776e;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* Setup notice: shown only while the arena has nothing to plot ------- */
+
+.setup-notice {
+  margin: 0 0 24px;
+  border: 1px solid #e9e9e7;
+  border-left: 3px solid #37352f;
+  border-radius: 8px;
+  padding: 16px 20px;
+  background: #f7f7f5;
+  font-size: 14px;
+}
+
+.setup-notice p {
+  margin: 0 0 10px;
+  color: #37352f;
+  line-height: 1.6;
+}
+
+.setup-notice p:last-child {
+  margin-bottom: 0;
+}
+
+.setup-notice-title {
+  font-weight: 600;
+}
+
+.setup-notice pre {
+  margin: 0 0 10px;
+  border: 1px solid #e9e9e7;
+  border-radius: 4px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  background: #fff;
+}
+
+.setup-notice code {
+  border-radius: 3px;
+  background: #efeeec;
+  padding: 1px 5px;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 12.5px;
+}
+
+.setup-notice pre code {
+  padding: 0;
+  background: none;
+  font-size: 13px;
+}
+
+.setup-notice-note {
+  color: #7a776e;
+  font-size: 13px;
+}
+
+/* Style-coefficient panel ------------------------------------------- */
+
+.style-effects {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.style-effects li {
+  display: grid;
+  grid-template-columns: 1fr auto 72px;
+  gap: 12px;
+  align-items: baseline;
+  padding: 10px 0;
+  border-top: 1px solid #f1efec;
+}
+
+.style-effects li:first-child {
+  border-top: none;
+}
+
+.style-effect-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.style-effect-basis {
+  color: #7a776e;
+  font-size: 12px;
+}
+
+.style-effects strong {
+  font: 600 15px/1.4 "Geist Mono", monospace;
+  text-align: right;
+}
+
+/* Row charts: lollipop, forest plot, dumbbell, outcome bars -------- */
+
+.lollipop-row {
+  display: grid;
+  grid-template-columns: 24px 150px 1fr;
+  gap: 12px;
+  align-items: center;
+  min-height: 32px;
+}
+
+.forest .lollipop-row,
+.outcome-bars .lollipop-row {
+  grid-template-columns: 24px 150px 1fr 76px;
+}
+
+.dumbbell .lollipop-row {
+  grid-template-columns: 150px 1fr 56px;
+}
+
+.outcome-bars .lollipop-row {
+  grid-template-columns: 150px 1fr 76px;
+}
+
+.rank-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid #e4e2e0;
+  border-radius: 9999px;
+  color: #7a776e;
+  font: 500 11px/1 "Geist Mono", monospace;
+}
+
+.row-label {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.component-chip {
+  margin-left: 6px;
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: #7a776e;
+  background: #f5f3f1;
+  font: 400 10px/1.4 "Geist Mono", monospace;
+}
+
+.row-track {
+  position: relative;
+  height: 28px;
+}
+
+.row-track > span {
+  position: absolute;
+  top: 50%;
+}
+
+.ref-line {
+  width: 0;
+  height: 100%;
+  border-left: 1px dashed #cbc6bc;
+  transform: translateY(-50%);
+}
+
+.stem {
+  height: 4px;
+  border-radius: 2px;
+  transform: translateY(-50%);
+}
+
+.stem-above {
+  background: #a8cdb6;
+}
+
+.stem-below {
+  background: #e3b7a9;
+}
+
+.stem-neutral {
+  background: #e4e2e0;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  transform: translate(-50%, -50%);
+}
+
+.dot-above {
+  background: #3f8a5f;
+}
+
+.dot-below {
+  background: #c4674d;
+}
+
+.dot-ink {
+  background: #37352f;
+}
+
+.dot-hollow {
+  border: 2px solid #37352f;
+  background: #fff;
+}
+
+.legend-dot {
+  position: static;
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 4px;
+  transform: none;
+}
+
+.track-value {
+  margin-left: 10px;
+  font: 500 12px/1 "Geist Mono", monospace;
+  transform: translateY(-50%);
+  white-space: nowrap;
+}
+
+/* Below-50% labels sit to the left of the dot so they never cross the stem. */
+.track-value.value-below {
+  margin-left: 0;
+  transform: translate(calc(-100% - 10px), -50%);
+}
+
+.value-above {
+  color: #3f8a5f;
+}
+
+.value-below {
+  color: #c4674d;
+}
+
+.row-value {
+  font: 500 13px/1.3 "Geist Mono", monospace;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Position-bias rows carry a wide two-value figure ("100% / 88%"). */
+.dumbbell .lollipop-row.bias-row {
+  grid-template-columns: 140px 1fr 100px;
+}
+
+.bias-row .row-value small {
+  display: inline;
+}
+
+.row-value small {
+  color: #7a776e;
+  font-size: 11px;
+}
+
+.whisker {
+  height: 2px;
+  background: #cbc6bc;
+  transform: translateY(-50%);
+}
+
+.whisker-cap {
+  width: 2px;
+  height: 10px;
+  background: #cbc6bc;
+  transform: translate(-50%, -50%);
+}
+
+.row-axis {
+  height: 20px;
+}
+
+.axis-row {
+  min-height: 20px;
+  margin-top: 4px;
+}
+
+.axis-row .rank-badge {
+  border: none;
+}
+
+.axis-tick {
+  color: #acaba9;
+  font: 400 11px/1 "Geist Mono", monospace;
+  transform: translate(-50%, -50%);
+}
+
+.lollipop-legend,
+.dumbbell-legend,
+.outcome-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: #7a776e;
+  font: 500 11px/1.4 "Geist Mono", monospace;
+  letter-spacing: 0.05em;
+}
+
+.lollipop-legend {
+  justify-content: center;
+}
+
+.legend-below {
+  color: #c4674d;
+}
+
+.legend-above {
+  color: #3f8a5f;
+}
+
+.legend-pill {
+  border: 1px solid #e4e2e0;
+  border-radius: 9999px;
+  padding: 3px 10px;
+  background: #fff;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.seg-win {
+  background: #3f8a5f;
+}
+
+.seg-tie {
+  background: #c9c2b4;
+}
+
+.seg-loss {
+  background: #c4674d;
+}
+
+.seg-skip {
+  background: #eceae6;
+}
+
+.outcome-bar {
+  display: flex;
+  overflow: hidden;
+  height: 20px;
+  border-radius: 4px;
+  background: #f5f3f1;
+}
+
+.outcome-seg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font: 500 11px/1 "Geist Mono", monospace;
+}
+
+.outcome-seg.seg-tie,
+.outcome-seg.seg-skip {
+  color: #5d5f5d;
+}
+
+/* Bump chart ------------------------------------------------------ */
+
+.bump-chart {
+  width: 100%;
+  height: auto;
+}
+
+.bump-heading {
+  fill: #7a776e;
+  font: 500 11px "Geist Mono", monospace;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.bump-label {
+  fill: #37352f;
+  font: 500 12px Inter, system-ui, sans-serif;
+}
+
+/* Head-to-head matrix ---------------------------------------------- */
+
+.matrix-scroll {
+  overflow-x: auto;
+}
+
+.matrix {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.matrix th {
+  padding: 6px 8px;
+  color: #7a776e;
+  font-weight: 500;
+  text-align: left;
+}
+
+.matrix thead th {
+  max-width: 90px;
+  overflow: hidden;
+  font: 500 11px/1.3 "Geist Mono", monospace;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.matrix tbody th {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.matrix td {
+  width: 56px;
+  height: 40px;
+  border: 1px solid #fff;
+  border-radius: 4px;
+  font: 500 12px/1 "Geist Mono", monospace;
+  text-align: center;
+}
+
+.matrix td.cell-empty {
+  color: #cbc6bc;
+  background: #f5f3f1;
+}
+
+.matrix td.cell-self {
+  background: repeating-linear-gradient(
+    45deg,
+    #f5f3f1,
+    #f5f3f1 4px,
+    #fbf9f7 4px,
+    #fbf9f7 8px
+  );
+}
+
+.matrix td.cell-selected {
+  outline: 2px solid #37352f;
+  outline-offset: -2px;
+}
+
+/* Latency + coefficient rows ---------------------------------------- */
+
+.latency-row {
+  grid-template-columns: 150px 1fr 130px;
+}
+
+.coeff-row {
+  grid-template-columns: 170px 1fr 64px;
+}
+
+/* Tie-rate bars ----------------------------------------------------- */
+
+.tie-row {
+  grid-template-columns: 200px 1fr 96px;
+}
+
+.tie-track {
+  overflow: hidden;
+  height: 12px;
+  border-radius: 6px;
+  background: #f5f3f1;
+}
+
+.tie-fill {
+  display: block;
+  height: 100%;
+  border-radius: 6px;
+  background: #c9c2b4;
+}
+
+/* Connectivity groups ----------------------------------------------- */
+
+.component-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.component-group {
+  min-width: 140px;
+  border: 1px solid #e4e2e0;
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+
+.component-group ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.component-group li + li {
+  margin-top: 2px;
+}
+
+.component-group-unrated {
+  border-style: dashed;
+  color: #7a776e;
+}
+
+.component-group .stat-label {
+  margin: 0;
+}
+
+/* Pair drill-down ---------------------------------------------------- */
+
+.pair-record {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.pair-score {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.pair-note {
+  color: #7a776e;
+  font: 400 12px/1.4 "Geist Mono", monospace;
+}
+
+.pair-sides {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.pair-side {
+  border: 1px solid #e4e2e0;
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+
+.pair-side .stat-label {
+  margin: 0 0 8px;
+}
+
+.pair-side dl {
+  margin: 0;
+}
+
+.pair-side dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+}
+
+.pair-side dt {
+  color: #7a776e;
+  font-size: 12px;
+}
+
+.pair-side dd {
+  margin: 0;
+  font: 500 12px/1.4 "Geist Mono", monospace;
+}
+
+/* Summary stat strip ----------------------------------------------- */
+
+.insights .stat-strip {
+  margin-bottom: 24px;
+}
+
+
+.stat-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.stat-card {
+  border: 1px solid #e4e2e0;
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: #fff;
+}
+
+.stat-card .stat-label {
+  margin: 0 0 6px;
+  color: #7a776e;
+  font: 500 11px/1.4 "Geist Mono", monospace;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.stat-card .stat-value {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.stat-card .stat-note {
+  margin: 4px 0 0;
+  color: #acaba9;
+  font-size: 12px;
+}
+
+/* Recharts container tweaks ---------------------------------------- */
+
+.chart-card .recharts-wrapper {
+  font-size: 12px;
+}
+
+.chart-card .recharts-cartesian-axis-tick text {
+  fill: #7a776e;
+  font-family: "Geist Mono", monospace;
+  font-size: 11px;
+}
+
+.chart-card .recharts-default-tooltip {
+  border-color: #e4e2e0 !important;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
 @media (max-width: 720px) {
   main {
     width: min(100% - 32px, 560px);
     padding-top: 40px;
+  }
+
+  .chart-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lollipop-row,
+  .forest .lollipop-row,
+  .dumbbell .lollipop-row,
+  .outcome-bars .lollipop-row {
+    grid-template-columns: 90px 1fr;
+  }
+
+  .rank-badge {
+    display: none;
+  }
+
+  .row-value {
+    display: none;
   }
 
   .responses {
