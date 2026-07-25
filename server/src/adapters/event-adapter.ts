@@ -1,11 +1,11 @@
 import type { PublicArenaEvent } from "../core/events.js";
 
 /**
- * A wire protocol for an arena stream. Each adapter maps the internal
+ * The egress half of a wire protocol: each adapter maps the internal
  * PublicArenaEvent sequence onto exactly one transport without the chat route
- * knowing any framing details. Native SSE is the only adapter today; AG-UI,
- * A2UI, Vercel AI SDK, and OpenAI SSE plug in here in later stages by
- * implementing this same port.
+ * knowing any framing details. A protocol that also has a canonical *request*
+ * envelope implements the `RequestAdapter` port in `request-adapter.ts`
+ * alongside this one; the two are resolved together by `selectProtocol`.
  */
 export interface EventAdapter {
   /** Response headers this protocol requires before the first chunk. */
@@ -14,4 +14,12 @@ export interface EventAdapter {
   serialize(event: PublicArenaEvent): string;
   /** Trailing bytes to flush before the stream closes, if any. */
   finalize(): string;
+  /**
+   * Set when the protocol's clients settle a run on a terminal error *event*
+   * and treat a non-2xx response as a transport failure with nothing to render
+   * (AG-UI). For those, a failure that happens before streaming starts is
+   * delivered in-band at 200 as a `run_error` instead of as a JSON status.
+   * Everything else keeps the HTTP status codes documented in `api.md`.
+   */
+  readonly inBandErrors?: boolean;
 }

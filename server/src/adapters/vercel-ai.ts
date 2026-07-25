@@ -4,6 +4,16 @@ import {
   type PublicArenaEvent,
 } from "../core/events.js";
 import type { EventAdapter } from "./event-adapter.js";
+import {
+  arenaPropsSchema,
+  invalidRequest,
+  isProtocolEnvelope,
+  lastUserPrompt,
+  protocolMessageSchema,
+  toArenaChatRequest,
+  type RequestAdapter,
+  type RequestParseResult,
+} from "./request-adapter.js";
 
 /**
  * Vercel AI SDK adapter (ecosystem, vision §2): speaks the AI SDK UI Message
@@ -24,11 +34,18 @@ const uiMessagePartSchema = z.discriminatedUnion("type", [
       matchupId: z.string(),
       // Carried here (as in native SSE's matchup_started) so an AI SDK client
       // can cast a vote once the round finishes; the reveal endpoint needs it.
-      matchupToken: z.string(),
-      conversationId: z.string(),
-      turnIndex: z.number(),
+      // Absent on a non-votable round, which has no token to give.
+      matchupToken: z.string().optional(),
+      // Absent on a round that persisted no conversation to continue from.
+      conversationId: z.string().optional(),
+      turnIndex: z.number().optional(),
       mainSlot: z.literal("A"),
       dataSlot: z.literal("B"),
+      // Trigger/exposure fields from matchup_started. A `single` round streams
+      // slot A only and carries no vote token, so a client needs these to
+      // decide whether to render the B column and the vote controls.
+      mode: z.enum(["matchup", "single", "shadow"]),
+      votable: z.boolean(),
     }),
   }),
   z.object({
@@ -43,6 +60,11 @@ const uiMessagePartSchema = z.discriminatedUnion("type", [
     type: z.literal("data-arena-error"),
     data: z.object({ slot: z.enum(["A", "B"]), message: z.string() }),
   }),
+  /**
+   * The protocol's own terminal error part (as opposed to the per-slot data
+   * part above), so a stock `useChat` surfaces the failure and settles.
+   */
+  z.object({ type: z.literal("error"), errorText: z.string() }),
   z.object({ type: z.literal("finish") }),
 ]);
 
@@ -83,6 +105,8 @@ export function createVercelAiAdapter(): EventAdapter {
                 turnIndex: event.turnIndex,
                 mainSlot: "A",
                 dataSlot: "B",
+                mode: event.mode,
+                votable: event.votable,
               },
             },
             { type: "text-start", id: textId },
@@ -104,6 +128,10 @@ export function createVercelAiAdapter(): EventAdapter {
           return event.slot === "A"
             ? frame([{ type: "text-end", id: textId }])
             : frame([{ type: "data-arena-b-done", data: {} }]);
+        case "run_error":
+          return frame([
+            { type: "error", errorText: `${event.code}: ${event.message}` },
+          ]);
         case "matchup_done":
           return frame([{ type: "finish" }]);
       }
@@ -113,3 +141,28 @@ export function createVercelAiAdapter(): EventAdapter {
     },
   };
 }
+
+/**
+ * The body `useChat` posts. AI SDK v5 sends UIMessages whose text lives in
+ * `parts`, v4 sent `content`; both are read. The arena's own inputs are read
+ * from the top level because that is where `useChat({ body })` puts extra
+ * fields, so `useChat({ api: "…?protocol=vercel", body: { sessionId } })` needs
+ * no server route of its own. `id`, `trigger` and `messageId` ride along on
+ * every request and are ignored.
+ */
+const useChatRequestSchema = arenaPropsSchema.extend({
+  id: z.string().optional(),
+  messages: z.array(protocolMessageSchema),
+});
+
+export const vercelAiRequestAdapter: RequestAdapter = {
+  claims: isProtocolEnvelope,
+  parse(body: unknown): RequestParseResult {
+    const parsed = useChatRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return invalidRequest(parsed.error);
+    }
+    const { messages, id: _id, ...props } = parsed.data;
+    return toArenaChatRequest(lastUserPrompt(messages), props, "messages");
+  },
+};

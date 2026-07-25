@@ -10,16 +10,28 @@ import type { EventAdapter } from "./event-adapter.js";
  * JSON stream. Each line is one flat, self-describing message so a
  * generative-UI frontend can paint two side-by-side "surfaces" (one per slot)
  * with its own local design system. Every message is validated against the
- * schema before it leaves the process (vision §5 rule 3).
+ * schema before it leaves the process (vision §5 rule 3). `surface_init` also
+ * carries the signed vote token, so this path is votable without a second
+ * channel — flat, self-describing messages are the protocol's own idiom, so the
+ * token needs no envelope of its own.
  */
 const a2uiMessageSchema = z.discriminatedUnion("kind", [
   z.object({
     v: z.literal("a2ui/1"),
     kind: z.literal("surface_init"),
     matchupId: z.string(),
-    conversationId: z.string(),
-    turnIndex: z.number(),
+    // POST /api/arena/vote is unreachable without this token, so it rides the
+    // one message every client already has to read. Absent on a non-votable
+    // round, which has no token to give.
+    matchupToken: z.string().optional(),
+    // Absent on a round that persisted no conversation to continue from.
+    conversationId: z.string().optional(),
+    turnIndex: z.number().optional(),
     surfaces: z.array(z.enum(["A", "B"])),
+    // A `single` round paints one surface and carries no vote token, so a
+    // client needs these to decide whether to render the vote controls.
+    mode: z.enum(["matchup", "single", "shadow"]),
+    votable: z.boolean(),
   }),
   z.object({
     v: z.literal("a2ui/1"),
@@ -37,6 +49,13 @@ const a2uiMessageSchema = z.discriminatedUnion("kind", [
     v: z.literal("a2ui/1"),
     kind: z.literal("surface_done"),
     surface: z.enum(["A", "B"]),
+  }),
+  /** Terminal failure of the session, as opposed to one surface's `error`. */
+  z.object({
+    v: z.literal("a2ui/1"),
+    kind: z.literal("session_error"),
+    code: z.string(),
+    message: z.string(),
   }),
   z.object({ v: z.literal("a2ui/1"), kind: z.literal("session_done") }),
 ]);
@@ -63,9 +82,12 @@ export function createA2uiAdapter(): EventAdapter {
             v: "a2ui/1",
             kind: "surface_init",
             matchupId: event.matchupId,
+            matchupToken: event.matchupToken,
             conversationId: event.conversationId,
             turnIndex: event.turnIndex,
             surfaces: event.slots,
+            mode: event.mode,
+            votable: event.votable,
           });
         case "token":
           return frame({
@@ -86,6 +108,13 @@ export function createA2uiAdapter(): EventAdapter {
             v: "a2ui/1",
             kind: "surface_done",
             surface: event.slot,
+          });
+        case "run_error":
+          return frame({
+            v: "a2ui/1",
+            kind: "session_error",
+            code: event.code,
+            message: event.message,
           });
         case "matchup_done":
           return frame({ v: "a2ui/1", kind: "session_done" });
