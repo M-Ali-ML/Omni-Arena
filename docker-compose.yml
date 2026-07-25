@@ -33,9 +33,18 @@ services:
     restart: unless-stopped
 
   # Bradley-Terry rating worker. Reads aggregated votes, fits ratings with
-  # Fisher-information CIs, and upserts model_ratings on a periodic loop.
+  # Fisher-information CIs, and upserts model_ratings on a periodic loop —
+  # warm-started refits, with a from-scratch pass every FULL_REFIT_EVERY refits.
+  # Each iteration also runs the style-controlled pass (the image's default
+  # command is `--loop --style`), which is what fills model_style_ratings and
+  # style_control_coefficients for the dashboard's style panels.
   # Requires the server's migrations to have created model_ratings; until then
   # it logs and retries on the next interval.
+  #
+  # Every knob the worker reads is forwarded explicitly rather than via
+  # `env_file`: it needs no provider keys or app secrets, and the defaults below
+  # match the worker's own. Values come from the repo-root .env like the rest of
+  # the interpolation in this file.
   worker:
     build: ./worker
     depends_on:
@@ -44,7 +53,11 @@ services:
     environment:
       DATABASE_URL: postgres://omni_arena:omni_arena@postgres:5432/omni_arena
       REFIT_INTERVAL_SECONDS: ${REFIT_INTERVAL_SECONDS:-300}
+      FULL_REFIT_EVERY: ${FULL_REFIT_EVERY:-12}
       RATING_RIDGE: ${RATING_RIDGE:-0.01}
+      STYLE_RIDGE: ${STYLE_RIDGE:-0.05}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
     restart: unless-stopped
 
 volumes:

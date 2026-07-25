@@ -14,3 +14,9 @@ coverage/
 # Local-only working material (planning, research, agent logs, explainers).
 artifacts/
 plans/
+
+# Third-party app clones made by the integration setup scripts. The pinned
+# commit and the arena overlay are committed; the checkout itself is not.
+integrations/*/.upstream/
+integrations/*/.pgdata/
+integrations/*/test-results/
