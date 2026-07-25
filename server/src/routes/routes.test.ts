@@ -1,5 +1,9 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
+import { JoinBroker } from "../arena/join.js";
 import type { ArenaModeConfig } from "../arena/mode.js";
 import { ArenaCore } from "../core/arena.js";
 import type {
@@ -11,6 +15,7 @@ import type {
   Model,
   PreferenceRecord,
   PreferenceRepositoryPort,
+  RatingContext,
   ResponseRecord,
 } from "../core/ports.js";
 import { ProviderRegistry } from "../providers/registry.js";
@@ -154,6 +159,15 @@ class MemoryRepository implements PreferenceRepositoryPort {
       };
     });
   }
+
+  // No rating worker runs against an in-memory repository, so the context is
+  // the shape a fresh install serves.
+  async getRatingContext(): Promise<RatingContext> {
+    return {
+      components: { count: null, groups: [] },
+      styleControl: { effects: [], votesObserved: 0, computedAt: null },
+    };
+  }
 }
 
 function parseEvents(body: string): Array<Record<string, unknown>> {
@@ -166,14 +180,24 @@ function parseEvents(body: string): Array<Record<string, unknown>> {
         ?.slice(5)
         .trim(),
     )
-    .filter((data): data is string => Boolean(data))
+    .filter((data): data is string => Boolean(data) && data !== "[DONE]")
     .map((data) => JSON.parse(data) as Record<string, unknown>);
 }
 
 async function setup(
   modeConfig: ArenaModeConfig = { trigger: "always", defaultModel: null },
+  overrides: {
+    webDistDir?: string;
+    failSaveResponse?: boolean;
+    joinBroker?: JoinBroker;
+  } = {},
 ) {
   const repository = new MemoryRepository();
+  if (overrides.failSaveResponse) {
+    repository.saveResponse = async () => {
+      throw new Error("database is on fire");
+    };
+  }
   const receivedMessages: ChatMessage[][] = [];
   const provider = {
     async *stream(model: Model, messages: ChatMessage[]) {
@@ -196,8 +220,17 @@ async function setup(
     tokens: new MatchupTokenService("test-secret-long-enough"),
     harnessVersion: "test-harness-v1",
     modeConfig,
+    joinBroker: overrides.joinBroker,
+    webDistDir: overrides.webDistDir,
   });
   return { app, repository, receivedMessages };
+}
+
+/** A web bundle just real enough for the SPA fallback to be registered. */
+async function webBundle(): Promise<string> {
+  const directory = await mkdtemp(path.join(tmpdir(), "arena-web-"));
+  await writeFile(path.join(directory, "index.html"), "<!doctype html>spa");
+  return directory;
 }
 
 describe("arena routes", () => {
@@ -259,6 +292,12 @@ describe("arena routes", () => {
         id: slotA.id,
         wins: 1,
         winRate: 1,
+      });
+      // Rating context rides alongside `models` so no client can fetch ratings
+      // without the connectivity caveat that qualifies them.
+      expect(leaderboard.json()).toMatchObject({
+        components: { count: null, groups: [] },
+        styleControl: { effects: [], votesObserved: 0, computedAt: null },
       });
 
       const duplicate = await app.inject({
@@ -348,8 +387,12 @@ describe("arena routes", () => {
         mode: "single",
         votable: false,
         slots: ["A"],
-        matchupToken: "",
       });
+      // A single round persists no matchup and no conversation, so it emits
+      // neither a vote token nor ids that would answer 404 if replayed.
+      expect(started).not.toHaveProperty("matchupToken");
+      expect(started).not.toHaveProperty("conversationId");
+      expect(started).not.toHaveProperty("turnIndex");
 
       const slotDone = events.filter((event) => event.type === "slot_done");
       expect(slotDone).toHaveLength(1);
@@ -427,6 +470,359 @@ describe("arena routes", () => {
     }
   });
 
+  it("reports a mid-stream failure in-band instead of ending silently", async () => {
+    const { app } = await setup(undefined, { failSaveResponse: true });
+    try {
+      const chat = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat",
+        payload: { prompt: "Hello", sessionId: "anon_midstream" },
+      });
+      expect(chat.statusCode).toBe(200);
+      const events = parseEvents(chat.body);
+      // The response is already committed at 200, so the only honest terminator
+      // is an in-band error; before this the body just stopped.
+      expect(events.at(-1)).toMatchObject({
+        type: "run_error",
+        code: "stream_failed",
+        message: "database is on fire",
+      });
+      expect(events.some((event) => event.type === "matchup_done")).toBe(false);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("answers an AG-UI request's failure with an in-band RUN_ERROR", async () => {
+    const { app } = await setup();
+    try {
+      const first = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat?protocol=ag-ui",
+        payload: { prompt: "First turn", sessionId: "anon_agui" },
+      });
+      const matchup = parseEvents(first.body).find(
+        (event) => event.name === "arena_matchup",
+      )?.value as { conversationId: string };
+
+      // Continuing before voting is a 409 for a JSON client; an AG-UI client
+      // has no way to render one, and a run it never sees end hangs forever.
+      const premature = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat?protocol=ag-ui",
+        payload: {
+          prompt: "Too soon",
+          sessionId: "anon_agui",
+          conversationId: matchup.conversationId,
+        },
+      });
+      expect(premature.statusCode).toBe(200);
+      expect(parseEvents(premature.body)).toEqual([
+        {
+          type: "RUN_ERROR",
+          code: "conversation_not_ready",
+          message:
+            "Vote for a winning response before continuing this conversation",
+        },
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("keeps HTTP status codes for protocols whose clients read them", async () => {
+    const { app } = await setup();
+    try {
+      const unknownConversation = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat",
+        payload: {
+          prompt: "Hello",
+          sessionId: "anon_status",
+          conversationId: "00000000-0000-4000-8000-0000000000ff",
+        },
+      });
+      expect(unknownConversation.statusCode).toBe(404);
+      expect(unknownConversation.json()).toEqual({
+        error: "Conversation not found",
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("serves an OpenAI-shaped model list from the enabled roster", async () => {
+    const { app } = await setup();
+    try {
+      for (const url of ["/models", "/v1/models"]) {
+        const response = await app.inject({ method: "GET", url });
+        expect(response.statusCode).toBe(200);
+        expect(response.headers["content-type"]).toContain("application/json");
+        expect(response.json()).toMatchObject({
+          object: "list",
+          data: [
+            { id: slotA.id, object: "model", owned_by: "test" },
+            { id: slotB.id, object: "model", owned_by: "test" },
+          ],
+        });
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("404s API-ish paths as JSON even with the SPA fallback installed", async () => {
+    const { app } = await setup(undefined, { webDistDir: await webBundle() });
+    try {
+      // An OpenAI client that got HTML at 200 here reported only "unexpected
+      // mimetype", which hid the fact that the route was missing.
+      const apiish = await app.inject({ method: "GET", url: "/v1/embeddings" });
+      expect(apiish.statusCode).toBe(404);
+      expect(apiish.json()).toEqual({ error: "Not Found" });
+
+      const spa = await app.inject({ method: "GET", url: "/leaderboard" });
+      expect(spa.statusCode).toBe(200);
+      expect(spa.body).toContain("spa");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("streams a matchup for an unmodified AG-UI RunAgentInput", async () => {
+    const { app, receivedMessages } = await setup();
+    try {
+      // Byte-for-byte what `new HttpAgent({ url })` posts — the body that used
+      // to come back `400 {"prompt":["expected string, received undefined"]}`.
+      const chat = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat?protocol=ag-ui",
+        payload: {
+          threadId: "t1",
+          runId: "r1",
+          state: {},
+          messages: [{ id: "m1", role: "user", content: "Hello" }],
+          tools: [],
+          context: [],
+          forwardedProps: {},
+        },
+      });
+      expect(chat.statusCode).toBe(200);
+
+      const events = parseEvents(chat.body);
+      expect(events[0]).toMatchObject({ type: "RUN_STARTED" });
+      const matchup = events.find(
+        (event) => event.name === "arena_matchup",
+      )?.value as { matchupToken: string; slots: string[] };
+      expect(matchup.slots).toEqual(["A", "B"]);
+      expect(matchup.matchupToken).toBeTruthy();
+      expect(
+        events.filter((event) => event.type === "TEXT_MESSAGE_START"),
+      ).toHaveLength(2);
+      expect(events.at(-1)).toMatchObject({ type: "RUN_FINISHED" });
+      // Both models answered the message the client actually sent.
+      expect(receivedMessages).toEqual([
+        [{ role: "user", content: "Hello" }],
+        [{ role: "user", content: "Hello" }],
+      ]);
+      expect(chat.body).not.toContain(slotA.displayName);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("continues an AG-UI conversation through forwardedProps", async () => {
+    const { app, receivedMessages } = await setup();
+    try {
+      const runInput = (
+        content: string,
+        forwardedProps: Record<string, unknown>,
+      ) => ({
+        threadId: "t1",
+        runId: "r1",
+        state: {},
+        messages: [{ id: "m1", role: "user", content }],
+        tools: [],
+        context: [],
+        forwardedProps,
+      });
+
+      const first = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat?protocol=ag-ui",
+        payload: runInput("First turn", { sessionId: "anon_run_input" }),
+      });
+      const matchup = parseEvents(first.body).find(
+        (event) => event.name === "arena_matchup",
+      )?.value as {
+        matchupId: string;
+        matchupToken: string;
+        conversationId: string;
+      };
+
+      await app.inject({
+        method: "POST",
+        url: "/api/arena/vote",
+        payload: {
+          matchupId: matchup.matchupId,
+          matchupToken: matchup.matchupToken,
+          vote: "left",
+        },
+      });
+
+      const followUp = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat?protocol=ag-ui",
+        payload: runInput("Follow up", {
+          sessionId: "anon_run_input",
+          conversationId: matchup.conversationId,
+        }),
+      });
+      expect(followUp.statusCode).toBe(200);
+      expect(
+        parseEvents(followUp.body).find(
+          (event) => event.name === "arena_matchup",
+        )?.value,
+      ).toMatchObject({
+        conversationId: matchup.conversationId,
+        turnIndex: 1,
+      });
+      // History still comes from the persisted winning response, not from the
+      // transcript the client posted.
+      expect(receivedMessages.at(-1)).toEqual([
+        { role: "user", content: "First turn" },
+        { role: "assistant", content: "Answer from alpha" },
+        { role: "user", content: "Follow up" },
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("streams a matchup for an unmodified /chat/completions body", async () => {
+    const { app, repository, receivedMessages } = await setup();
+    try {
+      const chat = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat?protocol=openai",
+        payload: {
+          model: "omni-arena",
+          messages: [
+            { role: "system", content: "You are helpful." },
+            { role: "user", content: "Hello" },
+          ],
+          stream: true,
+          temperature: 0.7,
+          user: "anon_openai",
+        },
+      });
+      expect(chat.statusCode).toBe(200);
+      expect(chat.headers["content-type"]).toContain("text/event-stream");
+
+      const chunks = parseEvents(chat.body);
+      const first = chunks[0] as {
+        object: string;
+        choices: Array<{ index: number }>;
+        omni_arena: { matchupId: string; matchupToken: string };
+      };
+      expect(first.object).toBe("chat.completion.chunk");
+      expect(first.choices.map((choice) => choice.index)).toEqual([0, 1]);
+      expect(first.omni_arena.matchupToken).toBeTruthy();
+      expect(chat.body.trimEnd().endsWith("data: [DONE]")).toBe(true);
+
+      expect(receivedMessages.at(-1)).toEqual([
+        { role: "user", content: "Hello" },
+      ]);
+      // OpenAI's `user` becomes the anonymous session, so the round is bound to
+      // the same caller a continuation would come from.
+      expect(
+        repository.matchups.get(first.omni_arena.matchupId)?.conversation
+          .anonymousSessionId,
+      ).toBe("anon_openai");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("serves the arena at the OpenAI chat-completions paths", async () => {
+    const { app } = await setup();
+    try {
+      // An OpenAI client is configured with a base URL and appends the path
+      // itself, so it can never send `?protocol=openai`.
+      for (const url of ["/chat/completions", "/v1/chat/completions"]) {
+        const chat = await app.inject({
+          method: "POST",
+          url,
+          headers: { accept: "text/event-stream" },
+          payload: {
+            model: "omni-arena",
+            messages: [{ role: "user", content: "Hello" }],
+            stream: true,
+          },
+        });
+        expect(chat.statusCode).toBe(200);
+        expect(chat.body).toContain('"object":"chat.completion.chunk"');
+        expect(chat.body.trimEnd().endsWith("data: [DONE]")).toBe(true);
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects a non-streaming completion request with a clear reason", async () => {
+    const { app } = await setup();
+    try {
+      const chat = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat?protocol=openai",
+        payload: {
+          model: "omni-arena",
+          messages: [{ role: "user", content: "Hello" }],
+          stream: false,
+        },
+      });
+      expect(chat.statusCode).toBe(400);
+      expect(chat.json().details).toMatchObject({
+        stream: [expect.stringContaining("streams")],
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("streams a matchup for an unmodified useChat body", async () => {
+    const { app, receivedMessages } = await setup();
+    try {
+      const chat = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat?protocol=vercel",
+        payload: {
+          id: "chat-1",
+          trigger: "submit-message",
+          messages: [
+            {
+              id: "m1",
+              role: "user",
+              parts: [{ type: "text", text: "Hello" }],
+            },
+          ],
+          sessionId: "anon_use_chat",
+        },
+      });
+      expect(chat.statusCode).toBe(200);
+      expect(chat.headers["x-vercel-ai-ui-message-stream"]).toBe("v1");
+      expect(
+        parseEvents(chat.body).find(
+          (part) => part.type === "data-arena-meta",
+        )?.data,
+      ).toMatchObject({ mainSlot: "A", dataSlot: "B", votable: true });
+      expect(receivedMessages.at(-1)).toEqual([
+        { role: "user", content: "Hello" },
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("selects a non-default protocol via the query param", async () => {
     const { app } = await setup();
     try {
@@ -441,6 +837,292 @@ describe("arena routes", () => {
       expect(chat.body.trimEnd().endsWith("data: [DONE]")).toBe(true);
       // The default path stays plain SSE (no chat-completion framing).
       expect(chat.body).not.toContain("matchup_started");
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+/**
+ * Slot join: one matchup served over two sibling requests, the shape a client
+ * with a compare view sends when it fans a turn out into one request per model.
+ * The reference case is Open WebUI v0.10, whose parallel requests share a
+ * `chat_id` and repeat the same messages.
+ */
+describe("slot join", () => {
+  const joinPayload = (overrides: Record<string, unknown> = {}) => ({
+    prompt: "Compare these two",
+    sessionId: "anon_join",
+    joinKey: "chat-7f3a",
+    ...overrides,
+  });
+
+  const chat = (
+    app: Awaited<ReturnType<typeof setup>>["app"],
+    payload: Record<string, unknown>,
+  ) => app.inject({ method: "POST", url: "/api/arena/chat", payload });
+
+  it("serves two simultaneous siblings as one matchup with one vote", async () => {
+    const { app, repository, receivedMessages } = await setup();
+    try {
+      // Dispatched in the same tick, as a fan-out does: whichever the loop runs
+      // first becomes the leader, and exactly one of them does.
+      const [first, second] = await Promise.all([
+        chat(app, joinPayload()),
+        chat(app, joinPayload()),
+      ]);
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(200);
+
+      const started = [first, second].map((reply) => parseEvents(reply.body)[0]);
+      const leader = started.find((event) => event?.matchupToken);
+      expect(new Set(started.map((event) => event?.matchupId)).size).toBe(1);
+      expect(started.map((event) => event?.slots).sort()).toEqual([
+        ["A"],
+        ["B"],
+      ]);
+      // Both siblings can vote on the shared matchup; the single-vote rule
+      // decides which one counts.
+      for (const event of started) {
+        expect(event).toMatchObject({ mode: "matchup", votable: true });
+        expect(event?.matchupToken).toBe(leader?.matchupToken);
+        expect(event?.conversationId).toBe(leader?.conversationId);
+      }
+
+      // Each connection carries only its own slot, and the two are disjoint.
+      const slotsOf = (body: string) =>
+        new Set(
+          parseEvents(body)
+            .filter((event) => event.type === "token")
+            .map((event) => event.slot),
+        );
+      expect([...slotsOf(first.body)]).toHaveLength(1);
+      expect([...slotsOf(second.body)]).toHaveLength(1);
+      expect([...slotsOf(first.body)]).not.toEqual([...slotsOf(second.body)]);
+      for (const reply of [first, second]) {
+        expect(parseEvents(reply.body).at(-1)).toMatchObject({
+          type: "matchup_done",
+        });
+      }
+
+      // One matchup row, one generation per model, both responses persisted.
+      expect(repository.matchups.size).toBe(1);
+      expect(receivedMessages).toHaveLength(2);
+      expect(repository.responses).toHaveLength(2);
+      expect(repository.responses.map((response) => response.slot).sort()).toEqual(
+        ["A", "B"],
+      );
+
+      const matchupId = leader?.matchupId as string;
+      const matchupToken = leader?.matchupToken as string;
+      const vote = await app.inject({
+        method: "POST",
+        url: "/api/arena/vote",
+        payload: { matchupId, matchupToken, vote: "left" },
+      });
+      expect(vote.statusCode).toBe(200);
+      const duplicate = await app.inject({
+        method: "POST",
+        url: "/api/arena/vote",
+        payload: { matchupId, matchupToken, vote: "right" },
+      });
+      expect(duplicate.statusCode).toBe(409);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("keeps both identities off both siblings' connections", async () => {
+    const { app } = await setup();
+    try {
+      const replies = await Promise.all([
+        chat(app, joinPayload()),
+        chat(app, joinPayload()),
+      ]);
+
+      for (const reply of replies) {
+        expect(reply.body).not.toContain(slotA.displayName);
+        expect(reply.body).not.toContain(slotB.displayName);
+        expect(reply.body).not.toContain(slotA.id);
+        expect(reply.body).not.toContain(slotB.id);
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("runs both slots on one connection when the window closes unpaired", async () => {
+    const { app, repository } = await setup(undefined, {
+      joinBroker: new JoinBroker({
+        windowMs: 20,
+        maxPending: 8,
+        maxQueuedEvents: 64,
+      }),
+    });
+    try {
+      const lone = await chat(app, joinPayload());
+
+      // Degrading to today's exact shape is what keeps the vote honest: the
+      // user sees both answers either way, and nothing is generated in vain.
+      expect(lone.statusCode).toBe(200);
+      const started = parseEvents(lone.body)[0];
+      expect(started).toMatchObject({
+        mode: "matchup",
+        votable: true,
+        slots: ["A", "B"],
+      });
+      expect(repository.responses).toHaveLength(2);
+
+      // The sibling that shows up after the window is told so, rather than
+      // silently opening a second matchup for the same turn.
+      const late = await chat(app, joinPayload());
+      expect(late.statusCode).toBe(409);
+      expect(late.json().error).toContain("join window closed");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("refuses a third request on a scope whose slots are taken", async () => {
+    const { app, repository } = await setup();
+    try {
+      await Promise.all([chat(app, joinPayload()), chat(app, joinPayload())]);
+      const third = await chat(app, joinPayload());
+
+      expect(third.statusCode).toBe(409);
+      expect(repository.matchups.size).toBe(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("refuses a join it cannot scope to a session", async () => {
+    const { app, repository } = await setup();
+    try {
+      const unscoped = await chat(app, {
+        prompt: "Compare these two",
+        joinKey: "chat-7f3a",
+      });
+
+      expect(unscoped.statusCode).toBe(400);
+      expect(unscoped.json().error).toContain("sessionId");
+      expect(repository.matchups.size).toBe(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each([
+    ["session", { sessionId: "anon_attacker" }],
+    ["prompt", { prompt: "Compare these two, please" }],
+  ])(
+    "never attaches a request that forges the join key with the wrong %s",
+    async (_label, override: Record<string, unknown>) => {
+      // Neither request can pair, so both wait out the window: keep it short.
+      const { app, repository } = await setup(undefined, {
+        joinBroker: new JoinBroker({
+          windowMs: 20,
+          maxPending: 8,
+          maxQueuedEvents: 64,
+        }),
+      });
+      try {
+        const [victim, intruder] = await Promise.all([
+          chat(app, joinPayload()),
+          chat(app, joinPayload(override)),
+        ]);
+
+        // Knowing the join key buys nothing: the capability is the whole scope,
+        // so the intruder gets its own matchup and never sees a byte of the
+        // victim's slot.
+        const [victimStart, intruderStart] = [victim, intruder].map(
+          (reply) => parseEvents(reply.body)[0],
+        );
+        expect(victimStart?.matchupId).not.toBe(intruderStart?.matchupId);
+        expect(intruder.body).not.toContain(victimStart?.matchupId as string);
+        expect(victimStart).toMatchObject({ slots: ["A", "B"] });
+        expect(intruderStart).toMatchObject({ slots: ["A", "B"] });
+        expect(repository.matchups.size).toBe(2);
+      } finally {
+        await app.close();
+      }
+    },
+  );
+
+  it("ignores a joinKey when joining is disabled", async () => {
+    const { app, repository } = await setup(undefined, {
+      joinBroker: new JoinBroker({
+        windowMs: 0,
+        maxPending: 8,
+        maxQueuedEvents: 64,
+      }),
+    });
+    try {
+      const [first, second] = await Promise.all([
+        chat(app, joinPayload()),
+        chat(app, joinPayload()),
+      ]);
+
+      for (const reply of [first, second]) {
+        expect(parseEvents(reply.body)[0]).toMatchObject({
+          slots: ["A", "B"],
+        });
+      }
+      expect(repository.matchups.size).toBe(2);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("carries a join through a protocol's own envelope", async () => {
+    const { app, repository } = await setup();
+    try {
+      const openAiBody = () => ({
+        model: "omni-arena",
+        messages: [{ role: "user", content: "Compare these two" }],
+        omni_arena: { sessionId: "anon_openai_join", joinKey: "chat-9c1" },
+      });
+
+      const replies = await Promise.all([
+        app.inject({
+          method: "POST",
+          url: "/api/arena/chat?protocol=openai",
+          payload: openAiBody(),
+        }),
+        app.inject({
+          method: "POST",
+          url: "/api/arena/chat?protocol=openai",
+          payload: openAiBody(),
+        }),
+      ]);
+
+      for (const reply of replies) {
+        expect(reply.statusCode).toBe(200);
+      }
+      // One matchup for the pair: this is the shape that lets a strictly
+      // OpenAI-compatible compare view feed the rating engine real pairs.
+      expect(repository.matchups.size).toBe(1);
+      expect(repository.responses).toHaveLength(2);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("reports the leader's pre-stream failure to its sibling", async () => {
+    const { app } = await setup();
+    try {
+      const orphan = "11111111-2222-4000-8000-333333333333";
+      const [first, second] = await Promise.all([
+        chat(app, joinPayload({ conversationId: orphan })),
+        chat(app, joinPayload({ conversationId: orphan })),
+      ]);
+
+      // Both halves of one turn must fail the same way; a sibling parked on a
+      // matchup that was never created would otherwise hang.
+      for (const reply of [first, second]) {
+        expect(reply.statusCode).toBe(404);
+        expect(reply.json().error).toBe("Conversation not found");
+      }
     } finally {
       await app.close();
     }

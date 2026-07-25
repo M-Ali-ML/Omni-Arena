@@ -2,6 +2,7 @@ import "./env.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createApp } from "./app.js";
+import { JoinBroker, parseJoinConfig } from "./arena/join.js";
 import {
   assertArenaModeConfig,
   parseArenaModeConfig,
@@ -54,9 +55,11 @@ const app = await createApp({
   core: new ArenaCore(providers),
   matchmaker: createMatchmaker(process.env.MATCHMAKER, repository),
   repository,
+  analytics: repository,
   tokens: new MatchupTokenService(secret),
   harnessVersion: process.env.HARNESS_VERSION ?? "v1",
   modeConfig,
+  joinBroker: new JoinBroker(parseJoinConfig(process.env)),
   webOrigin: process.env.WEB_ORIGIN,
   webDistDir,
   logger: true,
