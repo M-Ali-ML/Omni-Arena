@@ -69,7 +69,42 @@ python -m omniarena_rating --loop --interval 300 --ridge 0.01
 ```
 
 In Docker Compose the `worker` service runs the loop automatically against the
-`postgres` service.
+`postgres` service. The image's default command is `--loop --style`, so both the
+default and the style-controlled pass run on every refit; override the service's
+`command:` for a one-shot or default-only run.
+
+### Tuning knobs
+
+Every flag has an environment-variable default, so the same binary is
+configurable from `.env` / Compose without changing the command:
+
+| Flag | Env var | Default | What it does |
+|---|---|---|---|
+| `--interval` | `REFIT_INTERVAL_SECONDS` | `300` | Seconds between refits in loop mode. |
+| `--full-refit-every` | `FULL_REFIT_EVERY` | `12` | Refits between from-scratch (cold) fits; `0` warm-starts indefinitely. |
+| `--ridge` | `RATING_RIDGE` | `0.01` | Ridge-prior strength for the main fit (log-odds scale). |
+| `--style-ridge` | `STYLE_RIDGE` | `0.05` | Ridge-prior strength for the style-controlled fit. |
+| `--style` | — | off (on in the image's default command) | Also run the heavier style-controlled pass on raw votes. |
+| `--no-anomaly-filter` | — | on | Skip the pre-fit anomaly screen (keep every session). |
+| — | `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `text` | Verbosity and `text` vs structured `json` output. |
+
+### Incremental refits vs the ground-truth pass
+
+In loop mode most refits are **incremental**: the solver starts from the
+previous solution and converges in a handful of L-BFGS-B iterations. Every
+`FULL_REFIT_EVERY` refits the warm state is dropped and the fit runs **from
+scratch** — an hour apart at the default interval, cheap because the fit input is
+bounded by model pairs rather than vote volume. The loop's first refit is already
+cold (there is no warm state yet), so the forced passes land on refits 1, 13, 25…
+rather than one iteration early. Each refit logs `mode=full` or
+`mode=incremental`.
+
+The ridge makes the objective strictly convex, so both paths share one unique
+optimum. The cold pass exploits that: it re-runs the warm path over the *same*
+aggregates and warns when the two land more than half a standard error apart,
+which catches an incremental chain that has stopped short of the optimum. Holding
+the data fixed is what makes this a solver check rather than a measurement of the
+rating movement new votes would have caused anyway.
 
 ## Test
 

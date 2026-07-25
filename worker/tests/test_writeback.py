@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from omniarena_rating.report import ModelRating, RatingReport
-from omniarena_rating.writeback import UPSERT_SQL, write_ratings
+from omniarena_rating.writeback import (
+    HISTORY_INSERT_SQL,
+    UPSERT_SQL,
+    write_ratings,
+)
 
 
 class FakeCursor:
@@ -49,13 +53,30 @@ def test_write_ratings_maps_columns_in_declared_order():
     written = write_ratings(conn, report)
 
     assert written == 2
-    assert len(cursor.executemany_calls) == 1
+    assert len(cursor.executemany_calls) == 2
     sql, rows = cursor.executemany_calls[0]
     assert sql == UPSERT_SQL
     # Row tuple order must match the INSERT column list exactly:
     # (model_id, rating, rating_stderr, ci_lower, ci_upper, component_id, games)
     assert rows[0] == ("m1", 1200.0, 10.0, 1180.0, 1220.0, 0, 50)
     assert rows[1] == ("m2", 900.0, 12.0, 876.0, 924.0, 1, 30)
+    assert conn.commits == 1
+
+
+def test_write_ratings_appends_history_snapshot_in_same_transaction():
+    cursor = FakeCursor()
+    conn = FakeConn(cursor)
+    report = _report(
+        [ModelRating("m1", "One", 1200.0, 10.0, 1180.0, 1220.0, 0, 50)]
+    )
+
+    write_ratings(conn, report)
+
+    history_sql, history_rows = cursor.executemany_calls[1]
+    assert history_sql == HISTORY_INSERT_SQL
+    # Same tuples feed the history insert, so the snapshot mirrors the upsert.
+    assert history_rows == cursor.executemany_calls[0][1]
+    # Both statements run before the single commit (one transaction).
     assert conn.commits == 1
 
 

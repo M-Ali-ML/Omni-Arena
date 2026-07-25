@@ -20,9 +20,20 @@ ON CONFLICT (model_id) DO UPDATE SET
   computed_at = EXCLUDED.computed_at
 """
 
+# Append-only snapshot per refit. model_ratings keeps only the latest fit,
+# so this history table is what rating-over-time charts read. NOW() is
+# transaction-stable, so every row in one run shares a computed_at.
+HISTORY_INSERT_SQL = """
+INSERT INTO model_rating_history (
+  model_id, rating, rating_stderr, ci_lower, ci_upper,
+  component_id, games, computed_at
+) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+"""
+
 
 def write_ratings(conn, report: RatingReport) -> int:
-    """Upsert every model rating in one transaction. Returns rows written."""
+    """Upsert every model rating (and append a history snapshot) in one
+    transaction. Returns rows written to model_ratings."""
     rows = [
         (
             m.model_id,
@@ -37,6 +48,7 @@ def write_ratings(conn, report: RatingReport) -> int:
     ]
     with conn.cursor() as cur:
         cur.executemany(UPSERT_SQL, rows)
+        cur.executemany(HISTORY_INSERT_SQL, rows)
     conn.commit()
     return len(rows)
 
