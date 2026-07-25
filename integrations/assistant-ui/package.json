@@ -1,0 +1,24 @@
+{
+  "name": "@omni-arena/integration-assistant-ui",
+  "private": true,
+  "type": "module",
+  "description": "Arena layer wired into the real assistant-ui monorepo (examples/with-ag-ui) over the AG-UI adapter.",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "arena": "tsx harness/arena.ts",
+    "dev": "node scripts/upstream-run.mjs dev",
+    "build": "node scripts/upstream-run.mjs build",
+    "start": "node scripts/upstream-run.mjs start",
+    "test": "node scripts/e2e.mjs",
+    "test:playwright": "playwright test",
+    "probe": "tsx tools/agui-probe.ts",
+    "screenshots": "node scripts/screenshots.mjs"
+  },
+  "devDependencies": {
+    "@ag-ui/client": "0.0.57",
+    "@playwright/test": "1.61.1",
+    "pg-mem": "3.0.14",
+    "sharp": "0.34.5",
+    "tsx": "4.23.0"
+  }
+}

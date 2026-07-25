@@ -10,7 +10,13 @@ stream OmniArena's adapter emits (`?protocol=vercel-ai`).
 
 - A stock `@ai-sdk/react` `useChat` is pointed at OmniArena's Vercel AI SDK
   adapter. A `prepareSendMessagesRequest` reshapes the outgoing request to
-  OmniArena's `{ prompt }` body — the only OmniArena-specific line.
+  OmniArena's `{ prompt }` body — the only OmniArena-specific line. It is no
+  longer strictly required: `vercelAiRequestAdapter`
+  (`server/src/adapters/vercel-ai.ts`) now parses `useChat`'s own UIMessage body
+  and takes the prompt from the last user message, reading `sessionId` /
+  `conversationId` / `arena` from the top level where `useChat({ body })` puts
+  them. The reshape is kept here because it also pins the `sessionId` this demo
+  uses.
 - `useAISDKRuntime(chat)` from `@assistant-ui/react-ai-sdk` adopts that chat
   instance, so assistant-ui's `<ThreadPrimitive>` renders **Model A** (the main
   text channel) with no extra glue.
@@ -43,9 +49,17 @@ ARENA_MOCK_PROVIDER=1 npm run dev --workspace server   # listens on :3001
 
 ```bash
 cd examples/assistant-ui
-cp .env.example .env          # set ARENA_TARGET if not http://127.0.0.1:3001
 npm install
 npm run dev                   # http://localhost:5173
+```
+
+`ARENA_TARGET` overrides the proxy target when OmniArena is not on
+`http://127.0.0.1:3001`. It is read by `vite.config.ts` from `process.env`, so it
+must be exported in the shell — Vite does not load `.env` files into
+`process.env`:
+
+```bash
+ARENA_TARGET=http://127.0.0.1:3011 npm run dev
 ```
 
 ## Production build

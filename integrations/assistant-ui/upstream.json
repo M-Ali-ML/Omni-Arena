@@ -1,0 +1,8 @@
+{
+  "repo": "https://github.com/assistant-ui/assistant-ui.git",
+  "commit": "a3bb2e316e037a8ef829a8bcb5b8b4b2034bcc97",
+  "committedAt": "2026-07-24",
+  "packageManager": "pnpm@11.10.0",
+  "app": "examples/with-ag-ui",
+  "note": "assistant-ui monorepo HEAD of main on 2026-07-24. The arena overlay lands in examples/with-ag-ui and rides that example's own @assistant-ui/react-ag-ui (0.0.45) + @ag-ui/client (0.0.57) workspace deps. Bump deliberately: change `commit`, re-run scripts/setup.mjs, and expect the anchored patches in scripts/overlay.mjs to fail loudly if upstream moved the lines they target."
+}

@@ -1,0 +1,8 @@
+# The upstream assistant-ui monorepo is cloned at a pinned commit by
+# scripts/setup.mjs — never committed here.
+.upstream/
+
+node_modules/
+test-results/
+playwright-report/
+.arena-logs/
