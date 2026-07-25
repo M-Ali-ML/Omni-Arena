@@ -1,0 +1,19 @@
+{
+  "name": "vercel-ai-chatbot-integration-tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Zero-infrastructure Postgres (PGlite over TCP) for the vercel/ai-chatbot integration test",
+  "scripts": {
+    "start": "node pglite-server.mjs",
+    "verify": "node verify-pglite.mjs && node verify-drizzle.mjs"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.4",
+    "pg-gateway": "0.3.0-beta.4"
+  },
+  "devDependencies": {
+    "drizzle-orm": "0.45.2",
+    "postgres": "3.4.9"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "@omni-arena/integration-vercel-ai-chatbot",
+  "private": true,
+  "type": "module",
+  "description": "The real vercel/ai-chatbot template with OmniArena's blind A/B arena layer",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "db:up": "docker compose --project-directory ../.. up -d postgres && node scripts/create-db.mjs",
+    "db:migrate": "node scripts/upstream-run.mjs db:migrate",
+    "dev": "node scripts/upstream-run.mjs dev",
+    "build": "node scripts/upstream-run.mjs build",
+    "start": "node scripts/upstream-run.mjs start",
+    "pg": "npm --prefix tools install --no-audit --no-fund && node tools/pglite-server.mjs --port 5433 --data-dir ./.pgdata",
+    "e2e": "node scripts/e2e.mjs",
+    "test": "node scripts/e2e.mjs",
+    "screenshots": "node scripts/screenshots.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1",
+    "pg": "8.22.0",
+    "pg-mem": "3.0.14",
+    "sharp": "0.34.5",
+    "tsx": "4.23.0"
+  }
+}

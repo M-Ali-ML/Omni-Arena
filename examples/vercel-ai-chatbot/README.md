@@ -13,7 +13,10 @@ is unmodified `useChat`; a server route forwards to OmniArena.
 - `app/api/arena/chat/route.ts` — server route (the template's `api/chat`
   equivalent). It reads the AI SDK request, extracts the latest user prompt, and
   forwards it to `${OMNIARENA_URL}/api/arena/chat?protocol=vercel-ai`, piping the
-  **UI Message Stream** straight back to the browser.
+  **UI Message Stream** straight back to the browser. The extraction is now
+  optional — `vercelAiRequestAdapter` (`server/src/adapters/vercel-ai.ts`) parses
+  the AI SDK's own UIMessage body — but the route still does it, because it is
+  also where the `sessionId` is chosen.
 - `app/page.tsx` — a stock `useChat` client. OmniArena's adapter puts **Model A**
   on the primary text channel (rendered as the assistant message) and **Model B**
   in custom `data-arena-b-delta` parts (rendered in the second column). The

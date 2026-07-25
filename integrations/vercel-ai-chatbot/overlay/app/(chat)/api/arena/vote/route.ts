@@ -1,0 +1,80 @@
+import { z } from "zod";
+import { auth } from "@/app/(auth)/auth";
+import type { ArenaReveal } from "@/lib/arena/protocol";
+import { arenaFetch } from "@/lib/arena/server";
+import { getChatById, getMessageById, updateMessage } from "@/lib/db/queries";
+import { ChatbotError } from "@/lib/errors";
+
+const arenaVoteRequest = z.object({
+  chatId: z.string().uuid(),
+  matchupId: z.string().uuid(),
+  matchupToken: z.string().min(1),
+  /** The assistant message the reveal belongs to, so it survives a reload. */
+  messageId: z.string().uuid(),
+  vote: z.enum(["left", "right", "both_good", "both_bad", "skip"]),
+});
+
+type VoteResponse = {
+  accepted: boolean;
+  models: ArenaReveal["models"];
+};
+
+/**
+ * Records one arena vote and reveals the two model identities. The reveal is
+ * appended to the stored assistant message so reopening the chat still shows
+ * who was who (and which side won).
+ */
+export async function POST(request: Request) {
+  let body: z.infer<typeof arenaVoteRequest>;
+  try {
+    body = arenaVoteRequest.parse(await request.json());
+  } catch {
+    return new ChatbotError("bad_request:api").toResponse();
+  }
+
+  try {
+    const session = await auth();
+    if (!session?.user) {
+      return new ChatbotError("unauthorized:chat").toResponse();
+    }
+
+    const chat = await getChatById({ id: body.chatId });
+    if (!chat || chat.userId !== session.user.id) {
+      return new ChatbotError("forbidden:vote").toResponse();
+    }
+
+    const response = await arenaFetch("/api/arena/vote", {
+      body: JSON.stringify({
+        matchupId: body.matchupId,
+        matchupToken: body.matchupToken,
+        vote: body.vote,
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    const payload = (await response.json()) as VoteResponse;
+
+    const [stored] = await getMessageById({ id: body.messageId });
+    if (stored) {
+      const parts = stored.parts as Record<string, unknown>[];
+      await updateMessage({
+        id: body.messageId,
+        parts: [
+          ...parts.filter((part) => part.type !== "data-arena-reveal"),
+          {
+            data: { models: payload.models, vote: body.vote },
+            type: "data-arena-reveal",
+          },
+        ],
+      });
+    }
+
+    return Response.json({ models: payload.models, vote: body.vote });
+  } catch (error) {
+    if (error instanceof ChatbotError) {
+      return error.toResponse();
+    }
+    console.error("Unhandled error in arena vote API:", error);
+    return new ChatbotError("offline:chat").toResponse();
+  }
+}
