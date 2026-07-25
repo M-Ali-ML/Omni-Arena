@@ -176,6 +176,197 @@ export interface LeaderboardEntry {
   styleControlledConfidenceInterval: RatingInterval | null;
 }
 
+/**
+ * How the fitted style effect below should be read. The worker z-scales the
+ * continuous covariates before fitting, so their coefficients are per standard
+ * deviation of the vote-level delta; `position` is a constant covariate and its
+ * coefficient is therefore the absolute left-slot advantage.
+ */
+export type StyleEffectBasis = "absolute" | "per_std_dev";
+
+/**
+ * One style confounder from the worker's joint Bradley-Terry regression
+ * (vision §3), restated on the leaderboard's display scale so a reader can
+ * compare it against a rating gap.
+ */
+export interface StyleEffect {
+  /** Worker feature name: `position`, `verbosity`, `formatting`, `latency_*`. */
+  feature: string;
+  /** The fitted coefficient exactly as stored, in log-odds. */
+  logOdds: number;
+  /** `logOdds` in display rating points — read it per `basis`. */
+  points: number;
+  basis: StyleEffectBasis;
+  /**
+   * The same effect per interpretable amount of the raw feature (e.g. 100
+   * output tokens). Null for `position`, which has no underlying unit, and
+   * whenever the deltas carry no spread to un-standardise with.
+   */
+  perUnit: { points: number; unit: string } | null;
+}
+
+/**
+ * The fitted style confounders, plus the sample the per-unit restatement was
+ * derived from. Empty until the worker's style pass has run.
+ */
+export interface StyleControlReport {
+  effects: StyleEffect[];
+  /**
+   * Votes whose style deltas backed the per-unit conversion. Zero means only
+   * the per-standard-deviation reading is available.
+   */
+  votesObserved: number;
+  /** When the worker last wrote these coefficients; null when it never has. */
+  computedAt: string | null;
+}
+
+/**
+ * Connectivity of the comparison graph. Bradley-Terry ratings are only
+ * identified up to a per-component constant (vision §4), so a client must not
+ * compare ratings across components.
+ */
+export interface LeaderboardComponents {
+  /** Components spanned by the rated roster; null before the worker has run. */
+  count: number | null;
+  /** Rated models per component, ascending by component id. */
+  groups: Array<{ componentId: number; models: number }>;
+}
+
+/**
+ * Everything needed to read the leaderboard's ratings honestly: whether they
+ * are mutually comparable at all, and how much of a gap superficial style buys.
+ */
+export interface RatingContext {
+  components: LeaderboardComponents;
+  styleControl: StyleControlReport;
+}
+
 export interface LeaderboardPort {
   getLeaderboard(): Promise<LeaderboardEntry[]>;
+  getRatingContext(): Promise<RatingContext>;
+}
+
+/** Minimal model reference shared by the analytics payloads. */
+export interface AnalyticsModelRef {
+  id: string;
+  displayName: string;
+}
+
+/** Arena-wide aggregates for the insights dashboard's summary strip. */
+export interface ArenaSummary {
+  totalMatchups: number;
+  totalVotes: number;
+  decisiveVotes: number;
+  tieVotes: number;
+  skipVotes: number;
+  /** Decisive votes won by the model shown in UI slot A vs slot B. */
+  slotAWins: number;
+  slotBWins: number;
+  enabledModels: number;
+  /** Distinct canonical model pairs with at least one non-skip vote. */
+  pairsSampled: number;
+  /** n·(n−1)/2 over the enabled roster. */
+  pairsPossible: number;
+  /**
+   * Number of connected components in the comparison graph per the rating
+   * worker, or null before it has run.
+   */
+  ratingComponents: number | null;
+}
+
+/** Vote record for one canonical (unordered) model pair. */
+export interface HeadToHeadPair {
+  modelAId: string;
+  modelBId: string;
+  aWins: number;
+  bWins: number;
+  ties: number;
+  games: number;
+}
+
+export interface HeadToHeadStats {
+  models: AnalyticsModelRef[];
+  pairs: HeadToHeadPair[];
+}
+
+/**
+ * Per-model response-style and position statistics. Latency/verbosity fields
+ * are null until the model has at least one error-free response.
+ */
+export interface ModelMetricsEntry extends AnalyticsModelRef {
+  responses: number;
+  ttftMsP50: number | null;
+  ttftMsP90: number | null;
+  durationMsP50: number | null;
+  durationMsP90: number | null;
+  meanOutputTokens: number | null;
+  meanMarkdownDensity: number | null;
+  /** Decisive-vote record split by which UI slot the model occupied. */
+  slotAWins: number;
+  slotAGames: number;
+  slotBWins: number;
+  slotBGames: number;
+}
+
+export type ActivityBucketSize = "day" | "hour";
+
+export interface ActivityVoteBucket {
+  /** ISO timestamp of the bucket start (UTC). */
+  bucketStart: string;
+  left: number;
+  right: number;
+  bothGood: number;
+  bothBad: number;
+  skip: number;
+  total: number;
+}
+
+export interface ActivityCumulativeBucket {
+  bucketStart: string;
+  /** Model id → cumulative non-skip games at the end of this bucket. */
+  games: Record<string, number>;
+}
+
+export interface ActivityStats {
+  bucket: ActivityBucketSize;
+  models: AnalyticsModelRef[];
+  votes: ActivityVoteBucket[];
+  cumulativeGames: ActivityCumulativeBucket[];
+}
+
+export interface StyleCoefficient {
+  feature: string;
+  coefficient: number;
+  computedAt: string;
+}
+
+export interface StyleControlStats {
+  coefficients: StyleCoefficient[];
+  /** Models the worker has rated in both the raw and style-controlled pass. */
+  models: Array<
+    AnalyticsModelRef & { rating: number; styleControlledRating: number }
+  >;
+}
+
+export interface RatingHistoryPoint {
+  modelId: string;
+  rating: number;
+  ciLower: number;
+  ciUpper: number;
+  games: number;
+  computedAt: string;
+}
+
+export interface RatingHistoryStats {
+  models: AnalyticsModelRef[];
+  points: RatingHistoryPoint[];
+}
+
+export interface AnalyticsPort {
+  getSummary(): Promise<ArenaSummary>;
+  getHeadToHead(): Promise<HeadToHeadStats>;
+  getModelMetrics(): Promise<ModelMetricsEntry[]>;
+  getActivity(bucket: ActivityBucketSize): Promise<ActivityStats>;
+  getStyleControl(): Promise<StyleControlStats>;
+  getRatingHistory(since: Date | null): Promise<RatingHistoryStats>;
 }
