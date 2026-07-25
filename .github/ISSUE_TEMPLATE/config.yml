@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/M-Ali-ML/Omni-Arena/discussions
+    about: For usage questions and open-ended discussion, rather than a bug report.

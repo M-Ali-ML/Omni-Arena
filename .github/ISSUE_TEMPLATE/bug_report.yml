@@ -1,0 +1,65 @@
+name: Bug report
+description: Something in OmniArena doesn't work the way it should.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected, what you got, and the steps to reproduce.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: adapter
+    attributes:
+      label: Protocol adapter
+      description: The `?protocol=` value (or `Accept` header) in use.
+      options:
+        - native SSE (default)
+        - ag-ui
+        - a2ui
+        - vercel-ai
+        - openai-sse
+        - "not applicable / don't know"
+    validations:
+      required: true
+
+  - type: input
+    id: provider
+    attributes:
+      label: Model provider
+      description: e.g. google, openai (or OpenAI-compatible base URL), ollama, vllm, host proxy, mock.
+      placeholder: google
+    validations:
+      required: true
+
+  - type: dropdown
+    id: worker
+    attributes:
+      label: Had the Python rating worker run?
+      description: >-
+        Leaderboard `rating`, `confidenceInterval`, and `componentId` are null
+        until the first refit, and the UI falls back to win rate.
+      options:
+        - "Yes — at least one refit completed"
+        - "No — the worker hasn't run (or isn't running)"
+        - "Don't know"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: How you're running it (Docker Compose or npm dev), plus Node/Python versions and OS.
+      placeholder: docker compose up, Node 22, macOS 15
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant server, worker, or browser console output. No API keys, please.
+      render: shell
