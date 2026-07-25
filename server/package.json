@@ -10,7 +10,8 @@
     "test": "vitest run src",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
-    "db:seed:mock": "tsx src/db/seed.mock.ts"
+    "db:seed:mock": "tsx src/db/seed.mock.ts",
+    "db:seed:demo": "tsx src/db/seed.demo.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",

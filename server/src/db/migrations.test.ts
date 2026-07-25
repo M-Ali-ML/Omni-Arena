@@ -44,7 +44,8 @@ describe("runMigrations", () => {
           ('001_initial.sql'),
           ('002_phase_one.sql'),
           ('003_phase_two.sql'),
-          ('004_phase_three.sql')`,
+          ('004_phase_three.sql'),
+          ('005_rating_history.sql')`,
       );
 
       const ran = await runMigrations(pool);
@@ -58,6 +59,7 @@ describe("runMigrations", () => {
         "002_conversations_and_turns.sql",
         "003_model_ratings.sql",
         "004_style_ratings.sql",
+        "005_rating_history.sql",
       ]);
     } finally {
       await pool.end();
