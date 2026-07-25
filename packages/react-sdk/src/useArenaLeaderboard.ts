@@ -21,6 +21,44 @@ export interface LeaderboardModel {
   styleControlledConfidenceInterval: { lower: number; upper: number } | null;
 }
 
+/**
+ * A style confounder from the worker's joint Bradley-Terry fit, on the same
+ * display scale as `rating`. Read `points` per `basis`: `absolute` effects
+ * (the left-slot advantage) stand alone, `per_std_dev` ones are per standard
+ * deviation of the vote-level delta. `perUnit` restates the same effect per
+ * readable amount of the raw feature and is null when that cannot be derived.
+ */
+export interface StyleEffect {
+  feature: string;
+  logOdds: number;
+  points: number;
+  basis: "absolute" | "per_std_dev";
+  perUnit: { points: number; unit: string } | null;
+}
+
+export interface StyleControlReport {
+  effects: StyleEffect[];
+  votesObserved: number;
+  computedAt: string | null;
+}
+
+/**
+ * Connectivity of the comparison graph. Ratings are only identified up to a
+ * per-component constant, so they must not be compared across components.
+ * `count` is null until the rating worker has run.
+ */
+export interface LeaderboardComponents {
+  count: number | null;
+  groups: Array<{ componentId: number; models: number }>;
+}
+
+const noComponents: LeaderboardComponents = { count: null, groups: [] };
+const noStyleControl: StyleControlReport = {
+  effects: [],
+  votesObserved: 0,
+  computedAt: null,
+};
+
 export interface UseArenaLeaderboardOptions {
   /**
    * Origin (or path prefix) the arena API is served from, e.g.
@@ -33,6 +71,10 @@ export interface UseArenaLeaderboardOptions {
 export function useArenaLeaderboard(options: UseArenaLeaderboardOptions = {}) {
   const { baseUrl = "" } = options;
   const [models, setModels] = useState<LeaderboardModel[]>([]);
+  const [components, setComponents] =
+    useState<LeaderboardComponents>(noComponents);
+  const [styleControl, setStyleControl] =
+    useState<StyleControlReport>(noStyleControl);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -41,10 +83,16 @@ export function useArenaLeaderboard(options: UseArenaLeaderboardOptions = {}) {
       if (!response.ok) {
         throw new Error(`Leaderboard failed (${response.status})`);
       }
+      // Both context fields are optional on the wire so the hook keeps working
+      // against servers that predate them.
       const payload = (await response.json()) as {
         models: LeaderboardModel[];
+        components?: LeaderboardComponents;
+        styleControl?: StyleControlReport;
       };
       setModels(payload.models);
+      setComponents(payload.components ?? noComponents);
+      setStyleControl(payload.styleControl ?? noStyleControl);
       setError(null);
     } catch (caught) {
       setError(
@@ -57,5 +105,5 @@ export function useArenaLeaderboard(options: UseArenaLeaderboardOptions = {}) {
     void refresh();
   }, [refresh]);
 
-  return { models, refresh, error };
+  return { models, components, styleControl, refresh, error };
 }
