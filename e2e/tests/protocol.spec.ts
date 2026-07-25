@@ -1,6 +1,21 @@
 import { expect, test } from "@playwright/test";
+import { fingerprintOf, IDENTITIES, ROSTER } from "./arena-fixtures.js";
 
 const ARENA = `http://127.0.0.1:${process.env.E2E_ARENA_PORT ?? "3101"}`;
+
+const SLOT_TAG: Record<"A" | "B", RegExp> = {
+  A: fingerprintOf(ROSTER.A.providerModelId),
+  B: fingerprintOf(ROSTER.B.providerModelId),
+};
+
+/** The pre-vote stream is the payload blindness is judged on. */
+function expectBlind(body: string): void {
+  for (const identity of IDENTITIES) {
+    expect(body, `the stream leaks "${identity}" before the vote`).not.toContain(
+      identity,
+    );
+  }
+}
 
 /** Collect every `data:` JSON payload from a fully-buffered SSE/stream body. */
 function dataPayloads(body: string): Array<Record<string, unknown>> {
@@ -69,8 +84,12 @@ test.describe("arena wire protocols (HTTP)", () => {
       .filter((p) => p.type === "data-arena-b-delta")
       .map((p) => (p.data as { text: string }).text)
       .join("");
-    expect(slotA).toContain("Mock reply from Mock Model");
-    expect(slotB).toContain("Mock reply from Mock Model");
+    // Both slots streamed real content, and each carries its own model's
+    // fingerprint — the two channels are not echoing one answer twice.
+    expect(slotA).toMatch(SLOT_TAG.A);
+    expect(slotB).toMatch(SLOT_TAG.B);
+    expect(slotA).not.toBe(slotB);
+    expectBlind(body);
     expect(parts.some((p) => p.type === "finish")).toBe(true);
 
     const vote = await fetch(`${ARENA}/api/arena/vote`, {
@@ -87,9 +106,10 @@ test.describe("arena wire protocols (HTTP)", () => {
       accepted: boolean;
       models: { A: { displayName: string }; B: { displayName: string } };
     };
+    // Identities arrive only here, in the vote response.
     expect(revealed.accepted).toBe(true);
-    expect(revealed.models.A.displayName).toBe("Mock Model Alpha");
-    expect(revealed.models.B.displayName).toBe("Mock Model Beta");
+    expect(revealed.models.A.displayName).toBe(ROSTER.A.displayName);
+    expect(revealed.models.B.displayName).toBe(ROSTER.B.displayName);
 
     const board = await fetch(`${ARENA}/api/arena/leaderboard`);
     expect(board.status).toBe(200);
@@ -97,7 +117,7 @@ test.describe("arena wire protocols (HTTP)", () => {
       models: Array<{ displayName: string; wins: number }>;
     };
     const winner = leaderboard.models.find(
-      (m) => m.displayName === "Mock Model Alpha",
+      (m) => m.displayName === ROSTER.A.displayName,
     );
     expect(winner?.wins).toBeGreaterThanOrEqual(1);
   });
@@ -113,13 +133,16 @@ test.describe("arena wire protocols (HTTP)", () => {
     const starts = events.filter((e) => e.type === "TEXT_MESSAGE_START");
     expect(starts.map((e) => e.slot).sort()).toEqual(["A", "B"]);
 
-    for (const slot of ["A", "B"] as const) {
-      const text = events
+    const streamed = (["A", "B"] as const).map((slot) =>
+      events
         .filter((e) => e.type === "TEXT_MESSAGE_CONTENT" && e.slot === slot)
         .map((e) => e.delta as string)
-        .join("");
-      expect(text).toContain("Mock reply from Mock Model");
-    }
+        .join(""),
+    );
+    expect(streamed[0]).toMatch(SLOT_TAG.A);
+    expect(streamed[1]).toMatch(SLOT_TAG.B);
+    expect(streamed[0]).not.toBe(streamed[1]);
+    expectBlind(body);
     expect(events.at(-1)).toEqual(
       expect.objectContaining({ type: "RUN_FINISHED" }),
     );

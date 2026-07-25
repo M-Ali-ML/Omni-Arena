@@ -15,8 +15,9 @@ export interface HarnessHandle {
   close: () => Promise<void>;
 }
 
-const MOCK_ALPHA = "00000000-0000-4000-8000-000000000a1a";
-const MOCK_BETA = "00000000-0000-4000-8000-000000000b2b";
+/** Stable ids so callers can name a specific mock model (e.g. as a default). */
+export const MOCK_ALPHA = "00000000-0000-4000-8000-000000000a1a";
+export const MOCK_BETA = "00000000-0000-4000-8000-000000000b2b";
 
 /**
  * Boots the real OmniArena Fastify app over an in-memory Postgres (pg-mem) and
@@ -26,7 +27,12 @@ const MOCK_BETA = "00000000-0000-4000-8000-000000000b2b";
  * and CI-friendly.
  */
 export async function startHarness(
-  options: { port?: number; webOrigin?: string } = {},
+  options: {
+    port?: number;
+    webOrigin?: string;
+    /** Arena trigger/exposure config; defaults to `always` like production. */
+    modeConfig?: { trigger: "always" | "manual"; defaultModel: string | null };
+  } = {},
 ): Promise<HarnessHandle> {
   const database = newDb();
   const adapter = database.adapters.createPg();
@@ -55,6 +61,7 @@ export async function startHarness(
     repository,
     tokens: new MatchupTokenService("e2e-matchup-secret-long-enough-value"),
     harnessVersion: "e2e",
+    modeConfig: options.modeConfig,
     webOrigin: options.webOrigin,
     logger: false,
   });
