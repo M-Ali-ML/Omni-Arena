@@ -51,31 +51,31 @@
   <div class="grid">
     <a class="card" href="html/architecture.html">
       <div class="t">Architecture</div>
-      <p class="d">System overview: protocol adapters, control plane, matchmaking, and the rating worker.</p>
+      <p class="d">System overview: hexagonal ports, the protocol-adapter layer, the WebSocket control plane, multi-turn history, and the rating worker.</p>
     </a>
     <a class="card" href="html/api.html">
       <div class="t">API</div>
-      <p class="d">Chat, vote, leaderboard, and WebSocket control — routes, events, and protocol selection.</p>
+      <p class="d">Chat, vote, leaderboard, analytics, the OpenAI-compatible model list, and WebSocket control — routes, events, and protocol selection.</p>
     </a>
     <a class="card" href="html/integration.html">
       <div class="t">Integration</div>
-      <p class="d">Five wire protocols (SSE, AG-UI, A2UI, Vercel AI, OpenAI) and when to use each.</p>
+      <p class="d">Five wire protocols (SSE, AG-UI, A2UI, Vercel AI, OpenAI), which of them accept their own request body, slot join for compare views, and the real third-party integrations.</p>
     </a>
     <a class="card" href="html/rating-methodology.html">
       <div class="t">Rating methodology</div>
-      <p class="d">Bradley-Terry / Rao-Kupper fit, Fisher CIs, style control, and anomaly screening.</p>
+      <p class="d">Bradley-Terry / Rao-Kupper fit, Fisher CIs, style control, anomaly screening, rating history — and what the engine cannot rate.</p>
     </a>
     <a class="card" href="html/data-model.html">
       <div class="t">Data model</div>
-      <p class="d">Postgres tables for matchups, votes, ratings, and style-controlled scores.</p>
+      <p class="d">Postgres tables and migrations for matchups, votes, ratings, rating history, and style-controlled scores.</p>
     </a>
     <a class="card" href="html/setup.html">
       <div class="t">Setup</div>
-      <p class="d">Docker one-command self-host and the npm development path.</p>
+      <p class="d">Docker one-command self-host, the npm development path, environment variables, trigger modes, and the key-free mock provider.</p>
     </a>
     <a class="card" href="html/sdk.html">
       <div class="t">SDK</div>
-      <p class="d"><span class="mono">@omni-arena/react</span> — headless hooks for chat, voting, and the leaderboard.</p>
+      <p class="d"><span class="mono">@omni-arena/react</span> — headless React-free primitives plus hooks for chat, voting, the leaderboard, and analytics.</p>
     </a>
   </div>
 </main>

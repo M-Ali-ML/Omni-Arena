@@ -25,6 +25,7 @@
   th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
   th { background: var(--surface); font-weight: 600; }
   .callout { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 16px 0; font-size: 14px; }
+  .chip { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 9999px; padding: 2px 10px; font-size: 12px; color: var(--text); margin: 2px; }
 </style>
 </head>
 <body>
@@ -37,7 +38,7 @@
   <div class="callout">One container serves the API <em>and</em> the web UI on one port, so chat data never leaves adopter infra (decision record #5). The <span class="mono">app</span> service waits for Postgres, then its entrypoint runs migrations, seeds the lineup, and starts the server.</div>
 <pre><code>cp .env.example .env      # set GOOGLE_API_KEY and MATCHUP_TOKEN_SECRET
 docker compose up</code></pre>
-  <p>Open <span class="mono">http://localhost:3001</span> — web UI and <span class="mono">/api/...</span> share the same origin and port (<span class="mono">PORT</span>, default 3001). The multi-stage <span class="mono">Dockerfile</span> builds all workspaces, ships the migration <span class="mono">.sql</span> files next to <span class="mono">dist</span>, and prunes dev deps into a slim runtime. The server serves <span class="mono">web/dist</span> via <span class="mono">@fastify/static</span> only when the bundle exists (production/Docker), with an SPA fallback to <span class="mono">index.html</span> for non-<span class="mono">/api</span> GET routes; override the location with <span class="mono">WEB_DIST_DIR</span>.</p>
+  <p>Open <span class="mono">http://localhost:3001</span> — web UI and <span class="mono">/api/...</span> share the same origin and port (<span class="mono">PORT</span>, default 3001). The multi-stage <span class="mono">Dockerfile</span> builds all workspaces, ships the migration <span class="mono">.sql</span> files next to <span class="mono">dist</span>, and prunes dev deps into a slim runtime. The server serves <span class="mono">web/dist</span> via <span class="mono">@fastify/static</span> only when the bundle exists (production/Docker), with an SPA fallback to <span class="mono">index.html</span> for GET routes outside the API prefixes <span class="mono">/api</span>, <span class="mono">/health</span>, <span class="mono">/v1</span>, <span class="mono">/models</span>, <span class="mono">/chat/completions</span>, <span class="mono">/completions</span>, <span class="mono">/embeddings</span> — an unmatched path under one of those gets a JSON 404, because HTML at 200 for <span class="mono">GET /v1/models</span> makes an OpenAI client report a mimetype error instead of a missing route. Override the bundle location with <span class="mono">WEB_DIST_DIR</span>.</p>
 
   <h2>Quick start · npm (development)</h2>
   <div class="callout">Postgres + worker in Docker, Node/Vite dev servers on the host for hot reload. The bundle is absent, so Vite serves the UI on <span class="mono">:5173</span> and same-origin static serving stays off.</div>
@@ -54,10 +55,11 @@ npm run dev                             # server :3001 · web :5173</code></pre>
   <table>
     <tr><th>Workspace</th><th>Path</th><th>Notes</th></tr>
     <tr><td class="mono">@omni-arena/server</td><td class="mono">server/</td><td>Fastify API. New dep <span class="mono">@fastify/websocket</span> powers the <span class="mono">/api/arena/control</span> control plane.</td></tr>
-    <tr><td class="mono">@omni-arena/react</td><td class="mono">packages/react-sdk/</td><td>Published headless React SDK; the demo consumes it. See <a href="sdk.html">SDK</a>.</td></tr>
+    <tr><td class="mono">@omni-arena/react</td><td class="mono">packages/react-sdk/</td><td>Published headless React SDK — chat, vote, leaderboard, and analytics hooks plus their framework-free helpers. The demo consumes it. See <a href="sdk.html">SDK</a>.</td></tr>
     <tr><td class="mono">@omni-arena/web</td><td class="mono">web/</td><td>Vite + React demo; imports <span class="mono">@omni-arena/react</span> (workspace <span class="mono">*</span>).</td></tr>
     <tr><td class="mono">omniarena-rating</td><td class="mono">worker/</td><td>Python rating worker (not an npm workspace).</td></tr>
   </table>
+  <div class="callout"><span class="mono">e2e/</span>, <span class="mono">examples/*</span>, and <span class="mono">integrations/*</span> are <strong>not</strong> workspaces either: each has its own <span class="mono">package.json</span> and lockfile and is installed on demand by its own script, so a plain root <span class="mono">npm install</span> stays fast and none of them can break the published build. See <a href="#integrations">Third-party UI integrations</a>.</div>
 
   <h2>Environment variables</h2>
   <table>
@@ -69,6 +71,7 @@ npm run dev                             # server :3001 · web :5173</code></pre>
     <tr><td class="mono">HOST_PROXY_URL / HOST_PROXY_TOKEN</td><td>host-proxy models</td><td>Host-owned OpenAI-compatible endpoint + optional proxy auth</td></tr>
     <tr><td class="mono">HARNESS_VERSION</td><td>no (v1)</td><td>Version label persisted on every matchup</td></tr>
     <tr><td class="mono">REFIT_INTERVAL_SECONDS</td><td>no (300)</td><td>Rating worker loop interval between refits</td></tr>
+    <tr><td class="mono">FULL_REFIT_EVERY</td><td>no (12)</td><td>Refits between from-scratch (cold) fits in loop mode; <span class="mono">0</span> warm-starts indefinitely</td></tr>
     <tr><td class="mono">RATING_RIDGE</td><td>no (0.01)</td><td>Rating worker ridge-prior strength (log-odds scale)</td></tr>
     <tr><td class="mono">STYLE_RIDGE</td><td>no (0.05)</td><td>Ridge-prior strength for the style-controlled fit</td></tr>
     <tr><td class="mono">LOG_LEVEL / LOG_FORMAT</td><td>no (INFO / text)</td><td>Rating worker log level and format (<span class="mono">text</span> or <span class="mono">json</span>)</td></tr>
@@ -79,28 +82,111 @@ npm run dev                             # server :3001 · web :5173</code></pre>
     <tr><td class="mono">WEB_ORIGIN</td><td>no (:5173)</td><td>Allowed CORS origin (moot when the single container serves both same-origin)</td></tr>
     <tr><td class="mono">WEB_DIST_DIR</td><td>no</td><td>Override the built web bundle dir; default <span class="mono">../../web/dist</span> is correct for the repo and image</td></tr>
     <tr><td class="mono">ARENA_MOCK_PROVIDER</td><td>no</td><td>Set <span class="mono">1</span>/<span class="mono">true</span> to register the deterministic <span class="mono">mock</span> provider for demos/examples/e2e (no LLM key). Off by default.</td></tr>
+    <tr><td class="mono">ARENA_TRIGGER</td><td>no (always)</td><td>When the arena engages: <span class="mono">always</span> (blind matchup on every request) or <span class="mono">manual</span> (one model unless the request opts in). Any other value fails at boot. See <a href="#trigger-modes">Trigger modes</a>.</td></tr>
+    <tr><td class="mono">ARENA_DEFAULT_MODEL</td><td><span class="mono">ARENA_TRIGGER</span> ≠ always</td><td><strong>UUID</strong> of the enabled <span class="mono">models</span> row served on non-arena (<span class="mono">single</span>) rounds — not a display name. See <a href="#trigger-modes">Trigger modes</a>.</td></tr>
+    <tr><td class="mono">ARENA_JOIN_WINDOW_MS</td><td>no (2000)</td><td>Rendezvous window for <a href="architecture.html#slot-join">slot join</a>: how long the first of two sibling requests waits for its pair. <span class="mono">0</span> disables joining (a <span class="mono">joinKey</span> is then ignored); max 60000.</td></tr>
+    <tr><td class="mono">ARENA_JOIN_MAX_PENDING</td><td>no (256)</td><td>Cap on unpaired join scopes held in memory; over it a join is refused with <span class="mono">join_unavailable</span> rather than queued. Min 1, max 100000.</td></tr>
+    <tr><td class="mono">ARENA_JOIN_MAX_QUEUED_EVENTS</td><td>no (4096)</td><td>Per-connection event backlog on a joined matchup: events that may queue for one slot whose client reads slower than the model produces. Over it that one connection fails instead of growing without bound. Min 16, max 1000000.</td></tr>
   </table>
-  <div class="callout">The default seed contains Google models, so it needs <span class="mono">GOOGLE_API_KEY</span>. Change <span class="mono">provider</span> + <span class="mono">provider_model_id</span> in the seed for OpenAI, Ollama, vLLM, or host proxy. The root <span class="mono">.env</span> loads regardless of workspace cwd.</div>
+  <div class="callout"><strong><span class="mono">.env.example</span> lists every variable</strong> the server and the rating worker read; the table above expands on them with bounds and semantics. The default seed contains Google models, so it needs <span class="mono">GOOGLE_API_KEY</span>; change <span class="mono">provider</span> + <span class="mono">provider_model_id</span> in the seed for OpenAI, Ollama, vLLM, or host proxy. The root <span class="mono">.env</span> loads regardless of workspace cwd.</div>
+  <div class="callout">All <span class="mono">ARENA_JOIN_*</span> values are coerced and range-checked at boot (<span class="mono">server/src/arena/join.ts</span>), so a non-numeric or out-of-range value throws before the server listens. Compose's <span class="mono">app</span> service loads the repo-root <span class="mono">.env</span> wholesale; its <span class="mono">worker</span> service instead forwards each variable the rating worker reads explicitly (see <a href="#rating-worker">Rating worker</a>).</div>
 
   <h2>Host-proxy contract</h2>
   <div class="callout">Expose OpenAI-compatible streaming chat completions at <span class="mono">&lt;HOST_PROXY_URL&gt;/chat/completions</span>. OmniArena sends <span class="mono">model</span>, the server-derived linear <span class="mono">messages</span>, <span class="mono">stream: true</span>, and <span class="mono">x-omni-arena-proxy: 1</span>. The host keeps the upstream provider credential.</div>
+
+  <h2 id="trigger-modes">Trigger modes</h2>
+  <p>By default <strong>every</strong> request to <span class="mono">POST /api/arena/chat</span> is a blind A/B matchup. <span class="mono">ARENA_TRIGGER</span> relaxes that, so the arena can sit behind an explicit per-request opt-in instead of being the only way to chat.</p>
+  <table>
+    <tr><th><span class="mono">ARENA_TRIGGER</span></th><th>What a request gets</th><th>Votable</th></tr>
+    <tr><td class="mono">always <em>(default)</em></td><td>A blind matchup of two models chosen by the <span class="mono">MATCHMAKER</span> strategy — the historical behaviour</td><td>yes</td></tr>
+    <tr><td class="mono">manual</td><td>A <strong><span class="mono">single</span></strong> round served by <span class="mono">ARENA_DEFAULT_MODEL</span>, unless the request opts in; an opted-in request gets the usual matchup</td><td>only opted-in rounds</td></tr>
+  </table>
+  <div class="callout"><strong>Opting in, under <span class="mono">manual</span>.</strong> Either signal turns that one request into a matchup: body <span class="mono">arena: true</span>, or header <span class="mono">x-arena: on</span> (case-insensitive, and only <span class="mono">on</span> counts — <span class="mono">1</span>/<span class="mono">true</span>/<span class="mono">yes</span> do not). The header works on every protocol; the body field rides in each protocol's extension slot (AG-UI <span class="mono">forwardedProps</span>, OpenAI <span class="mono">omni_arena</span>, top level for Vercel AI SDK and native SSE — see <a href="integration.html#request-bodies">Integration</a>). The signals are OR-ed, so <span class="mono">x-arena: on</span> opts in even when the body says <span class="mono">arena: false</span>. Under <span class="mono">always</span> both are ignored. The trigger is a closed enum (<span class="mono">server/src/arena/mode.ts</span>), so a typo — or <span class="mono">sampled</span>, which is not built — throws before the server listens instead of falling back to <span class="mono">always</span>.</div>
+  <div class="callout"><strong><span class="mono">ARENA_DEFAULT_MODEL</span> takes a model UUID.</strong> It is compared against <span class="mono">models.id</span>, the UUID primary key of a row in the <span class="mono">models</span> table — not a display name and not a <span class="mono">provider_model_id</span>, so <span class="mono">gemini-3-flash</span> will not work. The seed mints ids with <span class="mono">randomUUID()</span>, so the value differs per deployment and must be looked up after seeding (<span class="mono">GET /models</span>, the OpenAI-compatible roster route; the same ids appear as <span class="mono">models[].id</span> on <span class="mono">GET /api/arena/leaderboard</span>). Pasting a generated UUID into config is a genuine usability wart — there is no lookup by friendly name today.</div>
+  <table>
+    <tr><th>When</th><th>Check</th><th>On failure</th></tr>
+    <tr><td>Boot (<span class="mono">server/src/server.ts</span>)</td><td>A non-<span class="mono">always</span> trigger has a non-blank <span class="mono">ARENA_DEFAULT_MODEL</span> (whitespace-only counts as unset)</td><td>Throws <span class="mono">ARENA_DEFAULT_MODEL is required when ARENA_TRIGGER=manual</span>; the process never listens</td></tr>
+    <tr><td>Each <span class="mono">single</span> request</td><td>The id is in the <strong>enabled</strong> roster (<span class="mono">listEnabledModels()</span>)</td><td><span class="mono">default_model_missing</span>: <span class="mono">ARENA_DEFAULT_MODEL '&lt;value&gt;' is not in the enabled roster</span></td></tr>
+  </table>
+  <p>Boot does <strong>not</strong> check that the value is a well-formed UUID or that such a model exists: the roster is a database read and the enabled set can change under a running server, so membership is re-checked per request. So a mistyped or since-disabled id boots cleanly and fails only on the first non-arena request — HTTP 500 on protocols that carry HTTP errors, a terminal in-band <span class="mono">run_error</span> on the ones whose clients only understand in-band errors. Matchup rounds keep working, so a smoke test that only exercises opted-in traffic will not catch it.</p>
+  <div class="callout"><strong>What a <span class="mono">single</span> round is:</strong> one slot, one model, nothing recorded. <span class="mono">mode: "single"</span>, <span class="mono">slots: ["A"]</span>, <span class="mono">votable: false</span> on the opening metadata, so a client can hide its vote controls. <strong>No <span class="mono">matchupToken</span>, <span class="mono">conversationId</span>, or <span class="mono">turnIndex</span></strong> — omitted rather than emitted empty, because none exists for a round that persists nothing, so multi-turn continuation is unavailable too (<a href="integration.html">Integration → identifiers you cannot use are not sent</a>). And <strong>no rating signal at all</strong>, not a weaker one — see <a href="rating-methodology.html">Rating methodology → what the engine cannot rate</a>.</div>
+  <p><strong>Worked example — <span class="mono">manual</span> end to end.</strong> An app that normally streams one model, with the arena available on demand. Find the UUID, configure it, restart, then compare the two request shapes:</p>
+<pre><code># 1. Find the model to serve on ordinary turns (server running, database seeded)
+curl -s http://localhost:3001/models | jq -r '.data[] | [.id, .name] | @tsv'
+# 3f8c9a1e-…  Gemini 3 Flash
+
+# 2. Repo-root .env (Docker Compose loads the same file), then restart the app
+ARENA_TRIGGER=manual
+ARENA_DEFAULT_MODEL=3f8c9a1e-…   # UUID from step 1; must be enabled
+
+# 3. Ordinary request -> single, non-votable round
+curl -N http://localhost:3001/api/arena/chat \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"Explain HMAC in two sentences."}'
+# matchup_started: {"mode":"single","votable":false,"slots":["A"], …}
+#   no matchupToken, no conversationId, no turnIndex
+
+# 4. Opted-in request -> the usual blind matchup (header, or body arena:true —
+#    on the Vercel AI SDK path that is useChat({ body: { arena: true } }))
+curl -N http://localhost:3001/api/arena/chat \
+  -H 'content-type: application/json' -H 'x-arena: on' \
+  -d '{"prompt":"Explain HMAC in two sentences."}'
+# matchup_started: {"mode":"matchup","votable":true,"slots":["A","B"],"matchupToken":"…", …}</code></pre>
+  <p>Only step 4's rounds are votable, and only they reach the rating worker.</p>
+  <div class="callout"><strong>Not built yet.</strong> A <span class="mono">sampled</span> trigger (engage on a fraction of traffic) and a <span class="mono">shadow</span> exposure (run the second model without showing it) are <strong>designed but not implemented</strong>. There is no <span class="mono">ARENA_SAMPLE_RATE</span> and no <span class="mono">ARENA_EXPOSURE</span>; the server reads neither, and <span class="mono">ARENA_TRIGGER=sampled</span> is rejected at boot. The seams are in the code — <span class="mono">resolveArenaPlan()</span> takes an injectable RNG, the plan type already names <span class="mono">shadow</span> — but nothing reaches them.</div>
 
   <h2>Database</h2>
   <table>
     <tr><th>Task</th><th>Command</th><th>Notes</th></tr>
     <tr><td>Migrate</td><td class="mono">npm run db:migrate --workspace server</td><td>Applies unapplied <span class="mono">migrations/*.sql</span> in filename order, each in a transaction. Add <span class="mono">NNN_description.sql</span>; never edit applied files.</td></tr>
-    <tr><td>Seed</td><td class="mono">npm run db:seed --workspace server</td><td>Upserts the lineup by <span class="mono">(provider, provider_model_id)</span>; edit <span class="mono">server/src/db/seed.ts</span> to change it.</td></tr>
+    <tr><td>Seed</td><td class="mono">npm run db:seed --workspace server</td><td>Disables <strong>every</strong> existing model, then upserts the lineup by <span class="mono">(provider, provider_model_id)</span> and re-enables those rows — so editing <span class="mono">server/src/db/seed.ts</span> and re-running is how you retire a model too. Currently three Google models (Gemini 3.1 Flash-Lite, 3 Flash, 3.5 Flash).</td></tr>
     <tr><td>Seed (mock)</td><td class="mono">npm run db:seed:mock --workspace server</td><td>Disables every other model, seeds two <span class="mono">mock</span> models (Alpha/Beta). Pair with <span class="mono">ARENA_MOCK_PROVIDER=1</span>.</td></tr>
+    <tr><td>Seed (demo data)</td><td class="mono">npm run db:seed:demo --workspace server</td><td>Synthetic voting history so the insights dashboard is not empty. See below.</td></tr>
   </table>
 
-  <h2>Mock provider</h2>
+  <h2 id="demo-data">Demo data</h2>
+  <p>Every chart on the insights dashboard is computed from recorded votes, so a fresh install renders nothing but empty states. <span class="mono">server/src/db/seed.demo.ts</span> fabricates a plausible voting record against whichever models are currently enabled.</p>
+  <div class="callout"><strong>Opt-in, never automatic.</strong> Neither the container entrypoint nor <span class="mono">docker compose up</span> invokes it, so a fresh deployment starts with a genuinely empty arena and the dashboard shows empty states until real votes arrive.</div>
+<pre><code># npm dev path (host)
+npm run db:seed:demo --workspace server
+npm run db:seed:demo --workspace server -- --reset --matchups 400 --days 30
+
+# Docker path — run the compiled script directly. `tsx` is a devDependency and
+# is pruned from the runtime image, so the npm script is not available there.
+docker compose exec app node server/dist/db/seed.demo.js --reset</code></pre>
+  <table>
+    <tr><th>Flag</th><th>Default</th><th>Effect</th></tr>
+    <tr><td class="mono">--matchups</td><td class="mono">240</td><td>Number of matchups to generate.</td></tr>
+    <tr><td class="mono">--days</td><td class="mono">14</td><td>Window to spread them over, ramping toward the present.</td></tr>
+    <tr><td class="mono">--reset</td><td>off</td><td>Delete previously seeded demo data first.</td></tr>
+    <tr><td class="mono">--seed</td><td class="mono">20260724</td><td>PRNG seed; the same value reproduces the same arena.</td></tr>
+  </table>
+  <p>Each model's personality is <strong>derived from its name</strong> — <span class="mono">display_name</span> plus <span class="mono">provider_model_id</span>, lowercased — so the seeded arena matches the intuition a reader already has about the roster. Markers must match a whole name segment, since <span class="mono">gemini</span> ends in <span class="mono">mini</span>.</p>
+  <table>
+    <tr><th>Name contains</th><th>Reads as</th><th>Gets</th></tr>
+    <tr><td class="mono">lite · mini · nano · small · tiny · 8b · haiku</td><td>the fast, cheap variant</td><td>lowest latency, terse answers, weakest ratings</td></tr>
+    <tr><td class="mono">pro · ultra · opus · max · large · 70b · thinking</td><td>the flagship</td><td>slowest, longest answers, strongest ratings</td></tr>
+    <tr><td>a version number</td><td>recency</td><td>newer versions rate higher; older ones in the same class pad their answers more</td></tr>
+    <tr><td>neither marker, no version</td><td>the middle of the roster</td><td>mid-tier defaults, ranked by declaration order</td></tr>
+  </table>
+  <div class="callout">With the default Gemini lineup that yields <strong>Gemini 3.5 Flash</strong> on top, <strong>Gemini 3 Flash</strong> second but padding its answers, and <strong>Gemini 3.1 Flash-Lite</strong> fastest by a wide margin and clearly last on quality — so the "does faster win?" scatter has a real answer.</div>
+  <div>
+    <span class="chip">Rao-Kupper votes</span>
+    <span class="chip">style confounding</span>
+    <span class="chip">many small sessions</span>
+    <span class="chip">backfilled rating history</span>
+  </div>
+  <div class="callout">Votes are drawn from the <strong>same Rao-Kupper model the worker fits</strong>, with deliberate style confounding — verbose, heavily formatted answers win more than their latent strength justifies, so the padded runner-up closes most of the raw gap and gives it all back under style control. Strength outweighs what padding can buy, so the better model still leads the raw leaderboard and style control widens its lead rather than reordering it. Votes are spread across <strong>many small anonymous sessions</strong> because the worker's anomaly screen excludes sessions resembling vote-stuffing or a one-sided bot. <span class="mono">model_ratings</span>, <span class="mono">model_style_ratings</span>, <span class="mono">model_rating_history</span>, and <span class="mono">style_control_coefficients</span> are backfilled (a win-rate approximation on the Elo-like scale, one history checkpoint per day up to twelve) so the rating and style charts work before the worker has run; a real refit overwrites them.</div>
+  <div class="callout"><strong>What <span class="mono">--reset</span> does and does not cover.</strong> Demo conversations carry a <span class="mono">demo-</span> session prefix and <span class="mono">--reset</span> deletes only those matchups and conversations, so votes recorded through the real UI survive. The four worker-owned tables are the exception: rows for the currently enabled models are deleted and rewritten on <strong>every</strong> run, <span class="mono">--reset</span> or not. Seeded matchups also carry <span class="mono">harness_version = 'demo'</span>, the easiest way to tell them from real traffic in SQL.</div>
+
+  <h2 id="mock-provider">Mock provider</h2>
   <div class="callout">A deterministic stub provider (<span class="mono">server/src/providers/mock.ts</span>) streams fixed per-model tokens with no network, so a full round-trip (stream → vote → reveal) runs with no LLM key. Enable with <span class="mono">ARENA_MOCK_PROVIDER=1</span> (registers the <span class="mono">mock</span> provider; off by default so it never shadows real providers) and seed with <span class="mono">db:seed:mock</span>. Both <a href="../../examples/">examples</a> and the e2e suite use it.</div>
 <pre><code>docker compose up -d postgres
 ARENA_MOCK_PROVIDER=1 npm run db:migrate --workspace server
 ARENA_MOCK_PROVIDER=1 npm run db:seed:mock --workspace server
 ARENA_MOCK_PROVIDER=1 npm run dev --workspace server   # :3001</code></pre>
 
-  <h2>Rating worker</h2>
+  <h2 id="rating-worker">Rating worker</h2>
   <p>The Bradley-Terry rating worker lives in <span class="mono">worker/</span> (Python, NumPy/SciPy). It screens anomalous voting sessions, aggregates votes in-database, fits ratings with Fisher-information CIs, and upserts <span class="mono">model_ratings</span>. <span class="mono">--style</span> adds the heavier style-controlled pass into <span class="mono">model_style_ratings</span>.</p>
 <pre><code>cd worker
 python -m venv .venv && source .venv/bin/activate
@@ -116,11 +202,21 @@ python -m omniarena_rating --style
 # Periodic loop with warm-started refits (add --style for the style pass):
 python -m omniarena_rating --loop --interval 300 --ridge 0.01
 
+# Same loop, but never force a from-scratch refit (default: every 12th):
+python -m omniarena_rating --loop --full-refit-every 0
+
 # Skip the pre-fit anomaly screen (keep every session):
 python -m omniarena_rating --no-anomaly-filter
 
 python -m pytest          # pure-Python tests, no database</code></pre>
-  <div class="callout">The pre-fit anomaly screen drops spam/malicious sessions via p-value tests before any fit (<span class="mono">--no-anomaly-filter</span> disables it). <span class="mono">docker compose up -d</span> also starts a <span class="mono">worker</span> service running the loop against Postgres. Ratings appear after the first successful refit; until then the leaderboard rating fields are null.</div>
+  <div class="callout">The pre-fit anomaly screen drops spam/malicious sessions via p-value tests before any fit (<span class="mono">--no-anomaly-filter</span> disables it). In loop mode most refits are warm-started, but every <span class="mono">FULL_REFIT_EVERY</span> refits (<span class="mono">--full-refit-every</span>, default 12 — hourly at the default interval) the warm state is discarded for a from-scratch fit, which is then cross-checked against a warm-started fit of the same aggregates; <span class="mono">0</span> disables the forced pass. See the <a href="rating-methodology.html">rating methodology</a>. <span class="mono">docker compose up -d</span> also starts a <span class="mono">worker</span> service running the loop against Postgres; its image's default command is <span class="mono">python -m omniarena_rating --loop --style</span>, so <strong>every refit runs both passes</strong>. Ratings appear after the first successful refit; until then the leaderboard rating fields are null. Override the service's <span class="mono">command:</span> for a one-shot or default-only run.</div>
+  <table>
+    <tr><th>Compose <span class="mono">worker</span> service</th><th>What that gives you</th></tr>
+    <tr><td><span class="mono">--loop --style</span> by default (the image <span class="mono">CMD</span>)</td><td>A stock <span class="mono">docker compose up</span> fills <span class="mono">model_ratings</span>, <span class="mono">model_rating_history</span>, <span class="mono">model_style_ratings</span>, and <span class="mono">style_control_coefficients</span> — the dashboard's style panels included — with no extra steps</td></tr>
+    <tr><td>Every worker knob forwarded</td><td><span class="mono">REFIT_INTERVAL_SECONDS</span>, <span class="mono">FULL_REFIT_EVERY</span>, <span class="mono">RATING_RIDGE</span>, <span class="mono">STYLE_RIDGE</span>, <span class="mono">LOG_LEVEL</span>, <span class="mono">LOG_FORMAT</span> come from the repo-root <span class="mono">.env</span>, each defaulting to the worker's own default</td></tr>
+    <tr><td>No <span class="mono">env_file</span> (unlike <span class="mono">app</span>)</td><td>Deliberate: the worker needs no provider keys or app secrets, so the list above plus a <span class="mono">DATABASE_URL</span> on the compose <span class="mono">postgres</span> hostname is the whole of what reaches the container</td></tr>
+  </table>
+  <div class="callout">The worker fits <strong>pairwise</strong> comparisons, so it needs voted matchups. Where most rounds are non-votable <span class="mono">single</span> rounds — which persist no matchup — there is nothing to aggregate and the rating fields stay null however often the loop runs. See <a href="rating-methodology.html">Rating methodology → what the engine cannot rate</a>.</div>
 
   <h2>Commands</h2>
   <table>
@@ -133,7 +229,8 @@ python -m pytest          # pure-Python tests, no database</code></pre>
     <tr><td class="mono">npm run typecheck</td><td>All workspaces</td></tr>
     <tr><td class="mono">npm run e2e</td><td>Builds both example apps, boots OmniArena (pg-mem + mock provider) + example servers, drives the full arena flow in headless Chromium (Playwright)</td></tr>
   </table>
-  <div class="callout">Tests need no running Postgres or API keys. The hook tests moved from <span class="mono">web/</span> into <span class="mono">packages/react-sdk/src/useArenaChat.test.ts</span>; they stub <span class="mono">fetch</span> with real SSE streams and stub <span class="mono">localStorage</span> (Node 24's experimental global shadows jsdom's).</div>
+  <div class="callout">Tests need no running Postgres or API keys. The hook tests moved from <span class="mono">web/</span> into the SDK and now sit beside the framework-free modules they cover (<span class="mono">protocol</span>, <span class="mono">session</span>, <span class="mono">stream</span>, <span class="mono">vote</span>, one file per hook); they stub <span class="mono">fetch</span> with real SSE streams and stub <span class="mono">localStorage</span> (Node 24's experimental global shadows jsdom's).</div>
+  <div class="callout"><strong>Two cross-cutting server suites.</strong> <span class="mono">blindness.test.ts</span> asserts that no model identity reaches the wire in <strong>any</strong> of the five protocols, on a single connection and on both siblings of a joined matchup — cases generated from the protocol registry, so a new adapter is covered by default. <span class="mono">arena/join.test.ts</span> covers slot join: simultaneous siblings elect exactly one leader, a third claim is refused, the pending set stays bounded, and slot B still finishes and is persisted after its own consumer disconnects.</div>
   <div class="callout"><strong>Gotcha:</strong> run tests per workspace, not a bare <span class="mono">vitest</span> at the repo root. The <span class="mono">jsdom</span> environment is set per workspace (each <span class="mono">vitest.config.ts</span>) and there is no root Vitest config, so a root-level <span class="mono">vitest</span> uses the default Node env and the SDK hook test fails with <span class="mono">ReferenceError: document is not defined</span>. Use <span class="mono">npm test</span> (delegates to <span class="mono">npm run test --workspaces</span>) or <span class="mono">npm test --workspace &lt;name&gt;</span> — both pass.</div>
 
   <h2>Reference examples</h2>
@@ -144,8 +241,28 @@ python -m pytest          # pure-Python tests, no database</code></pre>
   </table>
   <div class="callout">Both talk to a running server (use the mock provider for a zero-key run). See the <a href="integration.html">integration guide</a> for how each adapter maps to these apps.</div>
 
+  <h2 id="integrations">Third-party UI integrations</h2>
+  <p>Beyond the purpose-built examples, <a href="../../integrations/">integrations/</a> wires the arena into <strong>real upstream chat UIs</strong> at pinned revisions. Each directory is self-contained — its own <span class="mono">package.json</span>, lockfile, tests, and README — and outside the root workspace, so a plain root install neither installs nor builds them.</p>
+  <table>
+    <tr><th>Directory</th><th>Upstream</th><th>Protocol</th><th>How to run it (from that directory)</th></tr>
+    <tr><td><a href="../../integrations/vercel-ai-chatbot/"><span class="mono">vercel-ai-chatbot</span></a></td><td><span class="mono">vercel/ai-chatbot</span> template</td><td class="mono">vercel-ai</td><td class="mono">npm install · npm run setup · npm test</td></tr>
+    <tr><td><a href="../../integrations/assistant-ui/"><span class="mono">assistant-ui</span></a></td><td>assistant-ui monorepo, <span class="mono">examples/with-ag-ui</span></td><td class="mono">ag-ui</td><td class="mono">npm install · npm run setup · npm test</td></tr>
+    <tr><td><a href="../../integrations/open-webui/"><span class="mono">open-webui</span></a></td><td>Open WebUI container image (v0.10.2)</td><td class="mono">openai</td><td><span class="mono">npm install · docker compose up -d · npm run arena</span> (blocks), then <span class="mono">npm test</span></td></tr>
+  </table>
+  <div class="callout"><strong>Pinned clone + overlay.</strong> The two Node integrations share one model: <span class="mono">upstream.json</span> records the exact upstream commit, <span class="mono">.upstream/</span> holds the gitignored clone, <span class="mono">overlay/</span> holds the arena-layer sources copied in verbatim, and <span class="mono">scripts/overlay.mjs</span> applies anchored patches to upstream's own files — each anchor must match exactly once, so a moved upstream line fails setup loudly instead of producing a half-integrated app. Open WebUI runs from its published image and reaches the arena through a small OpenAI-compatible bridge (<span class="mono">bridge/</span>). All three run key-free against the <a href="#mock-provider">mock provider</a>; see the <a href="integration.html">integration guide</a> for what each protocol can and cannot carry.</div>
+
   <h2>End-to-end tests</h2>
-  <div class="callout"><span class="mono">npm run e2e</span> (orchestrated by <span class="mono">e2e/run.mjs</span>) is deterministic and CI-friendly — no real keys or external LLM calls. It installs harness + example deps, builds each example (a smoke check), installs Playwright Chromium, then boots the OmniArena harness (pg-mem + <span class="mono">mock</span>) and both example servers and drives the full flow. <span class="mono">protocol.spec.ts</span> asserts the raw <span class="mono">vercel-ai</span>/<span class="mono">ag-ui</span> wire streams (Vercel path is votable, leaderboard updates); <span class="mono">examples.spec.ts</span> drives both UIs through stream → vote → reveal.</div>
+  <div class="callout"><span class="mono">npm run e2e</span> (orchestrated by <span class="mono">e2e/run.mjs</span>) is deterministic and CI-friendly — no real keys or external LLM calls. It installs harness + example deps, builds each example (a smoke check), installs Playwright Chromium, then boots the OmniArena harness (pg-mem + <span class="mono">mock</span>) and both example servers and drives the full flow. <span class="mono">protocol.spec.ts</span> asserts the raw <span class="mono">vercel-ai</span>/<span class="mono">ag-ui</span> wire streams (Vercel path is votable, leaderboard updates); <span class="mono">examples.spec.ts</span> drives both UIs through stream → vote → reveal. Both share the expected roster and per-model output fingerprints from <span class="mono">arena-fixtures.ts</span>.</div>
+
+  <h2>Continuous integration</h2>
+  <div class="callout"><span class="mono">.github/workflows/ci.yml</span> runs on pushes to <span class="mono">main</span> and every pull request, cancelling in-flight runs for the same ref. <strong>No job needs a secret</strong> — every suite uses the mock provider and in-memory <span class="mono">pg-mem</span> — so CI works unchanged on forks. See <a href="../../CONTRIBUTING.md">CONTRIBUTING.md</a> for the contribution workflow.</div>
+  <table>
+    <tr><th>Job</th><th>Steps</th></tr>
+    <tr><td>Node</td><td><span class="mono">npm ci</span> → <span class="mono">build --workspaces</span> → <span class="mono">typecheck --workspaces</span> → the three workspace test suites. Build runs <strong>first</strong> because <span class="mono">web</span> typechecks against the SDK's emitted declaration files.</td></tr>
+    <tr><td>Python</td><td><span class="mono">pip install -r worker/requirements.txt</span> → <span class="mono">python -m pytest</span> in <span class="mono">worker/</span></td></tr>
+    <tr><td>End-to-end</td><td><span class="mono">npm ci</span> at the root and in <span class="mono">e2e/</span> → <span class="mono">playwright install --with-deps chromium</span> → <span class="mono">npm run e2e</span>; Playwright artifacts uploaded on failure</td></tr>
+  </table>
+  <div class="callout">CI pins Node <span class="mono">22</span> and Python <span class="mono">3.11</span>. Locally the floor is lower — root <span class="mono">engines</span> asks for Node <span class="mono">&gt;=20</span>, the worker for Python <span class="mono">&gt;=3.10</span> — so a green local run on Node 20 is possible while CI exercises 22.</div>
 </main>
 </body>
 </html>

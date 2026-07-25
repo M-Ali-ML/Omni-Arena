@@ -28,35 +28,97 @@
   .callout { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 16px 0; font-size: 14px; }
   .method { display: inline-block; font-family: "Geist Mono", monospace; font-size: 12px; font-weight: 500; background: #37352F; color: #FFFFFF; border-radius: 4px; padding: 2px 8px; margin-right: 8px; vertical-align: middle; }
   .chip { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 9999px; padding: 2px 10px; font-size: 12px; margin: 2px; }
+  .flow { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: stretch; }
+  .node { flex: 1 1 150px; background: #FFFFFF; border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font-size: 14px; min-width: 140px; }
+  .node .t { font-weight: 600; }
+  .node .d { color: var(--muted); font-size: 12px; }
+  .arrow { text-align: center; color: var(--muted); font-size: 13px; }
 </style>
 </head>
 <body>
 <main>
   <div class="crumb"><a href="../">Docs</a> · <a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="integration.html">Integration</a> · <a href="rating-methodology.html">Rating methodology</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a> · <a href="sdk.html">SDK</a></div>
   <h1>API</h1>
-  <p class="lede">Base URL <span class="mono">http://localhost:3001</span>. JSON bodies. The web dev server proxies <span class="mono">/api</span> and <span class="mono">/health</span>.</p>
+  <p class="lede">Base URL <span class="mono">http://localhost:3001</span> (<span class="mono">PORT</span>). JSON bodies. The web dev server proxies <span class="mono">/api</span> and <span class="mono">/health</span>.</p>
+
+  <h2>No authentication</h2>
+  <table>
+    <tr><th>Concern</th><th>How it works</th></tr>
+    <tr><td><strong>Credentials</strong></td><td>None. No endpoint takes an API key, token, or session cookie.</td></tr>
+    <tr><td><strong>Vote capability</strong></td><td>The one credential in the API is the HMAC-signed <strong>matchup token</strong> (<span class="mono">MATCHUP_TOKEN_SECRET</span>), minted on <span class="mono">matchup_started</span> and required by <span class="mono">POST /api/arena/vote</span> — what stops a caller voting on a matchup it never saw.</td></tr>
+    <tr><td><strong>Public surfaces</strong></td><td>Leaderboard, model list, and analytics aggregates. Model-level data only — no per-user or per-session rows.</td></tr>
+    <tr><td><strong>Browser access</strong></td><td>CORS instead of auth: exactly one allowed origin, <span class="mono">WEB_ORIGIN</span> (default <span class="mono">http://localhost:5173</span>), methods <span class="mono">GET</span> and <span class="mono">POST</span>. Server-to-server callers are unaffected. See <a href="setup.html">Setup</a>.</td></tr>
+    <tr><td><strong>Error bodies</strong></td><td>Always <span class="mono">{ "error": "&lt;message&gt;" }</span>. The chat route's validation <span class="mono">400</span> adds <span class="mono">details</span>, zod's field-keyed map; other routes' <span class="mono">400</span>s are the plain one-key shape.</td></tr>
+  </table>
 
   <h2><span class="method">POST</span><span class="mono">/api/arena/chat</span></h2>
   <p>Starts a blind matchup, or continues one from its latest winning response, and streams both responses over one SSE connection.</p>
 <pre><code>{ "prompt": "Explain JWTs in simple terms",
   "sessionId": "anon_123",
-  "conversationId": "optional UUID from matchup_started" }</code></pre>
+  "conversationId": "optional UUID from matchup_started",
+  "arena": true,
+  "joinKey": "chat-7f3a" }</code></pre>
+  <table>
+    <tr><th>Field</th><th>Rules</th></tr>
+    <tr><td class="mono">prompt</td><td>Required, 1–20,000 characters after trimming.</td></tr>
+    <tr><td class="mono">sessionId</td><td>Optional anonymous session id, 1–200 characters.</td></tr>
+    <tr><td class="mono">conversationId</td><td>Optional UUID from an earlier <span class="mono">matchup_started</span>; omit at turn 0.</td></tr>
+    <tr><td class="mono">arena</td><td>Optional per-request opt-in, read only under <span class="mono">ARENA_TRIGGER=manual</span> (the <span class="mono">x-arena: on</span> header does the same for clients that cannot change the body). Ignored under the default <span class="mono">always</span>.</td></tr>
+    <tr><td class="mono">joinKey</td><td>Optional, 1–200 characters. Opts into <a href="#slot-join">slot join</a> — one matchup served over two sibling requests.</td></tr>
+  </table>
+  <p>Unknown members are ignored rather than rejected.</p>
   <table>
     <tr><th>SSE event</th><th>Payload</th><th>Notes</th></tr>
-    <tr><td class="mono">matchup_started</td><td class="mono">{ matchupId, matchupToken, conversationId, turnIndex, slots }</td><td>First event. Save the conversation ID; no model identities.</td></tr>
+    <tr><td class="mono">matchup_started</td><td class="mono">{ matchupId, matchupToken?, conversationId?, turnIndex?, slots, mode, votable }</td><td>First event. Save the conversation ID; no model identities. <span class="mono">mode</span> is <span class="mono">matchup</span> or <span class="mono">single</span> (<span class="mono">shadow</span> is declared and unreachable). <span class="mono">slots</span> lists the slots <em>this response</em> streams: <span class="mono">["A","B"]</span> normally, <span class="mono">["A"]</span> for a <span class="mono">single</span> round, one slot each under <a href="#slot-join">slot join</a>.</td></tr>
     <tr><td class="mono">token</td><td class="mono">{ slot, token }</td><td>Interleaved tokens for A and B</td></tr>
     <tr><td class="mono">slot_error</td><td class="mono">{ slot, message }</td><td>Other slot keeps streaming</td></tr>
     <tr><td class="mono">slot_done</td><td class="mono">{ slot }</td><td>Content/latency stripped from public event</td></tr>
+    <tr><td class="mono">run_error</td><td class="mono">{ code, message }</td><td>Terminal: the round failed; no <span class="mono">matchup_done</span> follows</td></tr>
     <tr><td class="mono">matchup_done</td><td class="mono">{ }</td><td>Stream closes</td></tr>
   </table>
   <div class="callout"><strong>Linear history:</strong> omit <span class="mono">conversationId</span> at turn 0. After a decisive <span class="mono">left</span>/<span class="mono">right</span> vote, resend it for a follow-up. The server reconstructs history from stored winners; ties, both-bad, skips, and unvoted turns cannot continue.</div>
+  <div class="callout"><strong>Identifiers are only sent when they can be used.</strong> <span class="mono">matchupToken</span>, <span class="mono">conversationId</span>, and <span class="mono">turnIndex</span> are <em>omitted</em> — not empty-stringed, not nulled — when the round has nothing behind them. A <span class="mono">single</span> round persists no matchup: no token to vote with, no conversation to continue. Emitting them anyway earned callers a <span class="mono">404 Conversation not found</span> on the next turn. Absence is authoritative and pairs with <span class="mono">votable: false</span>. Such a round is also invisible to the rating worker — a Bradley-Terry fit needs a comparison, and none was recorded (<a href="rating-methodology.html#what-the-engine-cannot-rate">what the engine cannot rate</a>).</div>
   <table>
-    <tr><th>Status</th><th>Pre-stream error</th></tr>
-    <tr><td class="mono">400</td><td>Invalid body</td></tr>
-    <tr><td class="mono">403</td><td>Conversation belongs to a different anonymous session</td></tr>
-    <tr><td class="mono">404</td><td>Unknown conversation</td></tr>
-    <tr><td class="mono">409</td><td>No decisive winner yet, or the conversation already advanced</td></tr>
+    <tr><th>Status</th><th class="mono">code</th><th>Pre-stream error</th></tr>
+    <tr><td class="mono">400</td><td class="mono">invalid_request</td><td>Invalid request body — the one response that also carries <span class="mono">details</span></td></tr>
+    <tr><td class="mono">400</td><td class="mono">join_requires_session</td><td><span class="mono">joinKey</span> sent without <span class="mono">sessionId</span></td></tr>
+    <tr><td class="mono">403</td><td class="mono">conversation_forbidden</td><td><span class="mono">sessionId</span> does not own the requested conversation</td></tr>
+    <tr><td class="mono">404</td><td class="mono">conversation_not_found</td><td>Unknown <span class="mono">conversationId</span></td></tr>
+    <tr><td class="mono">409</td><td class="mono">conversation_not_ready</td><td>The prior turn has no decisive vote</td></tr>
+    <tr><td class="mono">409</td><td class="mono">conversation_conflict</td><td>Another request already advanced the conversation</td></tr>
+    <tr><td class="mono">409</td><td class="mono">join_slots_exhausted</td><td>Both slots of this join scope are already claimed</td></tr>
+    <tr><td class="mono">409</td><td class="mono">join_expired</td><td>The join window closed before this request arrived</td></tr>
+    <tr><td class="mono">500</td><td class="mono">default_model_missing</td><td><span class="mono">ARENA_DEFAULT_MODEL</span> is not in the enabled roster (<span class="mono">single</span> rounds only)</td></tr>
+    <tr><td class="mono">500</td><td class="mono">join_failed</td><td>The request holding the shared matchup failed for an unclassified reason</td></tr>
+    <tr><td class="mono">503</td><td class="mono">join_unavailable</td><td>Too many unpaired joins in flight; retry without <span class="mono">joinKey</span></td></tr>
+    <tr><td class="mono">504</td><td class="mono">join_leader_timeout</td><td>The request holding the shared matchup never started it</td></tr>
   </table>
+  <div class="callout">A failure on the request that owns a shared matchup is <strong>forwarded to its sibling</strong>, so both halves of one turn fail identically instead of leaving one parked on a matchup that was never created.</div>
+  <div class="callout"><strong>Exception — AG-UI.</strong> Its clients settle a run on the terminal <span class="mono">RUN_ERROR</span> event and read a non-2xx as a dead transport with nothing to render, so for <span class="mono">?protocol=ag-ui</span> these failures come <strong>in-band</strong>: a <span class="mono">200</span> stream whose one event is <span class="mono">RUN_ERROR</span> with the same message and the <span class="mono">code</span> from the table. Every other protocol keeps the statuses above and answers with <span class="mono">{ "error": … }</span> — the <span class="mono">code</span> column is the in-band identity of each failure, not a JSON field.<br><br>A failure <em>after</em> streaming starts cannot use a status at all — the response is committed at <span class="mono">200</span> — so it arrives as a terminal <span class="mono">run_error</span> (<span class="mono">stream_failed</span>) in the active protocol's idiom, and a client settles instead of awaiting a <span class="mono">matchup_done</span> that never comes.</div>
+
+  <h3 id="slot-join">Serving one matchup over two requests (<span class="mono">joinKey</span>)</h3>
+  <p>Some compare-view UIs fan a multi-model turn out into <strong>one request per model</strong> sharing a conversation id (Open WebUI v0.10 is the measured case). Each such request has exactly one answer channel, so the default shape — both slots interleaved on one connection — cannot serve it. The same <span class="mono">joinKey</span> on both requests pairs them server-side into <strong>one</strong> matchup.</p>
+  <div class="flow">
+    <div class="row">
+      <div class="node"><div class="t">Request 1 · leader</div><div class="d">claims slot A · runs matchmaking, blindness, persistence once · streams A</div></div>
+      <div class="node"><div class="t">Request 2 · follower</div><div class="d">claims slot B · waits for the leader's matchup · streams B</div></div>
+    </div>
+    <div class="arrow">▼</div>
+    <div class="row">
+      <div class="node"><div class="t">One matchup</div><div class="d">one matchups row · same matchupId, token, conversationId, turnIndex on both connections · one vote</div></div>
+    </div>
+  </div>
+  <table>
+    <tr><th>Rule</th><th>Detail</th></tr>
+    <tr><td><strong>Scope</strong></td><td>A join is keyed by <strong>anonymous session + conversation + exact prompt + <span class="mono">joinKey</span></strong>, not the key alone, so knowing someone else's key buys nothing — a mismatch on any part simply produces a separate matchup. <span class="mono">joinKey</span> therefore requires <span class="mono">sessionId</span> (<span class="mono">400 join_requires_session</span>).</td></tr>
+    <tr><td><strong>Slots</strong></td><td>First arrival is the leader (slot <span class="mono">A</span>), second the follower (slot <span class="mono">B</span>); each connection carries only its own slot's events and its <span class="mono">matchup_started</span> narrows <span class="mono">slots</span> accordingly. A third request on a live scope is <span class="mono">409 join_slots_exhausted</span>.</td></tr>
+    <tr><td><strong>Window</strong></td><td><span class="mono">ARENA_JOIN_WINDOW_MS</span>, default <span class="mono">2000</span>. If it closes with no sibling the round <strong>degrades to the default shape</strong> — both slots on that one connection, <span class="mono">slots: ["A","B"]</span>, votable — so nothing is wasted. <span class="mono">0</span> disables joining and <span class="mono">joinKey</span> is then ignored; at most <span class="mono">ARENA_JOIN_MAX_PENDING</span> unpaired scopes are tracked (default <span class="mono">256</span>).</td></tr>
+    <tr><td><strong>Durability</strong></td><td>Slot B still completes and is still recorded if the sibling disconnects — the leader keeps consuming the shared generation. A <span class="mono">stop</span> on the control plane stops both slots.</td></tr>
+    <tr><td><strong>Voting</strong></td><td>Unchanged: one token, one vote, one reveal — either connection can cast it.</td></tr>
+    <tr><td><strong>Protocols</strong></td><td><span class="mono">joinKey</span> rides each protocol's own extension slot (<span class="mono">forwardedProps</span> for AG-UI, <span class="mono">omni_arena</span> for OpenAI, top level for <span class="mono">useChat</span>) — see the <a href="integration.html">integration guide</a>.</td></tr>
+  </table>
+  <div class="callout">The field is absent on every existing client, so the single-connection two-slot flow is untouched. Failures are the <span class="mono">join_*</span> rows above; <span class="mono">504 join_leader_timeout</span> is the follower's safety net when a leader dies in a way its own error handling misses, not a normal outcome.</div>
 
   <h3>Protocol selection</h3>
   <p>The same matchup stream can be framed in five wire protocols. Precedence: <span class="mono">?protocol=</span> query param → <span class="mono">Accept</span> media type → default <strong>native SSE</strong>. An unknown <span class="mono">?protocol=</span> falls back to SSE, so native SSE is byte-for-byte unchanged and existing clients (demo + SDK) are unaffected.</p>
@@ -68,17 +130,18 @@
     <tr><td>Vercel AI SDK</td><td class="mono">vercel · vercel-ai · ai-sdk</td><td class="mono">application/vnd.vercel.ai.ui-message-stream+json</td><td class="mono">text/event-stream + x-vercel-ai-ui-message-stream: v1</td></tr>
     <tr><td>OpenAI SSE</td><td class="mono">openai · openai-sse</td><td class="mono">application/vnd.openai.chat-chunk+json</td><td class="mono">text/event-stream</td></tr>
   </table>
-  <div class="callout"><strong>Same semantics, different framing.</strong> Every protocol carries the identical <span class="mono">matchup_started</span> → <span class="mono">token</span> → <span class="mono">slot_error</span> → <span class="mono">slot_done</span> → <span class="mono">matchup_done</span> sequence over two slots (A, B); only the wire shape differs, and every frame is schema-validated before it is written.</div>
+  <div class="callout"><strong>Same semantics, different framing.</strong> Every protocol carries the identical <span class="mono">matchup_started</span> → <span class="mono">token</span> → <span class="mono">slot_error</span> → <span class="mono">slot_done</span> → <span class="mono">run_error</span> / <span class="mono">matchup_done</span> sequence over two slots (A, B); only the wire shape differs, and every frame is schema-validated before it is written.</div>
+  <div class="callout"><strong>Three adapters are bidirectional.</strong> AG-UI accepts a canonical <span class="mono">RunAgentInput</span>, the OpenAI adapter a standard <span class="mono">/chat/completions</span> body, the Vercel adapter the body <span class="mono">useChat</span> posts — so stock clients of those protocols call the endpoint with no translating transport. OmniArena's own body above still works on every protocol; the shapes are told apart by whether the body carries a <span class="mono">messages</span> array. Native SSE and A2UI accept OmniArena's body only. Where <span class="mono">sessionId</span> / <span class="mono">conversationId</span> / <span class="mono">arena</span> ride per protocol: see the <a href="integration.html#request-bodies">integration guide</a>.<br><br>The arena is also served at <span class="mono">POST /chat/completions</span> and <span class="mono">POST /v1/chat/completions</span>, with the OpenAI protocol implied by the path — an OpenAI client appends that path to a base URL and cannot pass <span class="mono">?protocol=</span>. A matchup is two live streams with no buffered <span class="mono">chat.completion</span> object, so <span class="mono">"stream": false</span> is refused with a <span class="mono">400</span> naming the field; omit <span class="mono">stream</span> or set it to <span class="mono">true</span>. Sampling knobs (<span class="mono">temperature</span>, <span class="mono">max_tokens</span>, <span class="mono">tools</span>, …) are accepted and ignored — the arena chooses the models and the sampling — and <span class="mono">user</span> seeds <span class="mono">sessionId</span>.</div>
   <table>
     <tr><th>Protocol</th><th>Framing</th></tr>
     <tr><td>Native SSE</td><td><span class="mono">event:</span>/<span class="mono">data:</span> pairs, one per event; no trailing sentinel (the event table above).</td></tr>
-    <tr><td>AG-UI</td><td>Typed AG-UI events, one <span class="mono">data:</span> line each, over SSE: <span class="mono">RUN_STARTED</span> + a <span class="mono">TEXT_MESSAGE_START</span> per slot → <span class="mono">TEXT_MESSAGE_CONTENT</span> (delta, slot) → <span class="mono">CUSTOM</span> <span class="mono">slot_error</span> → <span class="mono">TEXT_MESSAGE_END</span> → <span class="mono">RUN_FINISHED</span>. <span class="mono">runId</span>=matchup, <span class="mono">threadId</span>=conversation.</td></tr>
-    <tr><td>A2UI</td><td>Schema-validated <strong>NDJSON</strong> (one flat JSON object per line, versioned <span class="mono">a2ui/1</span>), two surfaces A/B: <span class="mono">surface_init</span> → <span class="mono">text_append</span> → <span class="mono">error</span> → <span class="mono">surface_done</span> → <span class="mono">session_done</span>.</td></tr>
-    <tr><td>Vercel AI SDK</td><td>AI SDK UI Message Stream over SSE. Slot A on the primary text channel (<span class="mono">start</span> → <span class="mono">data-arena-meta</span> → <span class="mono">text-start/-delta/-end</span>); slot B via custom data parts (<span class="mono">data-arena-b-delta</span> / <span class="mono">-b-done</span>); errors via <span class="mono">data-arena-error</span>; ends <span class="mono">finish</span> + <span class="mono">data: [DONE]</span>.</td></tr>
-    <tr><td>OpenAI SSE</td><td><span class="mono">chat.completion.chunk</span> frames; slots on <span class="mono">choices[0]</span> (A) / <span class="mono">choices[1]</span> (B). <span class="mono">role: assistant</span> on start, <span class="mono">content</span> deltas, <span class="mono">finish_reason: "stop"</span> on done; single-slot errors inline as <span class="mono">content</span>; ends <span class="mono">data: [DONE]</span>.</td></tr>
+    <tr><td>AG-UI</td><td>Typed AG-UI events, one <span class="mono">data:</span> line each, over SSE: <span class="mono">RUN_STARTED</span> + <span class="mono">CUSTOM arena_matchup</span> (the matchup metadata) + a <span class="mono">TEXT_MESSAGE_START</span> per slot → <span class="mono">TEXT_MESSAGE_CONTENT</span> (delta, slot) → <span class="mono">CUSTOM slot_error</span> plus the same text as marked content → <span class="mono">TEXT_MESSAGE_END</span> → <span class="mono">RUN_FINISHED</span>, or <span class="mono">RUN_ERROR</span> (<span class="mono">message</span>, <span class="mono">code</span>). <span class="mono">runId</span>=matchup, <span class="mono">threadId</span>=conversation (the matchup id when there is none).</td></tr>
+    <tr><td>A2UI</td><td>Schema-validated <strong>NDJSON</strong> (one flat JSON object per line, versioned <span class="mono">a2ui/1</span>), two surfaces A/B: <span class="mono">surface_init</span> (<span class="mono">matchupId</span>, <span class="mono">matchupToken</span>, <span class="mono">conversationId</span>, <span class="mono">turnIndex</span>, <span class="mono">surfaces</span>, <span class="mono">mode</span>, <span class="mono">votable</span>) → <span class="mono">text_append</span> → <span class="mono">error</span> → <span class="mono">surface_done</span> → <span class="mono">session_done</span>, with a terminal failure as <span class="mono">session_error</span>.</td></tr>
+    <tr><td>Vercel AI SDK</td><td>AI SDK UI Message Stream over SSE. Slot A on the primary text channel (<span class="mono">start</span> → <span class="mono">data-arena-meta</span> → <span class="mono">text-start/-delta/-end</span>); slot B via custom data parts (<span class="mono">data-arena-b-delta</span> / <span class="mono">-b-done</span>); slot errors via <span class="mono">data-arena-error</span>, a dead round via the SDK's own <span class="mono">error</span> part; ends <span class="mono">finish</span> + <span class="mono">data: [DONE]</span>.</td></tr>
+    <tr><td>OpenAI SSE</td><td><span class="mono">chat.completion.chunk</span> frames. <strong>Every</strong> frame lists one choice per active slot in slot order, so <span class="mono">choices[0]</span> is the first active slot and <span class="mono">choices[1]</span> the second — real clients read <span class="mono">choices[0]</span> positionally instead of demultiplexing on <span class="mono">index</span>, and one-choice-per-frame framing spliced both models into one incoherent message. With both slots that is A then B; a <span class="mono">single</span> or <a href="#slot-join">joined</a> response has that slot as its only choice, still carrying its own <span class="mono">index</span> (<span class="mono">0</span> for A, <span class="mono">1</span> for B), so a positional reader gets that slot's text either way. A slot with nothing to say in a frame gets an empty <span class="mono">delta</span>; a finished slot keeps <span class="mono">finish_reason: "stop"</span> in later frames. The first chunk carries an optional <span class="mono">omni_arena</span> object (metadata, including <span class="mono">conversationId</span> / <span class="mono">turnIndex</span>), a dead slot adds <span class="mono">omni_arena_error</span>, a dead round is an <span class="mono">{ error }</span> frame; ends <span class="mono">data: [DONE]</span>.</td></tr>
   </table>
   <div class="callout">The <a href="sdk.html">@omni-arena/react</a> SDK and the demo app consume the default native SSE stream. See the <a href="integration.html">integration guide</a> for per-protocol wire examples, Model A/B carrying, voting, and the shipped example apps.</div>
-  <div class="callout"><strong>Vote token differs by protocol.</strong> Native SSE (<span class="mono">matchup_started</span>), Vercel AI SDK (<span class="mono">data-arena-meta</span>), and A2UI (id only) put the token on the wire; <strong>AG-UI and OpenAI SSE do not expose it</strong>, so voting over them needs the token from another channel. See the <a href="integration.html">integration guide</a>.</div>
+  <div class="callout"><strong>Every protocol carries the vote token</strong> when there is one, each in its own idiom, so no path needs a second channel: native SSE on <span class="mono">matchup_started</span>, Vercel AI SDK in <span class="mono">data-arena-meta</span>, A2UI on <span class="mono">surface_init</span>, AG-UI in a <span class="mono">CUSTOM</span> event named <span class="mono">arena_matchup</span>, OpenAI SSE in an optional <span class="mono">omni_arena</span> object on the first chunk. All five also carry <span class="mono">mode</span> and <span class="mono">votable</span>, and all five omit the token on a non-votable (<span class="mono">single</span>) round, so a client can hide the vote controls. See the <a href="integration.html">integration guide</a>.</div>
 
   <h2><span class="method">WS</span><span class="mono">/api/arena/control</span></h2>
   <p>The <strong>control plane</strong>: a bidirectional WebSocket that acts on an in-flight matchup out-of-band from the token stream. Messages are JSON in both directions.</p>
@@ -93,6 +156,7 @@
     <tr><td class="mono">steer</td><td><strong>Stubbed extension point.</strong> Schema-validated (<span class="mono">instruction</span> non-empty) and documented, but not yet wired into the core — always a negative ack so the wire contract and seam exist ahead of the implementation.</td></tr>
   </table>
   <div class="callout">Invalid JSON → <span class="mono">{ type: "error", message: "Invalid JSON control message" }</span>; an unknown/malformed message (including a non-UUID <span class="mono">matchupId</span>) → <span class="mono">{ type: "error", message: "Unknown or malformed control message" }</span>.</div>
+  <div class="callout"><a href="sdk.html">@omni-arena/react</a> wraps this as <span class="mono">stop()</span> on <span class="mono">useArenaChat</span>: it derives the <span class="mono">ws://</span>/<span class="mono">wss://</span> URL from the hook's <span class="mono">baseUrl</span>, opens the socket on first use, and closes it on the <span class="mono">stopped</span> reply or on unmount.</div>
 
   <h2><span class="method">POST</span><span class="mono">/api/arena/vote</span></h2>
   <p>Records one vote, then reveals model identities.</p>
@@ -104,22 +168,56 @@
     <span class="chip">left</span><span class="chip">right</span><span class="chip">both_good</span><span class="chip">both_bad</span><span class="chip">skip</span>
   </div>
   <table>
+    <tr><th>Field</th><th>Rules</th></tr>
+    <tr><td class="mono">matchupId</td><td>Required UUID, from <span class="mono">matchup_started</span>.</td></tr>
+    <tr><td class="mono">matchupToken</td><td>Required. The token from the same event, verbatim.</td></tr>
+    <tr><td class="mono">vote</td><td>Required, one of the five values above.</td></tr>
+  </table>
+  <table>
     <tr><th>Status</th><th>Meaning</th></tr>
-    <tr><td class="mono">400</td><td>Invalid body</td></tr>
-    <tr><td class="mono">401</td><td>Bad signature, expired token, or claims mismatch</td></tr>
+    <tr><td class="mono">400</td><td>Invalid body (non-UUID <span class="mono">matchupId</span>, unknown <span class="mono">vote</span>, missing token)</td></tr>
+    <tr><td class="mono">401</td><td>Bad signature, <strong>expired</strong> token, or claims that don't match the stored matchup (its id or either slot's model)</td></tr>
     <tr><td class="mono">404</td><td>Unknown matchup</td></tr>
     <tr><td class="mono">409</td><td>Vote already recorded</td></tr>
   </table>
+  <div class="callout"><strong>The token is the only credential.</strong> A <span class="mono">payload.signature</span> pair (base64url JSON claims, HMAC-SHA-256 over them, <span class="mono">MATCHUP_TOKEN_SECRET</span>) whose SHA-256 hash is stored on the matchup row, so a token must be both well-signed and the one this matchup was served with. It expires <strong>15 minutes</strong> after issue — a later vote gets a <span class="mono">401</span>. The anonymous session credited with the vote comes from the token's claims, not the request body.</div>
+  <div class="callout">A <span class="mono">left</span>/<span class="mono">right</span> vote records the winning model; <span class="mono">both_good</span>, <span class="mono">both_bad</span>, and <span class="mono">skip</span> record no winner — which is why only a decisive vote lets a conversation continue.</div>
+
+  <h2><span class="method">GET</span><span class="mono">/models</span> · <span class="mono">/v1/models</span></h2>
+  <p>The enabled roster in OpenAI's model-list shape, for the OpenAI-compatible clients the <a href="integration.html">OpenAI SSE adapter</a> serves. Open WebUI probes this on connect and shows an empty model picker without it.</p>
+<pre><code>{ "object": "list",
+  "data": [ { "id": "8b0f…", "object": "model", "created": 1770000000,
+              "owned_by": "google", "name": "Gemini 3.5 Flash" } ] }</code></pre>
+  <table>
+    <tr><td><strong>Ids</strong></td><td><span class="mono">id</span> is OmniArena's model id — the same one the leaderboard and vote reveal use</td></tr>
+    <tr><td><strong>Extension</strong></td><td><span class="mono">name</span> is non-standard; Open WebUI renders it, other OpenAI clients ignore it</td></tr>
+    <tr><td class="mono">created</td><td>The server's boot time — the roster has no creation timestamp of its own and OpenAI's model object requires one</td></tr>
+    <tr><td class="mono">owned_by</td><td>The model's provider key (<span class="mono">google</span>, <span class="mono">openai</span>, <span class="mono">mock</span>, …)</td></tr>
+    <tr><td><strong>Both paths</strong></td><td>Served with and without the <span class="mono">/v1</span> prefix, because a deployment may configure the arena's base URL either way</td></tr>
+    <tr><td><strong>Blindness</strong></td><td>Unaffected: the leaderboard already lists the roster publicly. What stays hidden is which two models a given round used.</td></tr>
+    <tr><td><strong>No siblings</strong></td><td>Naming a model in a chat body does nothing — matchmaking picks both slots — so there is no <span class="mono">GET /models/{id}</span>. The chat-completions surface those clients need is <span class="mono">POST /chat/completions</span> · <span class="mono">POST /v1/chat/completions</span> above.</td></tr>
+  </table>
+  <div class="callout"><strong>Unmatched paths.</strong> An unmatched <span class="mono">GET</span> is answered with <span class="mono">index.html</span> only when a built web bundle is being served <em>and</em> the path is not API-ish (<span class="mono">/api/*</span>, <span class="mono">/health</span>, <span class="mono">/v1/*</span>, <span class="mono">/models</span>, <span class="mono">/chat/completions</span>, <span class="mono">/completions</span>, <span class="mono">/embeddings</span>). Those get a JSON <span class="mono">404</span> — a missing route served as HTML at <span class="mono">200</span> reads to a client as a mimetype bug rather than a 404.</div>
 
   <h2><span class="method">GET</span><span class="mono">/api/arena/leaderboard</span></h2>
-<pre><code>{ "models": [ { "id", "displayName", "wins": 12, "losses": 8, "ties": 3,
+  <p>Per-model records and ratings, plus the context needed to read those ratings honestly.</p>
+<pre><code>{ "components": { "count": 1, "groups": [ { "componentId": 0, "models": 4 } ] },
+  "styleControl": {
+    "effects": [
+      { "feature": "position",  "logOdds": 0.05, "points": 8.7,
+        "basis": "absolute",     "perUnit": null },
+      { "feature": "verbosity", "logOdds": 0.1,  "points": 17.4,
+        "basis": "per_std_dev",  "perUnit": { "points": 34.7, "unit": "100 output tokens" } }
+    ],
+    "votesObserved": 412, "computedAt": "2026-07-24T09:00:00.000Z" },
+  "models": [ { "id", "displayName", "wins": 12, "losses": 8, "ties": 3,
                 "skips": 1, "totalVotes": 24, "winRate": 0.5217,
                 "rating": 1184.3, "ratingStdError": 41.7,
                 "confidenceInterval": { "lower": 1102.6, "upper": 1266.0 },
                 "componentId": 0,
                 "styleControlledRating": 1147.9, "styleControlledStdError": 44.2,
                 "styleControlledConfidenceInterval": { "lower": 1061.3, "upper": 1234.5 } } ] }</code></pre>
-  <div class="callout"><span class="mono">winRate = wins / (wins + losses + ties)</span> — skips excluded; win-rate fields are always present. Ordered by <span class="mono">rating</span> (nulls last), then wins.</div>
+  <div class="callout"><span class="mono">winRate = wins / (wins + losses + ties)</span> — skips excluded, and <span class="mono">0</span> when that denominator is zero; the count fields are always present. Ordered by <span class="mono">rating</span> (nulls last), then <span class="mono">wins</span>, then <span class="mono">totalVotes</span>, then <span class="mono">displayName</span>, so the list is stable before the worker has ever run. Enabled models only; <span class="mono">totalVotes</span> counts every vote on the model's matchups, skips included. See <a href="rating-methodology.html#leaderboard-counts">where the counts come from</a>.</div>
   <table>
     <tr><th>Rating field</th><th>Meaning</th></tr>
     <tr><td class="mono">rating</td><td>Bradley-Terry rating, Elo-like scale <span class="mono">1000 + (400/ln10)·r</span></td></tr>
@@ -130,7 +228,54 @@
     <tr><td class="mono">styleControlledStdError</td><td>Standard error of the style-controlled rating (same scale)</td></tr>
     <tr><td class="mono">styleControlledConfidenceInterval</td><td>95% CI <span class="mono">{ lower, upper }</span> for the style-controlled rating</td></tr>
   </table>
-  <div class="callout">The <span class="mono">rating*</span>/<span class="mono">componentId</span> fields are <span class="mono">null</span> until the default worker pass runs; the <span class="mono">styleControlled*</span> fields are <span class="mono">null</span> until the heavier style pass runs. Clients treat them as optional and fall back to <span class="mono">winRate</span>. See the <a href="rating-methodology.html">rating methodology</a> for how these are computed.</div>
+  <div class="callout">The <span class="mono">rating*</span>/<span class="mono">componentId</span> fields are <span class="mono">null</span> until the default worker pass runs; the <span class="mono">styleControlled*</span> fields are <span class="mono">null</span> until the heavier style pass runs. They also stay <span class="mono">null</span> for a model the worker has no comparisons for: one only ever served on non-votable (<span class="mono">single</span>) rounds is never compared, so it remains unrated however much traffic it answers. Clients treat them as optional and fall back to <span class="mono">winRate</span>. See the <a href="rating-methodology.html">rating methodology</a> for how these are computed and what the engine cannot rate.</div>
+
+  <h3><span class="mono">components</span> — is the leaderboard comparable at all?</h3>
+  <p>Bradley-Terry ratings are identified only up to an additive constant <em>per connected component</em> of the comparison graph, so ratings from different components sit on unrelated scales and must never be compared.</p>
+  <table>
+    <tr><th>Field</th><th>Meaning</th></tr>
+    <tr><td class="mono">count</td><td>Components spanned by the rated roster, or <span class="mono">null</span> before the worker has run</td></tr>
+    <tr><td class="mono">groups</td><td><span class="mono">{ componentId, models }</span> per component, ascending by id; <span class="mono">models</span> counts rated models</td></tr>
+  </table>
+  <div class="callout"><span class="mono">count: 1</span> is the healthy case. Anything higher means the matchmaker has not yet played bridging games, and a client showing ratings should say so — the demo UI labels each row with its group and shows a banner.</div>
+
+  <h3><span class="mono">styleControl</span> — what superficial style is worth</h3>
+  <p>The worker fits voter biases as covariates <em>inside</em> the Bradley-Terry regression and stores them in <span class="mono">style_control_coefficients</span>. <span class="mono">effects</span> restates each one in leaderboard points, ordered as the worker fits them: <span class="mono">position</span>, <span class="mono">verbosity</span>, <span class="mono">formatting</span>, <span class="mono">latency_ttft</span>, <span class="mono">latency_duration</span>.</p>
+  <table>
+    <tr><th>Field</th><th>Meaning</th></tr>
+    <tr><td class="mono">logOdds</td><td>The fitted coefficient exactly as stored</td></tr>
+    <tr><td class="mono">points</td><td><span class="mono">logOdds</span> on the rating scale (<span class="mono">(400/ln10)·logOdds</span>) — read it per <span class="mono">basis</span></td></tr>
+    <tr><td class="mono">basis</td><td><span class="mono">absolute</span> for constant covariates (<span class="mono">position</span>, the outright left-slot advantage) or <span class="mono">per_std_dev</span> for the standardised per-vote deltas</td></tr>
+    <tr><td class="mono">perUnit</td><td><span class="mono">{ points, unit }</span> restating the effect per readable amount of the raw feature, e.g. <span class="mono">100 output tokens</span>; <span class="mono">null</span> when it cannot be derived</td></tr>
+    <tr><td class="mono">votesObserved</td><td>Votes whose deltas backed the <span class="mono">perUnit</span> conversion</td></tr>
+    <tr><td class="mono">computedAt</td><td>When the worker last wrote the coefficients; <span class="mono">null</span> when it never has</td></tr>
+  </table>
+  <div class="callout">A positive value favours the response with more of the trait: <span class="mono">+34.7 points per 100 output tokens</span> means 100 extra tokens buy as much apparent strength as a 34.7-point rating gap.</div>
+  <table>
+    <tr><th class="mono">feature</th><th class="mono">basis</th><th class="mono">perUnit.unit</th></tr>
+    <tr><td class="mono">position</td><td class="mono">absolute</td><td>— (<span class="mono">perUnit</span> is always <span class="mono">null</span>)</td></tr>
+    <tr><td class="mono">verbosity</td><td class="mono">per_std_dev</td><td class="mono">100 output tokens</td></tr>
+    <tr><td class="mono">formatting</td><td class="mono">per_std_dev</td><td class="mono">0.1 markdown density</td></tr>
+    <tr><td class="mono">latency_ttft</td><td class="mono">per_std_dev</td><td class="mono">100 ms of TTFT</td></tr>
+    <tr><td class="mono">latency_duration</td><td class="mono">per_std_dev</td><td class="mono">second of streaming</td></tr>
+  </table>
+  <div class="callout">A feature the worker adds later that the server has no unit for is still returned — <span class="mono">basis: "per_std_dev"</span>, <span class="mono">perUnit: null</span>, ordered last.</div>
+  <div class="callout"><strong><span class="mono">perUnit</span> is indicative.</strong> The worker z-scales its continuous covariates and does not persist the scale, so the stored coefficient is per standard deviation of the vote-level delta. The server recovers that standard deviation from today's non-skip votes — a superset of the worker's sample whenever its anomaly screen excluded sessions or a model was later disabled. So <span class="mono">logOdds</span>/<span class="mono">points</span> are exact while <span class="mono">perUnit</span> drifts as votes accumulate. It is <span class="mono">null</span> for <span class="mono">position</span> and whenever the deltas have no spread.</div>
+  <div class="callout">On a fresh install <span class="mono">effects</span> is <span class="mono">[]</span>, <span class="mono">votesObserved</span> is <span class="mono">0</span>, and <span class="mono">components.count</span> is <span class="mono">null</span>. Both keys are always present.</div>
+
+  <h2><span class="method">GET</span><span class="mono">/api/arena/analytics/*</span></h2>
+  <p>Read-only aggregates behind the demo's <span class="mono">/insights</span> dashboard. Model-level aggregates only — no per-user or per-session data — and no auth, matching the leaderboard. Implemented by <span class="mono">AnalyticsPort</span> on <span class="mono">PostgresRepository</span>, registered in <span class="mono">routes/analytics.ts</span>. The shipped server always wires that port; an embedding host that omits it gets a <span class="mono">404</span> on this whole prefix rather than a half-working dashboard.</p>
+  <table>
+    <tr><th>Endpoint</th><th>Returns</th><th>Params</th></tr>
+    <tr><td class="mono">/analytics/summary</td><td>Matchup/vote totals, decisive/tie/skip split, slot-A vs slot-B decided wins (global position bias), <span class="mono">enabledModels</span>, <span class="mono">pairsSampled</span> of <span class="mono">pairsPossible = n·(n−1)/2</span>, <span class="mono">ratingComponents</span> (<span class="mono">null</span> pre-worker)</td><td>—</td></tr>
+    <tr><td class="mono">/analytics/head-to-head</td><td><span class="mono">models</span> + one <span class="mono">{ modelAId, modelBId, aWins, bWins, ties, games }</span> per sampled canonical pair (<span class="mono">modelAId</span> = smaller id; unsampled pairs absent; skips excluded)</td><td>—</td></tr>
+    <tr><td class="mono">/analytics/model-metrics</td><td>Per enabled model: <span class="mono">responses</span>, p50/p90 <span class="mono">ttftMs</span> and <span class="mono">durationMs</span>, mean tokens and markdown density (error-free responses only, <span class="mono">null</span> until one exists), decisive record split by display slot (<span class="mono">slotAWins/slotAGames/slotBWins/slotBGames</span>)</td><td>—</td></tr>
+    <tr><td class="mono">/analytics/activity</td><td>UTC-bucketed vote counts by outcome (<span class="mono">left/right/bothGood/bothBad/skip/total</span>) plus <span class="mono">cumulativeGames</span> — running non-skip games per model per bucket</td><td><span class="mono">bucket=day|hour</span> (default <span class="mono">day</span>; else <span class="mono">400</span>)</td></tr>
+    <tr><td class="mono">/analytics/style-control</td><td>Raw <span class="mono">style_control_coefficients</span> rows (standardized-feature scale) + models rated by both worker passes with <span class="mono">rating</span> and <span class="mono">styleControlledRating</span></td><td>—</td></tr>
+    <tr><td class="mono">/analytics/rating-history</td><td>Append-only snapshots from <span class="mono">model_rating_history</span>, one per model per refit: <span class="mono">{ modelId, rating, ciLower, ciUpper, games, computedAt }</span>, ordered by <span class="mono">computedAt</span> then model id, plus <span class="mono">models</span> for labelling</td><td><span class="mono">since=&lt;ISO 8601&gt;</span>, optional, timezone required (<span class="mono">2026-07-01T00:00:00Z</span>); anything else <span class="mono">400</span></td></tr>
+  </table>
+  <div class="callout">For the reader-friendly points-per-unit view of the style coefficients, use the leaderboard's <span class="mono">styleControl</span> block; <span class="mono">/analytics/style-control</span> returns the coefficients as stored. Rating history is empty until the worker's first refit after migration <span class="mono">005_rating_history.sql</span>, and its <span class="mono">models</span> list is the <em>current enabled roster</em> — it can name models with no points yet and omit a disabled model older points still reference. See <a href="rating-methodology.html#rating-history">rating methodology → rating history</a>.</div>
+  <div class="callout"><span class="mono">summary.ratingComponents</span> counts distinct <span class="mono">component_id</span>s across <strong>every rated model</strong>, where the leaderboard's <span class="mono">components.count</span> covers the enabled roster only — the two can differ after a model is disabled.</div>
 
   <h2><span class="method">GET</span><span class="mono">/health</span></h2>
   <p>Returns <code>{ "status": "ok" }</code>.</p>

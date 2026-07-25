@@ -54,56 +54,60 @@
 <main>
   <div class="crumb"><a href="../">Docs</a> · <a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="integration.html">Integration</a> · <a href="rating-methodology.html">Rating methodology</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a> · <a href="sdk.html">SDK</a></div>
   <h1>Architecture</h1>
-  <p class="lede">Blind multi-turn comparisons streamed through a five-protocol egress-adapter layer (native SSE default), a WebSocket control plane, a published headless React SDK, signed votes, multiple providers, smart matchmaking, and an off-path Bradley-Terry rating worker with a style-controlled pass and a pre-fit anomaly screen.</p>
+  <p class="lede">Blind multi-turn comparisons streamed through a five-protocol egress-adapter layer (native SSE default), a WebSocket control plane, slot join for one-request-per-model clients, a published headless React SDK, signed votes, multiple providers, smart matchmaking, and an off-path Bradley-Terry rating worker with a style-controlled pass and a pre-fit anomaly screen.</p>
 
   <h2>System overview</h2>
   <table>
     <tr><th>Package</th><th>Path</th><th>Role</th></tr>
-    <tr><td class="mono">@omni-arena/server</td><td class="mono">server/</td><td>Fastify API: matchmaking, dual-model streaming through the protocol-adapter layer, WebSocket control plane, voting, leaderboard</td></tr>
-    <tr><td class="mono">@omni-arena/react</td><td class="mono">packages/react-sdk/</td><td>Published headless React SDK (<a href="sdk.html">useArenaChat / useArenaLeaderboard</a>); the demo consumes it</td></tr>
+    <tr><td class="mono">@omni-arena/server</td><td class="mono">server/</td><td>Fastify API: matchmaking, dual-model streaming through the protocol-adapter layer, WebSocket control plane, slot join, voting, leaderboard, analytics</td></tr>
+    <tr><td class="mono">@omni-arena/react</td><td class="mono">packages/react-sdk/</td><td>Published headless React SDK: <a href="sdk.html">hooks</a> over framework-free protocol/session/stream/vote modules; the demo consumes it</td></tr>
     <tr><td class="mono">@omni-arena/web</td><td class="mono">web/</td><td>Vite + React demo UI; the reference consumer of the SDK</td></tr>
     <tr><td class="mono">omniarena-rating</td><td class="mono">worker/</td><td>Python Bradley-Terry rating worker (NumPy/SciPy)</td></tr>
   </table>
+  <div class="callout"><span class="mono">e2e/</span>, <span class="mono">examples/*</span>, and <span class="mono">integrations/*</span> are consumer code <strong>outside</strong> the workspace — each with its own <span class="mono">package.json</span> and lockfile, installed on demand — so a root install never builds them and an upstream's dependency tree cannot reach the published packages. See <a href="#integrations">Integrations layer</a>.</div>
   <div class="flow">
     <div class="row">
       <div class="node"><div class="t">web (React demo)</div><div class="d">imports @omni-arena/react · Vite proxy → :3001</div></div>
-      <div class="node dim"><div class="t">@omni-arena/react (SDK)</div><div class="d">useArenaChat · useArenaLeaderboard · headless hooks</div></div>
+      <div class="node dim"><div class="t">@omni-arena/react (SDK)</div><div class="d">useArenaChat · useArenaVote · useArenaLeaderboard · useArena*Analytics · headless hooks</div></div>
     </div>
     <div class="arrow">▼ HTTP + native SSE (default) · WebSocket control</div>
     <div class="row">
-      <div class="node"><div class="t">Fastify routes</div><div class="d">/api/arena/chat · /control (WS) · /vote · /leaderboard · /health</div></div>
+      <div class="node"><div class="t">Fastify routes</div><div class="d">/api/arena/chat (+ /v1/chat/completions) · /models &amp; /v1/models · /control (WS) · /vote · /leaderboard · /analytics/* · /health</div></div>
       <div class="node"><div class="t">ArenaCore</div><div class="d">parallel fan-out, one event stream, fault isolation, AbortSignal</div></div>
-      <div class="node"><div class="t">EventAdapter layer</div><div class="d">selectAdapter → SSE · AG-UI · A2UI · Vercel AI · OpenAI SSE</div></div>
+      <div class="node"><div class="t">Adapter layer</div><div class="d">selectProtocol → SSE · AG-UI · A2UI · Vercel AI · OpenAI SSE (egress + ingress)</div></div>
+      <div class="node"><div class="t">JoinBroker</div><div class="d">pairs two sibling requests into one matchup (opt-in joinKey)</div></div>
       <div class="node"><div class="t">MatchupRegistry</div><div class="d">AbortController per matchup (control plane)</div></div>
       <div class="node"><div class="t">SmartMatchmaker</div><div class="d">under-sampled / high-variance pairs (RandomMatchmaker fallback)</div></div>
       <div class="node"><div class="t">MatchupTokenService</div><div class="d">HMAC token, 15 min TTL, hash stored</div></div>
     </div>
     <div class="arrow">▼</div>
     <div class="row">
-      <div class="node dim"><div class="t">PostgreSQL</div><div class="d">conversations · turns · matchups · responses · preferences · model_ratings · model_style_ratings</div></div>
-      <div class="node dim"><div class="t">Model endpoints</div><div class="d">Google · OpenAI · Ollama · vLLM · host proxy</div></div>
+      <div class="node dim"><div class="t">PostgreSQL</div><div class="d">conversations · turns · matchups · responses · preferences · model_ratings · model_style_ratings · model_rating_history</div></div>
+      <div class="node dim"><div class="t">Model endpoints</div><div class="d">Google · OpenAI · Ollama · vLLM · host proxy · mock</div></div>
     </div>
-    <div class="arrow">▲ writes model_ratings + model_style_ratings (off the hot path)</div>
+    <div class="arrow">▲ writes model_ratings (+ append-only model_rating_history) + model_style_ratings (off the hot path)</div>
     <div class="row">
       <div class="node"><div class="t">worker (Python)</div><div class="d">anomaly screen · Bradley-Terry + Rao-Kupper ties · Fisher-info CIs · connectivity · style-controlled pass · periodic refit</div></div>
     </div>
   </div>
 
   <h2>Distribution topology (single container)</h2>
-  <div class="callout">Self-hosted as a <strong>single container per deployment</strong>: one Fastify process serves the API <em>and</em> the built web UI on one port (<span class="mono">PORT</span>, default 3001), same-origin. Static serving (via <span class="mono">@fastify/static</span>) activates only when <span class="mono">web/dist</span> exists (production/Docker), with an SPA fallback to <span class="mono">index.html</span> for non-<span class="mono">/api</span>/<span class="mono">/health</span> GET routes (<span class="mono">WEB_DIST_DIR</span> overrides the path). In npm dev the bundle is absent, so Vite serves <span class="mono">:5173</span> and the API stays on <span class="mono">:3001</span>. <span class="mono">docker compose up</span> brings up Postgres + rating worker + app (entrypoint: migrate → seed → start). See <a href="setup.html">Setup</a>.</div>
+  <div class="callout">Self-hosted as a <strong>single container per deployment</strong>: one Fastify process serves the API <em>and</em> the built web UI on one port (<span class="mono">PORT</span>, default 3001), same-origin. Static serving (via <span class="mono">@fastify/static</span>) activates only when <span class="mono">web/dist</span> exists (production/Docker), with an SPA fallback to <span class="mono">index.html</span> for any GET route outside the API prefixes <span class="mono">/api</span>, <span class="mono">/health</span>, <span class="mono">/v1</span>, <span class="mono">/models</span>, <span class="mono">/chat/completions</span>, <span class="mono">/completions</span>, <span class="mono">/embeddings</span> (<span class="mono">WEB_DIST_DIR</span> overrides the path). That exclusion list matters because the OpenAI-compatible surface lives at top-level paths: otherwise an unmatched <span class="mono">GET /v1/models</span> would answer HTML at 200 and an OpenAI client would report a mimetype error instead of a missing route. In npm dev the bundle is absent, so Vite serves <span class="mono">:5173</span> and the API stays on <span class="mono">:3001</span>. <span class="mono">docker compose up</span> brings up Postgres + rating worker + app (entrypoint: migrate → seed → start). See <a href="setup.html">Setup</a>.</div>
 
   <h2>Ports (hexagonal boundaries)</h2>
   <table>
     <tr><th>Port</th><th>Implementation</th><th>Future replacement</th></tr>
-    <tr><td class="mono">ModelProviderPort</td><td>Google, OpenAI-compatible, Ollama, host proxy</td><td>additional providers</td></tr>
+    <tr><td class="mono">ModelProviderPort</td><td>Google, OpenAI-compatible, Ollama, host proxy, mock</td><td>additional providers</td></tr>
     <tr><td class="mono">ProviderResolverPort</td><td>ProviderRegistry</td><td>unchanged</td></tr>
     <tr><td class="mono">MatchmakingPort</td><td>SmartMatchmaker (default) / RandomMatchmaker (fallback)</td><td>King-of-the-Hill / bandit variants</td></tr>
     <tr><td class="mono">MatchmakingStatsPort</td><td>PostgresRepository (pair counts + CI widths)</td><td>unchanged</td></tr>
     <tr><td class="mono">PreferenceRepositoryPort</td><td>PostgresRepository</td><td>unchanged</td></tr>
-    <tr><td class="mono">LeaderboardPort</td><td>win-rate SQL + model_ratings + model_style_ratings LEFT JOINs</td><td>more surfaced rating variants</td></tr>
-    <tr><td class="mono">EventAdapter (egress)</td><td>native SSE (default) + AG-UI · A2UI · Vercel AI SDK · OpenAI SSE, via selectAdapter</td><td>more wire protocols</td></tr>
+    <tr><td class="mono">LeaderboardPort</td><td>win-rate SQL + model_ratings + model_style_ratings LEFT JOINs, plus <span class="mono">getRatingContext()</span> (component connectivity + fitted style coefficients)</td><td>more surfaced rating variants</td></tr>
+    <tr><td class="mono">AnalyticsPort</td><td>summary · head-to-head · model-metrics · activity · style-control · rating-history aggregations (percentiles/bucketing in TS for pg-mem testability)</td><td>prompt-category scoping</td></tr>
+    <tr><td class="mono">EventAdapter (egress)</td><td>native SSE (default) + AG-UI · A2UI · Vercel AI SDK · OpenAI SSE, via selectProtocol</td><td>more wire protocols</td></tr>
+    <tr><td class="mono">RequestAdapter (ingress)</td><td>AG-UI, OpenAI, and Vercel AI SDK request envelopes; native SSE and A2UI have none and accept only OmniArena's own body</td><td>more envelopes</td></tr>
   </table>
-  <div class="callout">Core ports are defined in <span class="mono">server/src/core/ports.ts</span>; the egress <span class="mono">EventAdapter</span> port in <span class="mono">server/src/adapters/event-adapter.ts</span>. Tests inject in-memory implementations behind the same interfaces.</div>
+  <div class="callout">Core ports are defined in <span class="mono">server/src/core/ports.ts</span>; the egress <span class="mono">EventAdapter</span> port in <span class="mono">server/src/adapters/event-adapter.ts</span> and the ingress <span class="mono">RequestAdapter</span> in <span class="mono">request-adapter.ts</span>. Tests inject in-memory implementations behind the same interfaces.</div>
 
   <h2>Stream orchestration</h2>
   <p><span class="mono">ArenaCore.stream()</span> merges two concurrent provider streams into one async event queue. If one slot errors, the other keeps streaming.</p>
@@ -119,9 +123,9 @@
   <p>One internal event stream (zod <span class="mono">publicArenaEventSchema</span> in <span class="mono">core/events.ts</span>) is fanned out to <strong>five wire protocols</strong> through a small egress port, so the chat route knows no framing details.</p>
   <div class="flow">
     <div class="row">
-      <div class="node"><div class="t">PublicArenaEvent stream</div><div class="d">matchup_started · token · slot_error · slot_done · matchup_done (schema-validated)</div></div>
+      <div class="node"><div class="t">PublicArenaEvent stream</div><div class="d">matchup_started · token · slot_error · slot_done · matchup_done · run_error (schema-validated)</div></div>
     </div>
-    <div class="arrow">▼ selectAdapter(?protocol → Accept → default)</div>
+    <div class="arrow">▼ selectProtocol(?protocol → Accept → default)</div>
     <div class="row">
       <div class="node dim"><div class="t">native SSE</div><div class="d">default · byte-for-byte unchanged</div></div>
       <div class="node dim"><div class="t">AG-UI</div><div class="d">typed run/text events over SSE</div></div>
@@ -135,8 +139,12 @@
     <tr><td class="mono">headers</td><td>Response headers the protocol needs before the first chunk</td></tr>
     <tr><td class="mono">serialize(event)</td><td>Wire-ready bytes for one schema-validated event</td></tr>
     <tr><td class="mono">finalize()</td><td>Trailing bytes before close (e.g. a <span class="mono">[DONE]</span> sentinel)</td></tr>
+    <tr><td class="mono">inBandErrors?</td><td>Set for a protocol whose clients settle a run on a terminal error <em>event</em> and read a non-2xx as a dead transport (AG-UI): the route then delivers a pre-stream failure as a <span class="mono">run_error</span> at 200 rather than an HTTP status</td></tr>
   </table>
   <div class="callout">Unknown <span class="mono">?protocol=</span> values fall back to native SSE, so the demo, the SDK, and existing clients are unaffected. Internal event <strong>semantics are identical across protocols</strong>; only the framing differs. See <a href="api.html">API → Protocol selection</a> for aliases, media types, and framing.</div>
+  <div class="callout"><strong>Ingress too, for three protocols.</strong> A second port, <span class="mono">RequestAdapter</span> (<span class="mono">request-adapter.ts</span>), is implemented by the protocols with a canonical client request envelope — AG-UI's <span class="mono">RunAgentInput</span>, OpenAI's <span class="mono">/chat/completions</span> body, the AI SDK's <span class="mono">useChat</span> body. Two members: <span class="mono">claims(body)</span> (is this the protocol's envelope rather than OmniArena's?) and <span class="mono">parse(body)</span>, which translates it into the one internal <span class="mono">ArenaChatRequest</span> the route runs on. Detection is structural — a <span class="mono">messages</span> array and no <span class="mono">prompt</span> — so OmniArena's own body is unchanged everywhere, and stock clients of those three need no transport of their own. <span class="mono">selectProtocol()</span> resolves both halves from one decision. See <a href="integration.html#request-bodies">Integration → request bodies</a>.</div>
+  <div class="callout"><strong>Slot failures on text-only protocols.</strong> AG-UI and OpenAI have no per-message error taxonomy, only assistant text, so a <span class="mono">slot_error</span> is carried twice there: structurally (AG-UI's <span class="mono">CUSTOM slot_error</span>, the OpenAI adapter's <span class="mono">omni_arena_error</span> extension) <em>and</em> as text prefixed with the shared <span class="mono">[omni-arena:slot-error]</span> marker (<span class="mono">adapters/slot-error.ts</span>), so a client that only renders content shows something instead of a permanently blank column — and the marker is what keeps that text distinguishable from the model having said those words.</div>
+  <div class="callout"><strong>Roster discovery is part of the surface.</strong> <span class="mono">GET /models</span> and <span class="mono">GET /v1/models</span> (<span class="mono">routes/models.ts</span>) return the enabled roster in OpenAI's <span class="mono">{object:"list", data}</span> shape — both paths, since a deployment may be configured with or without the <span class="mono">/v1</span> prefix. An OpenAI client's <em>first</em> call is the model list (Open WebUI treats it as the connection check and builds its picker from it), so without it the OpenAI adapter is undiscoverable however well-formed its stream is. The roster is not secret; what stays blind is which two models a matchup drew.</div>
 
   <h2>WebSocket control plane</h2>
   <p><span class="mono">GET /api/arena/control</span> (registered via <span class="mono">@fastify/websocket</span> in <span class="mono">app.ts</span>) acts on an in-flight matchup out-of-band from the token stream.</p>
@@ -151,6 +159,38 @@
     <tr><td class="mono">stop</td><td>Works: aborts the matchup's stream via its AbortController; <span class="mono">ok:false</span> for an unknown/finished matchup.</td></tr>
     <tr><td class="mono">steer</td><td>Schema-validated, documented <strong>stub</strong>: returns a negative ack so the seam exists; not yet wired into the core.</td></tr>
   </table>
+
+  <h2 id="slot-join">Slot join: one matchup across two requests</h2>
+  <p>The default shape puts both slots on one connection. Real compare-view chat UIs don't: they fan a multi-model turn out into <strong>one request per model</strong> sharing a conversation id (Open WebUI v0.10 is the measured case). Each such request has exactly one answer channel, so interleaving both slots on it either garbles the two answers together or yields two unrelated matchups and two half-votes. A client opts in with <span class="mono">joinKey</span>; two requests resolving to the same scope inside a window become <strong>one</strong> matchup, one <span class="mono">matchups</span> row, one vote.</p>
+  <div class="flow">
+    <div class="row">
+      <div class="node"><div class="t">request 1 → leader (slot A)</div><div class="d">reads conversation · matchmaker · token · inserts the matchup · owns the pump and <em>all</em> persistence</div></div>
+      <div class="node dim"><div class="t">JoinBroker.claim(scope)</div><div class="d">synchronous role assignment — no await between deriving the key and recording the claim, so two simultaneous siblings can never both win</div></div>
+      <div class="node"><div class="t">request 2 → follower (slot B)</div><div class="d">awaits the handshake, then streams slot B only; repeats none of the leader's work</div></div>
+    </div>
+    <div class="arrow">▼ one ArenaCore generation → JoinedRound → one SlotChannel per slot</div>
+    <div class="row">
+      <div class="node dim"><div class="t">connection A</div><div class="d">matchup_started slots:["A"] → tokens → slot_done → matchup_done</div></div>
+      <div class="node dim"><div class="t">connection B</div><div class="d">matchup_started slots:["B"] → tokens → slot_done → matchup_done</div></div>
+    </div>
+  </div>
+  <table>
+    <tr><th>Piece</th><th>Role</th></tr>
+    <tr><td class="mono">JoinScope</td><td>What a join is <em>authorized</em> by: HMAC of <span class="mono">{sessionId, conversationId, prompt, joinKey}</span> under a per-process random secret. The <span class="mono">joinKey</span> alone is only a correlation id the client already has, so it is deliberately not the capability; the tuple is strictly stronger than the session id that already gates conversation access, and the key never leaves the process.</td></tr>
+    <tr><td class="mono">JoinedRound</td><td>The single shared generation, demultiplexed per slot. The leader keeps consuming <strong>even if its own client disconnects</strong>, so slot B still finishes and is recorded.</td></tr>
+    <tr><td class="mono">SlotChannel</td><td>Single-producer/single-consumer queue drained by one HTTP response. Aborting one connection ends only that connection; each side gets <span class="mono">matchup_done</span> as soon as <em>its</em> slot finishes. Backlog capped at <span class="mono">ARENA_JOIN_MAX_QUEUED_EVENTS</span> (default 4096), then the slot fails rather than growing without bound.</td></tr>
+    <tr><td class="mono">JoinHandshake</td><td>What the leader publishes to the follower: <span class="mono">matchupId</span>, <span class="mono">matchupToken</span>, <span class="mono">conversationId</span>, <span class="mono">turnIndex</span>.</td></tr>
+  </table>
+  <table>
+    <tr><th>Failure</th><th>Response</th></tr>
+    <tr><td><span class="mono">joinKey</span> without a <span class="mono">sessionId</span></td><td class="mono">400 join_requires_session</td></tr>
+    <tr><td>Both slots of the scope already claimed</td><td class="mono">409 join_slots_exhausted</td></tr>
+    <tr><td>Sibling arrives after the window closed</td><td class="mono">409 join_expired</td></tr>
+    <tr><td>More than <span class="mono">ARENA_JOIN_MAX_PENDING</span> unpaired scopes</td><td class="mono">503 join_unavailable</td></tr>
+    <tr><td>Leader never publishes (window + 30s)</td><td class="mono">504 join_leader_timeout</td></tr>
+    <tr><td>Pre-stream failure on the leader</td><td>The leader's own status/code, forwarded so both siblings report the same thing (<span class="mono">500 join_failed</span> when unclassified)</td></tr>
+  </table>
+  <div class="callout">A window that closes with <strong>no</strong> sibling is not an error: the round degrades to exactly the default shape — both slots on the leader's connection, votable, nothing wasted. The leader's control-plane <span class="mono">AbortController</span> cascades onto the shared generation, so one <span class="mono">stop</span> stops both slots. <span class="mono">ARENA_JOIN_WINDOW_MS=0</span> disables joining and a <span class="mono">joinKey</span> is then ignored — see <a href="setup.html">Setup → environment variables</a>.</div>
 
   <h2>Linear history</h2>
   <div class="flow">
@@ -178,19 +218,21 @@
     <tr><td>Unforgeable votes</td><td>HMAC-SHA256 signed token with matchup + slot claims, 15 min expiry</td></tr>
     <tr><td>Token never stored</td><td>Only its SHA-256 hash lands in the database</td></tr>
     <tr><td>One vote per matchup</td><td>Unique constraint on <span class="mono">preferences.matchup_id</span></td></tr>
+    <tr><td>Holds for <em>every</em> protocol</td><td><span class="mono">blindness.test.ts</span> generates its cases from the protocol registry and asserts no identity reaches the wire on a single connection <em>or</em> on either sibling of a <a href="#slot-join">joined</a> matchup — so a new adapter is covered without a new test</td></tr>
   </table>
 
   <h2>Rating worker</h2>
   <p>The <span class="mono">worker/</span> package (<span class="mono">omniarena_rating</span>) computes the style-agnostic default leaderboard rating as a separate Python process — never on the Fastify request path. It follows a strict <em>aggregate-then-compute</em> design.</p>
+  <div class="callout">Its only input is recorded <strong>comparisons</strong> (<span class="mono">preferences ⋈ matchups</span>). A non-votable <span class="mono">single</span> round persists neither, so it never reaches the worker and a deployment mostly serving such rounds has nothing to rate. See <a href="rating-methodology.html">Rating methodology → what the engine cannot rate</a>.</div>
   <table>
     <tr><th>Step</th><th>Module</th><th>What it does</th></tr>
     <tr><td>Anomaly screen</td><td class="mono">anomaly.py</td><td>Runs <strong>before</strong> aggregation: p-value tests over anonymous sessions flag spam/malicious voters, excluded from the fit.</td></tr>
     <tr><td>Aggregate</td><td class="mono">aggregate.py</td><td>One SQL <span class="mono">GROUP BY</span> → canonical <span class="mono">(model_lo, model_hi, wins_lo, wins_hi, ties)</span> triples. <span class="mono">skip</span> + flagged sessions excluded. O(votes) → O(model pairs); raw rows stay in Postgres.</td></tr>
-    <tr><td>Fit</td><td class="mono">bradley_terry.py</td><td>Log-parameterized BT MLE via SciPy <strong>L-BFGS-B</strong> with analytic gradient. <strong>Rao-Kupper</strong> tie model (ordered logit, threshold ±η). Weak <strong>ridge prior</strong>, <strong>sum-to-zero anchoring</strong>, <strong>warm-start</strong>.</td></tr>
+    <tr><td>Fit</td><td class="mono">bradley_terry.py</td><td>Log-parameterized BT MLE via SciPy <strong>L-BFGS-B</strong> with analytic gradient. <strong>Rao-Kupper</strong> tie model (ordered logit, threshold ±η). Weak <strong>ridge prior</strong>, <strong>sum-to-zero anchoring</strong>, <strong>warm-start</strong> between loop refits — except every <span class="mono">FULL_REFIT_EVERY</span> refits (default 12), where the warm state is discarded for a <strong>from-scratch ground-truth fit</strong> that also cross-checks the warm path for drift.</td></tr>
     <tr><td>Intervals</td><td class="mono">confidence.py</td><td><strong>Inverse-Hessian</strong> (observed Fisher information) CIs projected through the anchoring contrast, validated by a <strong>multinomial bootstrap</strong> over the triples.</td></tr>
     <tr><td>Connectivity</td><td class="mono">connectivity.py</td><td>Union-find components; ratings only comparable within a component, isolated models get wide intervals.</td></tr>
     <tr><td>Style control</td><td class="mono">style.py</td><td>Heavier <strong>periodic pass</strong> on raw votes: joint style-controlled BT regression (see below).</td></tr>
-    <tr><td>Write back</td><td class="mono">writeback.py</td><td>Idempotent upsert into <span class="mono">model_ratings</span> (default) and <span class="mono">model_style_ratings</span> + <span class="mono">style_control_coefficients</span> (style pass).</td></tr>
+    <tr><td>Write back</td><td class="mono">writeback.py</td><td>Idempotent upsert into <span class="mono">model_ratings</span> (default) and <span class="mono">model_style_ratings</span> + <span class="mono">style_control_coefficients</span> (style pass). The default pass also appends a snapshot per model into <span class="mono">model_rating_history</span> in the same transaction — the trail behind <span class="mono">/analytics/rating-history</span>.</td></tr>
   </table>
   <div class="callout"><strong>Rating methodology:</strong> Rao-Kupper gives <span class="mono">P(a≻b)=σ(d−η)</span>, <span class="mono">P(b≻a)=σ(−d−η)</span>, <span class="mono">P(tie)=σ(d+η)−σ(d−η)</span> with <span class="mono">d = r_a − r_b</span>. The ridge-penalized log-likelihood is convex; the ridge (a Gaussian prior) identifies ratings, regularizes sparsely-compared models, and keeps the Hessian invertible for Fisher-information CIs. Reported on an Elo-like scale <span class="mono">1000 + (400/ln10)·r</span>, centered per component. Full story in the <a href="rating-methodology.html">rating methodology</a> doc.</div>
   <div>
@@ -201,7 +243,9 @@
     <span class="chip">Fisher-info CIs</span>
     <span class="chip">multinomial bootstrap</span>
     <span class="chip">warm-start refits</span>
+    <span class="chip">periodic cold refit</span>
   </div>
+  <div class="callout"><strong>Compose runs both passes.</strong> The <span class="mono">worker</span> service's image <span class="mono">CMD</span> is <span class="mono">--loop --style</span>, so a stock <span class="mono">docker compose up</span> keeps <span class="mono">model_style_ratings</span> and <span class="mono">style_control_coefficients</span> current alongside <span class="mono">model_ratings</span>, and the dashboard's style panels have data from the first refit onward. See <a href="setup.html#rating-worker">Setup → rating worker</a>.</div>
 
   <h2>Style-controlled ratings</h2>
   <p>Following LMSYS, <span class="mono">style.py</span> folds voter confounders into the <strong>same</strong> BT logistic regression as covariates: <span class="mono">d = (r_a − r_b) + β·x</span>, <span class="mono">P(A≻B) = σ(d − η)</span>. Strengths and style coefficients are fit jointly with a ridge on all of them; because the per-vote deltas <span class="mono">x</span> vary, it runs on raw <span class="mono">preferences ⋈ matchups ⋈ responses</span> rows — a heavier pass (<span class="mono">--style</span>) kept off the fast path. Exposed as <span class="mono">styleControlledRating</span>.</p>
@@ -227,13 +271,36 @@
   <p><span class="mono">SmartMatchmaker</span> replaces uniform pair selection behind the same <span class="mono">MatchmakingPort</span>. It samples a pair proportional to an <strong>information score</strong>: <span class="mono">coldness = 1/(1+games)</span> (favor under-evaluated pairs) plus normalized rating-interval width (favor high-variance matchups; unrated models count as maximally uncertain). A small floor keeps every pair reachable. Default; <span class="mono">MATCHMAKER=random</span> restores the uniform matchmaker.</p>
 
   <h2>Frontend</h2>
-  <p>The headless hooks now live in the published <span class="mono"><a href="sdk.html">@omni-arena/react</a></span> SDK (<span class="mono">packages/react-sdk/</span>), and the demo imports them — a single source of truth. <span class="mono">useArenaChat</span> POSTs the prompt, parses the native SSE stream into per-slot state, votes with the matchup token, and reveals identities only after a successful vote; <span class="mono">useArenaLeaderboard</span> fetches standings. Both accept an optional <span class="mono">baseUrl</span> (default <span class="mono">""</span> = same-origin/proxied).</p>
-  <div class="callout"><span class="mono">web/src/App.tsx</span> is the reference consumer: prompt box, two anonymous markdown panes, five vote buttons, reveal, and a leaderboard that shows the Elo-like rating ±CI half-width (falling back to win-rate %), plus <span class="mono">style &lt;rating&gt;</span> when a style-controlled rating exists.</div>
+  <p>The headless hooks live in the published <span class="mono"><a href="sdk.html">@omni-arena/react</a></span> SDK (<span class="mono">packages/react-sdk/</span>), and the demo imports them — a single source of truth. The package is deliberately layered: protocol, session, stream, and vote are <strong>framework-free modules</strong> and each hook is a thin React shell over them, so a non-React client can reuse the same wire logic instead of reimplementing it. Every hook accepts an optional <span class="mono">baseUrl</span> (default <span class="mono">""</span> = same-origin/proxied).</p>
+  <table>
+    <tr><th>Module</th><th>Exports</th><th>Responsibility</th></tr>
+    <tr><td class="mono">protocol.ts</td><td class="mono">parseArenaMatchup · parseArenaReveal · parseArenaSlotError · isArenaSlot/isArenaVote/isDecisiveVote</td><td>Narrow untrusted wire JSON into typed events — the one place the wire shape is known</td></tr>
+    <tr><td class="mono">session.ts</td><td class="mono">getSessionId</td><td>Anonymous session id in <span class="mono">localStorage</span>, degrading to in-memory when storage is unavailable</td></tr>
+    <tr><td class="mono">stream.ts</td><td class="mono">readArenaStream · createArenaSseDecoder</td><td>Incremental SSE decoding over a <span class="mono">ReadableStream</span>, independent of any hook</td></tr>
+    <tr><td class="mono">vote.ts</td><td class="mono">submitArenaVote</td><td>One <span class="mono">POST /api/arena/vote</span> with the matchup token</td></tr>
+    <tr><td class="mono">useArenaChat.ts</td><td class="mono">useArenaChat</td><td>POSTs the prompt, drives <span class="mono">readArenaStream</span> into per-slot state, votes, and reveals identities only after a successful vote</td></tr>
+    <tr><td class="mono">useArenaVote.ts</td><td class="mono">useArenaVote</td><td>Voting on its own, for a UI that renders the stream itself (the integrations do)</td></tr>
+    <tr><td class="mono">useArenaLeaderboard.ts</td><td class="mono">useArenaLeaderboard</td><td>Standings plus rating context</td></tr>
+    <tr><td class="mono">useArenaAnalytics.ts</td><td class="mono">useArenaSummary · useArenaHeadToHead · useArenaModelMetrics · useArenaActivity · useArenaStyleControl · useArenaRatingHistory</td><td>One hook per analytics endpoint, all with the same <span class="mono">{ data, refresh, error }</span> shape</td></tr>
+  </table>
+  <div class="callout">The demo (<span class="mono">web/</span>) is a two-page SPA under <span class="mono">react-router-dom</span> (the server's SPA fallback makes deep links work in production). <span class="mono">/</span> — <strong>ArenaPage</strong>: prompt box, two anonymous markdown panes, five vote buttons, reveal, and a leaderboard that shows the Elo-like rating ±CI half-width (falling back to win-rate %), plus <span class="mono">style &lt;rating&gt;</span> when a style-controlled rating exists. <span class="mono">/insights</span> — <strong>InsightsPage</strong>: a summary stat strip plus four chart tabs (<span class="mono">web/src/dashboard/</span>, primitives in <span class="mono">web/src/charts/</span>): <strong>Rankings</strong> (win-rate lollipop with 50% reference line, BT forest plot with CI whiskers, raw-vs-style-controlled dumbbell, rank-shift bump, vote-outcome stacked bars — all from the leaderboard payload), <strong>Head-to-head</strong> (pair win-rate matrix with games toggle and drill-down, tie-rate bars, connectivity callout by <span class="mono">componentId</span>), <strong>Style &amp; bias</strong> (style-coefficient panel, slot-A vs slot-B position dumbbell, verbosity/latency/markdown vs win-rate scatters, latency p50–p90 spread), and <strong>Activity</strong> (rating-over-time lines, stacked vote volume, cumulative games). Ranked row charts are hand-rolled CSS grid/SVG; time series and scatters use <span class="mono">recharts</span>. Each tab is a <strong>nested route</strong> (<span class="mono">/insights/rankings</span>, <span class="mono">/insights/head-to-head</span>, <span class="mono">/insights/style</span>, <span class="mono">/insights/activity</span>; the index redirects to <span class="mono">rankings</span>) so a tab is a shareable deep link rather than component state, and each is lazily imported on its own — the arena never pays for the charting bundle and opening one tab does not load the other three.</div>
+  <div class="callout"><strong>Empty dashboards teach.</strong> Every chart derives from recorded votes, so a fresh deployment has nothing to plot and a card can only report <em>what</em> is missing. <span class="mono">GettingStartedNotice</span> states the remedy once at page level — the <a href="setup.html">demo-data seeder</a> when there are no votes, the worker command when votes exist but no fit does — and disappears once both are present. The page fetches the summary aggregate once and passes it to both the stat strip and the notice.</div>
   <div class="callout"><strong>Reference integrations:</strong> two runnable example apps in <a href="../../examples/">examples/</a> — a Next.js + Vercel AI SDK app and an assistant-ui app — drive arena mode through the Vercel AI SDK adapter and are exercised by the deterministic <span class="mono">e2e/</span> suite (<span class="mono">npm run e2e</span>, Playwright + mock provider), which also asserts the raw <span class="mono">vercel-ai</span>/<span class="mono">ag-ui</span> wire streams. See the <a href="integration.html">integration guide</a>.</div>
+
+  <h2 id="integrations">Integrations layer</h2>
+  <p><a href="../../integrations/">integrations/</a> is the layer above the examples: instead of apps written for the arena, it wires the arena into <strong>real upstream chat UIs at pinned revisions</strong> — which is what turns "the protocol should work" into evidence that it does.</p>
+  <table>
+    <tr><th>Directory</th><th>Upstream</th><th>Protocol</th><th>Shape</th></tr>
+    <tr><td class="mono">vercel-ai-chatbot/</td><td class="mono">vercel/ai-chatbot</td><td class="mono">vercel-ai</td><td>Pinned clone + overlay</td></tr>
+    <tr><td class="mono">assistant-ui/</td><td>assistant-ui monorepo, <span class="mono">examples/with-ag-ui</span></td><td class="mono">ag-ui</td><td>Pinned clone + overlay</td></tr>
+    <tr><td class="mono">open-webui/</td><td>Open WebUI container image</td><td class="mono">openai</td><td>Published image + OpenAI-compatible bridge</td></tr>
+  </table>
+  <div class="callout"><strong>Pinned clone + overlay.</strong> <span class="mono">upstream.json</span> pins the exact commit, <span class="mono">.upstream/</span> is the gitignored clone, <span class="mono">overlay/</span> holds the arena sources copied in verbatim, and <span class="mono">scripts/overlay.mjs</span> applies <em>anchored</em> patches to upstream's own files — each anchor must match exactly once, so an upstream that moved a line fails setup loudly instead of yielding a half-integrated app. The arena-specific code stays reviewable in <span class="mono">overlay/</span> without diffing a vendored tree.</div>
+  <div class="callout"><strong>Open WebUI is the case that shaped the server.</strong> It sends one request per model for a compare turn — exactly what <a href="#slot-join">slot join</a> exists to serve — and reaches the arena through a small OpenAI-compatible bridge (<span class="mono">bridge/</span>) rather than an overlay, because the UI ships as a container image. All three run key-free against the mock provider; see <a href="setup.html#integrations">Setup</a>.</div>
 
   <details>
     <summary>Intentionally not built yet</summary>
-    <p><strong>Mid-stream steering wiring</strong> — the control plane's <span class="mono">steer</span> message is a schema-validated, documented stub returning a negative ack; the instruction is not yet threaded into <span class="mono">ArenaCore</span>. <strong>Multimodal input</strong> — deferred. OmniArena does not scrub or redact stored prompts/responses — content is persisted as received.</p>
+    <p><strong>Mid-stream steering execution</strong> — the control plane's <span class="mono">steer</span> message is a schema-validated, documented stub returning a negative ack; the instruction is not yet threaded into <span class="mono">ArenaCore</span> (<span class="mono">stop</span> is real). <strong><span class="mono">sampled</span> trigger</strong> — <span class="mono">ARENA_TRIGGER</span> accepts only <span class="mono">always</span> and <span class="mono">manual</span>, so <span class="mono">sampled</span> is rejected at boot rather than silently behaving like another mode; the seam exists (<span class="mono">resolveArenaPlan</span> already takes an injectable RNG, and the <span class="mono">shadow</span> plan variant is declared and unreachable) but nothing branches on it. <strong>Multimodal input</strong> — deferred. OmniArena does not scrub or redact stored prompts/responses — content is persisted as received.</p>
   </details>
 </main>
 </body>

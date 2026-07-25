@@ -6,8 +6,11 @@ package `omniarena_rating`) that runs **off the request hot path**: it screens
 anomalous sessions, aggregates votes in-database, fits a Bradley-Terry model with
 explicit tie handling, attaches confidence intervals validated by a bootstrap,
 splits the comparison graph into components, and upserts the results the
-leaderboard reads. This document explains each step and grounds every claim in
-the implementation.
+leaderboard reads — appending a [history snapshot](#rating-history) per refit so
+the ratings can also be charted over time. This document explains each step and
+grounds every claim in the implementation — including [what the engine cannot
+rate](#what-the-engine-cannot-rate), since everything below needs *pairwise*
+input.
 
 Related: [Architecture → Rating worker](architecture.md) · [API → leaderboard](api.md) · [Data model](data-model.md) · [Setup → Rating worker](setup.md) · [Integration](integration.md)
 
@@ -25,6 +28,59 @@ OmniArena parameterizes strengths on a **log scale**, `r_i = log θ_i`
 win probability is the logistic `P(a ≻ b) = σ(d)`. Working in log-space makes the
 log-likelihood **convex**, so the fit has a unique optimum reachable by a
 standard solver.
+
+## What the engine cannot rate
+
+Bradley-Terry is a model **of comparisons**. Every term in its likelihood is a
+contest between two models; there is no term for a verdict on one answer viewed
+alone. That is a real bound on what OmniArena can rate, and it lands precisely
+where the arena is most constrained — so it is stated here rather than left to be
+inferred.
+
+- **A `single` round produces nothing rateable.** Under
+  `ARENA_TRIGGER=manual`, a request that does not opt in is served by one model
+  (`ARENA_DEFAULT_MODEL`) and **persists nothing at all** — no `matchups` row, no
+  responses, no vote token (`server/src/routes/chat.ts`). Aggregation reads
+  `preferences ⋈ matchups`, so such a round is not *filtered out* of the fit the
+  way a `skip` vote or a flagged session is; it never reaches the database to be
+  filtered. See
+  [Integration → identifiers you cannot use are not sent](integration.md#identifiers-you-cannot-use-are-not-sent).
+- **One-sided feedback is not a comparison, and there is no ingestion path for
+  it.** A thumbs-up on a lone answer says nothing about a *pair*, and BT has
+  nowhere to put it. `POST /api/arena/vote` accordingly accepts only an
+  HMAC-signed matchup token naming two slots ([API → vote](api.md)); no
+  endpoint, column, or worker code path records a per-response rating.
+- **A deployment serving mostly `single` rounds should expect no ratings.** The
+  worker has nothing to fit, so `rating`, `ratingStdError`,
+  `confidenceInterval`, and `componentId` stay `null` and the leaderboard falls
+  back to win/loss/tie counts drawn from whatever matchup rounds did occur — of
+  which there may be none. A model only ever served in `single` mode never
+  enters the comparison graph and stays unrated indefinitely, however much
+  traffic it answers.
+
+The engine's rigor is real, but it is rigor *about pairwise data*: Rao-Kupper
+ties instead of a `y = 0.5` half-win hack, Fisher-information intervals, joint
+style control, and a pre-fit anomaly screen are all concrete improvements over a
+hand-rolled Elo update loop — **given comparisons to fit**. None of them
+substitutes for having comparisons. For a client that genuinely cannot present
+two answers, such as a strict OpenAI-compatible UI with one message channel,
+OmniArena today has a graceful *serving* story (`single`, `votable: false`) and
+no rating story; the comparison has to come from somewhere. That constraint is
+not hypothetical — Open WebUI, facing it, shipped its own single-blind
+thumbs-rated leaderboard with a hand-rolled Elo, as
+[`integrations/open-webui/`](../../integrations/open-webui/) documents.
+
+### Not built: regenerate-as-slot-B
+
+There is a candidate fix worth naming precisely because it is easy to assume it
+exists: turn two sequential single answers into one genuine pair — serve an
+answer, regenerate the same prompt with a second model, persist the two as a
+matchup, and collect a real pairwise vote from a client that can only show one
+answer at a time. **None of it is implemented.** There is no such mode, no
+schema for it, no endpoint, and no worker support; the mode enum admits only
+`matchup`, `single`, and a declared-but-unreachable `shadow`
+(`server/src/arena/mode.ts`). It is recorded here as an idea so it is not
+mistaken for a feature — do not plan an integration against it.
 
 ## The fit: log-parameterized MLE via L-BFGS-B
 
@@ -142,12 +198,34 @@ per-component, then the baseline `1000` is added.
 
 The worker runs either **one-shot** (`python -m omniarena_rating`) or as a
 **periodic loop** (`--loop`, every `REFIT_INTERVAL_SECONDS`, default 300). In
-loop mode each refit is **warm-started** from the previous solution's full
+loop mode most refits are **warm-started** from the previous solution's full
 optimiser vector (`[r_0…r_{n−1}, η]`), so an incremental refit converges in very
 few L-BFGS-B iterations. The warm state lives only in memory between refits (it
 is not persisted). Warm-starting is skipped when the model set changes (the
 vector shape no longer matches), which naturally falls back to a cold full refit.
 The Docker Compose `worker` service runs the loop against Postgres.
+
+An unbroken chain of warm starts would never independently confirm its own
+answer, so every `FULL_REFIT_EVERY` refits (default 12 — **hourly** at the
+default interval, and `0` disables it) the worker **discards the warm state and
+fits from scratch**. This is the ground-truth pass: it bounds how long an
+incremental chain can accumulate drift, and it is affordable precisely because
+the fit input is bounded by model pairs rather than vote volume (see
+[aggregate-then-compute](#aggregate-then-compute-why-it-scales)). The loop's
+first refit is already cold, so the forced passes land on refits 1, 13, 25, …
+Every refit logs `mode=full` or `mode=incremental`.
+
+The cold pass is also used as a **validation signal**. Because the ridge makes
+the objective strictly convex, the raw optimiser vector is the *unique* minimiser
+— a warm-started fit of the same aggregates must reach the same point. So the
+ground-truth pass re-runs the incremental path over those same aggregates (cheap:
+it starts at the previous solution) and warns when the two disagree by more than
+**half a standard error** on any model. Standard-error units matter here: L-BFGS-B
+stops on a *relative* function tolerance, so its parameter accuracy loosens as
+the log-likelihood grows with vote volume, and an absolute display-point
+threshold would not transfer between a hundred votes and a million. Holding the
+data fixed is what makes this a check on the solver rather than a measurement of
+the rating movement new votes would have caused anyway.
 
 ## Aggregate-then-compute (why it scales)
 
@@ -165,11 +243,17 @@ Before aggregation, `anomaly.py` screens anonymous voting sessions
 (Bonferroni-adjusted at `α/3`) excludes that session from **both** the default
 and style fits. It is on by default (`--no-anomaly-filter` disables it).
 
-| Test | Null hypothesis | Catches |
-|---|---|---|
-| Volume | Poisson upper-tail `P(X ≥ n)` vs mean votes/session | vote-stuffing |
-| Position bias | two-sided binomial on decisive left/right vs `p = 0.5` (slots are randomized) | always-left / always-right bots |
-| Speed | median inter-vote gap below a floor (default 1.5 s), when timestamps exist | automated clicking |
+| Test | Null hypothesis | Catches | Runs when |
+|---|---|---|---|
+| Volume | Poisson upper-tail `P(X ≥ n)` vs mean votes/session | vote-stuffing | ≥ 20 votes in the session |
+| Position bias | two-sided binomial on decisive left/right vs `p = 0.5` (slots are randomized) | always-left / always-right bots | ≥ 15 decisive votes |
+| Speed | median inter-vote gap below a floor (default 1.5 s) | automated clicking | ≥ 8 vote timestamps |
+
+The significance level is `α = 1e-3`, so each test rejects below `α/3 ≈ 3.3e-4`.
+The minimum-sample gates above are why a small session is never flagged: a
+handful of votes cannot be distinguished from a fast, one-sided human. Votes
+with no `anonymous_session_id` are always kept — they cannot be attributed to a
+voter, so there is nothing to exclude.
 
 ## Style-controlled ratings
 
@@ -226,8 +310,68 @@ counts. The rating fields (see [API → leaderboard](api.md)):
 | `styleControlledConfidenceInterval` | 95% CI for the style-controlled rating |
 
 The `rating*`/`componentId` fields are `null` until the default worker pass runs;
-the `styleControlled*` fields are `null` until the heavier style pass runs.
-Clients treat them as optional and fall back to `winRate`.
+the `styleControlled*` fields are `null` until the heavier style pass runs. They
+also stay `null` for a model with no comparisons to fit — see [what the engine
+cannot rate](#what-the-engine-cannot-rate). Clients treat them as optional and
+fall back to `winRate`.
+
+### Where the leaderboard's counts come from
+
+The win/loss/tie columns are **not** the worker's; they are aggregated by the
+server directly over `models ⋈ matchups ⋈ preferences` for every enabled model,
+so they exist from the first vote and never wait on a refit:
+
+| Field | Counted as |
+|---|---|
+| `wins` | votes whose `winner_model_id` is this model |
+| `losses` | `left`/`right` votes on a matchup this model was in where the winner is another model |
+| `ties` | `both_good` + `both_bad` votes on its matchups |
+| `skips` | `skip` votes on its matchups |
+| `totalVotes` | every vote on its matchups, skips included |
+| `winRate` | `wins / (wins + losses + ties)`, or `0` when that denominator is zero |
+
+The `games` figure the worker itself reports (persisted with each rating and
+exposed by the [rating history](#rating-history)) is a different number: it is
+summed from the *aggregated pair triples*, so it counts non-skip votes only, and
+both models of a pair are credited with the same total. A model whose only
+comparisons came from a session the anomaly screen excluded therefore has
+`totalVotes > 0` and `games = 0`.
+
+## Rating history
+
+`model_ratings` is an **upsert** keyed by model, so it only ever holds the
+latest fit — reading it tells you where a model stands, never how it got there.
+Every refit therefore also appends a snapshot row per model to
+`model_rating_history` (migration `005_rating_history.sql`), in the **same
+transaction** as the upsert, so the two can never disagree about a refit:
+
+| Column | Meaning |
+|---|---|
+| `model_id`, `computed_at` | Primary key. `computed_at` is `NOW()`, which is transaction-stable, so every row a refit writes shares one timestamp and one refit is one point on the x-axis |
+| `rating`, `rating_stderr`, `ci_lower`, `ci_upper` | Exactly the display-scale values written to `model_ratings` |
+| `component_id` | The component this fit put the model in; it can change between refits as bridging games arrive |
+| `games` | Non-skip comparisons behind this snapshot (see [where the leaderboard's counts come from](#where-the-leaderboards-counts-come-from)) |
+
+Consequences worth knowing before reading a chart:
+
+- **The series is per-refit, not per-vote.** At the default cadence that is one
+  point every `REFIT_INTERVAL_SECONDS`, and a refit that skipped (no enabled
+  models, or no comparisons yet) writes nothing at all.
+- **Both refit modes append.** A warm-started incremental refit and a cold
+  ground-truth pass produce indistinguishable rows, which is exactly what makes
+  the [warm-drift check](#warm-started-incremental-vs-periodic-full-refits) a
+  check on the solver rather than something a reader has to do by eye.
+- **Ratings move without any model changing.** They are anchored sum-to-zero
+  per component, so one model's improvement lowers every other rating in its
+  component, and a component split or merge re-anchors the whole group.
+- **The style pass has no history.** `model_style_ratings` and
+  `style_control_coefficients` are upserts with no append-only sibling, so
+  style-controlled ratings and style coefficients have a current value only.
+
+The table is exposed as `GET /api/arena/analytics/rating-history` (see
+[API → analytics](api.md)) and is what the rating-over-time chart reads. It is
+empty until the first refit after the migration; rows are never updated or
+deleted, and a deleted model's snapshots go with it (`ON DELETE CASCADE`).
 
 ## Verification
 
@@ -235,6 +379,8 @@ The worker suite (`worker/tests/`, pure-Python `pytest`, no database) checks the
 analytic gradient against finite differences, recovers known synthetic ratings,
 verifies tie modeling and anchoring, confirms the Fisher-information CIs agree
 with the multinomial bootstrap, checks connectivity splits a disconnected graph,
-verifies style control shrinks a pure verbosity advantage, and flags synthetic
-spam/bot sessions in the anomaly screen. See [Setup → Rating worker](setup.md) to
-run them.
+verifies style control shrinks a pure verbosity advantage, flags synthetic
+spam/bot sessions in the anomaly screen, asserts the loop alternates cold and
+warm refits on the configured cadence, and asserts the history snapshot is
+appended from the same rows and inside the same transaction as the
+`model_ratings` upsert. See [Setup → Rating worker](setup.md) to run them.

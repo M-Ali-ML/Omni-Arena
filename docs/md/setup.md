@@ -30,10 +30,14 @@ The multi-stage `Dockerfile` builds all workspaces (`server` → `react-sdk` →
 compiled `dist` (tsc does not copy them), prunes dev dependencies, and copies
 the result into a slim runtime image. At runtime the server serves `web/dist`
 via `@fastify/static` **only when the bundle is present** (production/Docker),
-with an SPA fallback that returns `index.html` for non-`/api`, non-`/health` GET
-routes. In the npm dev path the bundle is absent, so Vite serves the UI on
-`:5173` and static serving stays off — the API is unaffected either way. Override
-the bundle location with `WEB_DIST_DIR` for non-standard layouts.
+with an SPA fallback that returns `index.html` for any GET route outside the API
+prefixes `/api`, `/health`, `/v1`, `/models`, `/chat/completions`, `/completions`,
+and `/embeddings` — an unmatched path under one of those gets a JSON 404 instead,
+because an OpenAI client that receives `text/html` at 200 for `GET /v1/models`
+reports a mimetype error with nothing pointing at the missing route. In the npm
+dev path the bundle is absent, so Vite serves the UI on `:5173` and static
+serving stays off — the API is unaffected either way. Override the bundle
+location with `WEB_DIST_DIR` for non-standard layouts.
 
 ## Quick start (npm, for development)
 
@@ -60,15 +64,21 @@ compiles the SDK **before** the demo that depends on it:
 | Workspace | Path | Notes |
 |---|---|---|
 | `@omni-arena/server` | `server/` | Fastify API. New dependency `@fastify/websocket` powers the `/api/arena/control` WebSocket control plane. |
-| `@omni-arena/react` | `packages/react-sdk/` | Published headless React SDK (`useArenaChat`, `useArenaLeaderboard`). The demo consumes it. See [SDK](sdk.md). |
+| `@omni-arena/react` | `packages/react-sdk/` | Published headless React SDK (chat, vote, leaderboard, and analytics hooks plus their framework-free helpers). The demo consumes it. See [SDK](sdk.md). |
 | `@omni-arena/web` | `web/` | Vite + React demo; imports `@omni-arena/react` (workspace `*`). |
 | `omniarena-rating` | `worker/` | Python rating worker (not an npm workspace). |
+
+`e2e/`, `examples/*`, and `integrations/*` are **not** workspaces either: each has
+its own `package.json` and lockfile and is installed on demand by its own script,
+so a plain `npm install` at the repo root stays fast and none of them can break
+the published build. See [Third-party UI integrations](#third-party-ui-integrations).
 
 ## Environment variables
 
 Loaded from the repo-root `.env` regardless of workspace working directory
 (`server/src/env.ts`); Docker Compose loads the same `.env` into the containers.
-`.env.example` documents every variable below.
+`.env.example` documents every variable the server and the rating worker read;
+this table expands on them with bounds and semantics.
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
@@ -82,6 +92,7 @@ Loaded from the repo-root `.env` regardless of workspace working directory
 | `HOST_PROXY_TOKEN` | no | — | Optional bearer token used only to authenticate to the host proxy |
 | `HARNESS_VERSION` | no | `v1` | Version label persisted on every matchup |
 | `REFIT_INTERVAL_SECONDS` | no | `300` | Rating worker loop interval between refits |
+| `FULL_REFIT_EVERY` | no | `12` | Refits between from-scratch (cold) fits in loop mode; `0` warm-starts indefinitely |
 | `RATING_RIDGE` | no | `0.01` | Rating worker ridge-prior strength (log-odds scale) |
 | `STYLE_RIDGE` | no | `0.05` | Ridge-prior strength for the style-controlled fit |
 | `LOG_LEVEL` | no | `INFO` | Rating worker log level (`DEBUG`/`INFO`/`WARNING`/`ERROR`) |
@@ -93,6 +104,11 @@ Loaded from the repo-root `.env` regardless of workspace working directory
 | `WEB_ORIGIN` | no | `http://localhost:5173` | Allowed CORS origin (only relevant when the UI is served from a different origin; the single container serves both same-origin) |
 | `WEB_DIST_DIR` | no | `../../web/dist` (relative to the compiled server) | Override the built web bundle directory; correct by default for the repo and the Docker image |
 | `ARENA_MOCK_PROVIDER` | no | off | Set to `1`/`true` to register the deterministic `mock` provider for demos, examples, and CI/e2e (no LLM key needed). See [Mock provider](#mock-provider). |
+| `ARENA_TRIGGER` | no | `always` | When the arena engages: `always` (blind A/B matchup on every request) or `manual` (one model unless the request opts in). Any other value fails at boot. See [Trigger modes](#trigger-modes). |
+| `ARENA_DEFAULT_MODEL` | when `ARENA_TRIGGER` is not `always` | — | **UUID** of the enabled `models` row served on non-arena (`single`) rounds — not a display name. See [Trigger modes](#trigger-modes). |
+| `ARENA_JOIN_WINDOW_MS` | no | `2000` | Rendezvous window for [slot join](architecture.md#slot-join-one-matchup-across-two-requests): how long the first of two sibling requests waits for its pair. `0` disables joining entirely (a `joinKey` is then ignored); max `60000`. |
+| `ARENA_JOIN_MAX_PENDING` | no | `256` | Cap on unpaired join scopes held in memory; over the cap a join is refused with `join_unavailable` rather than queued. Min `1`, max `100000`. |
+| `ARENA_JOIN_MAX_QUEUED_EVENTS` | no | `4096` | Per-connection event backlog on a joined matchup: how many events may queue for one slot whose client reads slower than the model produces. Over the cap that one connection fails instead of growing without bound. Min `16`, max `1000000`. |
 
 The default seed lineup contains Google models, so the unmodified seed still
 needs `GOOGLE_API_KEY`. To use OpenAI, Ollama, vLLM, or host-proxy models, set
@@ -104,19 +120,240 @@ completions at `<HOST_PROXY_URL>/chat/completions`. OmniArena sends
 `model`, the full linear `messages` array, `stream: true`, and the
 `x-omni-arena-proxy: 1` header. The host keeps the upstream provider key.
 
+All `ARENA_JOIN_*` values are parsed with coercion and range-checked at boot
+(`server/src/arena/join.ts`), so a non-numeric or out-of-range value throws
+before the server listens. The Docker Compose `app` service loads the repo-root
+`.env` wholesale, so any of these can be set there; the `worker` service instead
+forwards each variable the rating worker reads explicitly (see
+[Rating worker](#rating-worker)).
+
+## Trigger modes
+
+By default **every** request to `POST /api/arena/chat` is a blind A/B matchup.
+`ARENA_TRIGGER` relaxes that, so an adopter can put the arena behind an explicit
+per-request opt-in instead of making it the only way to chat:
+
+| `ARENA_TRIGGER` | What a request gets | Votable |
+|---|---|---|
+| `always` (default) | a blind matchup of two models chosen by the `MATCHMAKER` strategy — the historical behaviour | yes |
+| `manual` | a **`single`** round served by `ARENA_DEFAULT_MODEL`, unless the request opts in; an opted-in request gets the usual matchup | only the opted-in rounds |
+
+The value is a closed enum (`server/src/arena/mode.ts`), so a typo — or
+`sampled`, which is [not built](#not-built-yet) — throws before the server
+listens rather than silently falling back to `always`.
+
+### How a request opts in
+
+Under `manual`, either signal turns that one request into a matchup:
+
+- request body `arena: true`
+- request header `x-arena: on` — compared case-insensitively, and only `on`
+  counts; `1`, `true`, and `yes` do not
+
+The header works on every protocol. The body field rides in each protocol's own
+extension slot (AG-UI `forwardedProps`, OpenAI `omni_arena`, top level for
+Vercel AI SDK and native SSE) — see [Integration → which protocols accept their
+own request body](integration.md#which-protocols-accept-their-own-request-body).
+The two signals are OR-ed, so `x-arena: on` opts in even when the body says
+`arena: false`. Under `always` both signals are ignored: every request is a
+matchup regardless.
+
+### `ARENA_DEFAULT_MODEL` takes a model UUID
+
+The value is compared against `models.id` — the **UUID primary key** of a row in
+the `models` table. It is not a display name and not a `provider_model_id`, so
+`gemini-3-flash` will not work. Because the seed mints ids with `randomUUID()`,
+the value differs per deployment and has to be looked up after seeding:
+
+```bash
+curl -s http://localhost:3001/models | jq -r '.data[] | [.id, .name] | @tsv'
+```
+
+`GET /models` (and `/v1/models`) is the OpenAI-compatible roster route; the same
+ids appear as `models[].id` on `GET /api/arena/leaderboard`. Needing to paste a
+generated UUID into config is a real usability wart — there is no lookup by
+friendly name today.
+
+Validation happens in two places, at two different times:
+
+| When | Check | On failure |
+|---|---|---|
+| Boot (`server/src/server.ts`) | a non-`always` trigger has a non-blank `ARENA_DEFAULT_MODEL` (a whitespace-only value counts as unset) | the process throws `ARENA_DEFAULT_MODEL is required when ARENA_TRIGGER=manual` and never listens |
+| Each `single` request | the id is in the **enabled** roster (`listEnabledModels()`) | `default_model_missing`: `ARENA_DEFAULT_MODEL '<value>' is not in the enabled roster` |
+
+Boot does **not** check that the value is a well-formed UUID or that such a
+model exists — the roster is a database read, and the enabled set can change
+under a running server, so membership is re-checked per request. The practical
+consequence: a mistyped or since-disabled id boots cleanly and fails only on the
+first non-arena request, as HTTP 500 on protocols that carry HTTP errors and as
+a terminal in-band `run_error` on protocols whose clients only understand
+in-band errors. Matchup rounds keep working throughout, so a smoke test that
+only exercises opted-in traffic will not catch it.
+
+### What a `single` round is
+
+One slot, one model, and nothing recorded:
+
+- `mode: "single"`, `slots: ["A"]`, and **`votable: false`** on the round's
+  opening metadata, so a client can hide its vote controls.
+- **No `matchupToken`, `conversationId`, or `turnIndex`.** These are omitted
+  rather than emitted empty, because none of them exists for a round that
+  persists nothing — so multi-turn continuation is not available on a `single`
+  round either. See [Integration → identifiers you cannot use are not
+  sent](integration.md#identifiers-you-cannot-use-are-not-sent).
+- **No rating signal at all**, not a weaker one. See [Rating methodology → what
+  the engine cannot rate](rating-methodology.md#what-the-engine-cannot-rate).
+
+### Worked example: `manual` end to end
+
+An app that normally streams one model, with the arena available on demand.
+
+**Step 1 — find the UUID of the model to serve on ordinary turns**, against a
+running, seeded server:
+
+```bash
+curl -s http://localhost:3001/models | jq -r '.data[] | [.id, .name] | @tsv'
+# 3f8c9a1e-…  Gemini 3 Flash
+# b21d47c0-…  Gemini 3.1 Flash-Lite
+```
+
+**Step 2 — configure the deployment** in the repo-root `.env` (Docker Compose
+loads the same file), then restart the app:
+
+```bash
+ARENA_TRIGGER=manual
+ARENA_DEFAULT_MODEL=3f8c9a1e-…   # UUID from step 1; must be enabled
+```
+
+**Step 3 — an ordinary request now gets a single, non-votable round:**
+
+```bash
+curl -N http://localhost:3001/api/arena/chat \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"Explain HMAC in two sentences."}'
+# matchup_started: {"mode":"single","votable":false,"slots":["A"], …}
+#   — no matchupToken, no conversationId, no turnIndex
+```
+
+**Step 4 — an opted-in request gets the usual blind matchup**, by header:
+
+```bash
+curl -N http://localhost:3001/api/arena/chat \
+  -H 'content-type: application/json' -H 'x-arena: on' \
+  -d '{"prompt":"Explain HMAC in two sentences."}'
+# matchup_started: {"mode":"matchup","votable":true,"slots":["A","B"],"matchupToken":"…", …}
+```
+
+…or by body field, which is what a "compare two models" toggle in a UI would
+set — on the Vercel AI SDK path that is `useChat({ body: { arena: true } })`:
+
+```bash
+curl -N http://localhost:3001/api/arena/chat \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"Explain HMAC in two sentences.","arena":true}'
+```
+
+Only the step 4 rounds are votable, and only they reach the rating worker.
+
+### Not built yet
+
+A `sampled` trigger (engage on a fraction of traffic) and a `shadow` exposure
+(run the second model without showing it) are **designed but not implemented**.
+There is no `ARENA_SAMPLE_RATE` and no `ARENA_EXPOSURE` variable; the server
+reads neither, and `ARENA_TRIGGER=sampled` is rejected at boot. The seams exist
+in the code — `resolveArenaPlan()` already takes an injectable RNG and the plan
+type already names `shadow` — but nothing reaches them, so `always` and `manual`
+are the whole of today's behaviour.
+
 ## Database
 
 - **Migrate:** `npm run db:migrate --workspace server` — applies unapplied SQL
   files from `server/src/db/migrations/` in filename order, each in a
   transaction, tracked in `schema_migrations`. To add a migration, create the
   next `NNN_description.sql` file; never edit an applied migration.
-- **Seed:** `npm run db:seed --workspace server` — upserts the model lineup by
-  `(provider, provider_model_id)`. Edit `server/src/db/seed.ts` to change the
-  arena lineup, then re-run.
+- **Seed:** `npm run db:seed --workspace server` — disables **every** existing
+  model, then upserts the lineup by `(provider, provider_model_id)` and
+  re-enables those rows. Editing `server/src/db/seed.ts` and re-running is
+  therefore how you retire a model as well as add one; a model dropped from the
+  file stays in the table but leaves the roster. The current lineup is three
+  Google models (Gemini 3.1 Flash-Lite, Gemini 3 Flash, Gemini 3.5 Flash).
 - **Seed (mock):** `npm run db:seed:mock --workspace server` — disables every
   other model and seeds two `mock`-provider models (`Mock Model Alpha`,
   `Mock Model Beta`). Pair it with `ARENA_MOCK_PROVIDER=1`. See
   [Mock provider](#mock-provider).
+- **Seed (demo data):** `npm run db:seed:demo --workspace server` — see
+  [Demo data](#demo-data).
+
+## Demo data
+
+Every chart on the [insights dashboard](architecture.md#frontend) is computed
+from recorded votes, so a fresh install renders nothing but empty states.
+`server/src/db/seed.demo.ts` fabricates a plausible voting record against
+whichever models are currently enabled:
+
+It is **opt-in and never runs automatically** — neither the container entrypoint
+nor `docker compose up` invokes it, so a fresh deployment starts with a genuinely
+empty arena and the dashboard shows its empty states until real votes arrive.
+
+```bash
+# npm dev path (host)
+npm run db:seed:demo --workspace server
+npm run db:seed:demo --workspace server -- --reset --matchups 400 --days 30
+
+# Docker path — run the compiled script directly. `tsx` is a devDependency and
+# is pruned from the runtime image, so the npm script is not available there.
+docker compose exec app node server/dist/db/seed.demo.js --reset
+```
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--matchups` | `240` | Number of matchups to generate. |
+| `--days` | `14` | Window to spread them over, ramping toward the present. |
+| `--reset` | off | Delete previously seeded demo data first. |
+| `--seed` | `20260724` | PRNG seed; the same value reproduces the same arena. |
+
+Each model's personality is **derived from its name**, so the seeded arena
+matches the intuition a reader already has about the roster:
+
+| Name contains | Reads as | Gets |
+|---|---|---|
+| `lite`, `mini`, `nano`, `small`, `tiny`, `8b`, `haiku` | the fast, cheap variant | lowest latency, terse answers, weakest ratings |
+| `pro`, `ultra`, `opus`, `max`, `large`, `70b`, `thinking` | the flagship | slowest, longest answers, strongest ratings |
+| a version number | recency | newer versions rate higher; older ones in the same class pad their answers more |
+| neither marker, no version | the middle of the roster | mid-tier defaults, ranked by declaration order |
+
+The name matched is `display_name` plus `provider_model_id`, lowercased, and
+markers must match a whole name segment, since `gemini` ends in `mini`. With the
+default Gemini lineup that yields Gemini 3.5 Flash on top, Gemini 3 Flash second
+but padding its answers, and Gemini 3.1 Flash-Lite fastest by a wide margin and
+clearly last on quality — so the "does faster win?" scatter has a real answer.
+
+What it generates, and why each part matters:
+
+- **Votes drawn from the same Rao-Kupper model the worker fits**, so the seeded
+  record is internally consistent with the rating engine rather than noise.
+- **Deliberate style confounding** — verbose, heavily formatted answers win more
+  often than their latent strength justifies, so the padded runner-up closes most
+  of the raw gap and gives it all back once style is regressed out. Strength is
+  weighted above what padding can buy, so the genuinely better model still leads
+  the raw leaderboard; style control widens its lead rather than reordering it.
+- **Many small anonymous sessions** rather than one large one. The worker's
+  [anomaly screen](rating-methodology.md) excludes sessions that look like
+  vote-stuffing or a stuck-on-one-side bot, and an excluded session contributes
+  nothing to the fit.
+- **Backfilled `model_ratings`, `model_style_ratings`, `model_rating_history`,
+  and `style_control_coefficients`** so the rating and style charts work before
+  the Python worker has ever run. These are a win-rate approximation on the
+  worker's Elo-like scale; a real refit overwrites them. The history gets one
+  checkpoint per day up to a maximum of twelve, so the rating-over-time chart
+  has a line rather than a point.
+
+Demo conversations are tagged with a `demo-` session prefix and `--reset` only
+deletes those matchups and conversations, so votes recorded through the real UI
+survive re-seeding. The four worker-owned tables are the exception: rows for the
+currently enabled models are deleted and rewritten on **every** run, `--reset` or
+not. Seeded matchups also carry `harness_version = 'demo'`, which is the easiest
+way to tell them apart from real traffic in SQL.
 
 ## Mock provider
 
@@ -165,6 +402,9 @@ python -m omniarena_rating --style
 # Periodic loop with warm-started refits (add --style for the style pass):
 python -m omniarena_rating --loop --interval 300 --ridge 0.01
 
+# Same loop, but never force a from-scratch refit (default: every 12th):
+python -m omniarena_rating --loop --full-refit-every 0
+
 # Skip the pre-fit anomaly screen (keep every session):
 python -m omniarena_rating --no-anomaly-filter
 
@@ -175,9 +415,35 @@ python -m pytest
 The pre-fit anomaly screen (`--no-anomaly-filter` to disable) drops spam or
 malicious voting sessions via p-value tests before any fit runs.
 
-`docker compose up -d` also starts a `worker` service that runs the loop
-against the `postgres` service automatically. Ratings appear on the leaderboard
-after the first successful refit; until then the rating fields are null.
+In loop mode most refits are warm-started from the previous solution, but every
+`FULL_REFIT_EVERY` refits (`--full-refit-every`, default `12` — hourly at the
+default interval) the worker discards the warm state and fits from scratch, then
+cross-checks that a warm-started fit of the same aggregates lands on the same
+optimum. `0` disables the forced pass. See
+[Rating methodology](rating-methodology.md).
+
+`docker compose up -d` also starts a `worker` service that runs the loop against
+the `postgres` service automatically. The image's default command is
+`python -m omniarena_rating --loop --style`, so **every refit runs both passes**
+and a Docker-only deployment populates `model_ratings`, `model_rating_history`,
+`model_style_ratings`, and `style_control_coefficients` with no extra steps.
+Ratings appear on the leaderboard after the first successful refit; until then
+the rating fields are null. Override the service's `command:` for a one-shot or
+default-only run.
+
+The service forwards every variable the worker reads — `REFIT_INTERVAL_SECONDS`,
+`FULL_REFIT_EVERY`, `RATING_RIDGE`, `STYLE_RIDGE`, `LOG_LEVEL`, and `LOG_FORMAT`
+— from the repo-root `.env`, each defaulting to the worker's own default, plus a
+`DATABASE_URL` pointed at the compose `postgres` hostname. Unlike `app` it has no
+`env_file`, deliberately: the worker needs no provider keys or app secrets, so
+that explicit list is also the whole of what reaches the container.
+
+The worker fits **pairwise** comparisons, so it needs voted matchups to work
+with. On a deployment where most rounds are non-votable `single` rounds — which
+persist no matchup — there is nothing to aggregate and the rating fields stay
+null no matter how often the loop runs. See
+[Rating methodology → what the engine cannot
+rate](rating-methodology.md#what-the-engine-cannot-rate).
 
 ## Commands
 
@@ -195,11 +461,19 @@ Run one workspace with `npm test --workspace <name>`, e.g.
 ## Testing notes
 
 - Server tests use in-memory ports and `pg-mem`; no running Postgres or API
-  keys needed.
-- The hook tests moved out of `web/` into the SDK:
-  `packages/react-sdk/src/useArenaChat.test.ts`. They run under jsdom and stub
-  `fetch` with real SSE `ReadableStream` bodies. `localStorage` is stubbed
-  because Node 24's experimental global shadows jsdom's implementation.
+  keys needed. Alongside the per-module suites there are two cross-cutting ones:
+  `server/src/blindness.test.ts` asserts that no model identity reaches the wire
+  in **any** of the five protocols, on a single connection and on both siblings of
+  a joined matchup — the cases are generated from the protocol registry, so a new
+  adapter is covered by default. `server/src/arena/join.test.ts` covers slot join:
+  simultaneous siblings elect exactly one leader, a third claim is refused, the
+  pending set stays bounded, and slot B still finishes and is persisted after its
+  own consumer disconnects.
+- The hook tests moved out of `web/` into the SDK, and now sit beside the
+  framework-free modules they cover — `protocol`, `session`, `stream`, `vote`,
+  and one file per hook. They run under jsdom and stub `fetch` with real SSE
+  `ReadableStream` bodies. `localStorage` is stubbed because Node 24's
+  experimental global shadows jsdom's implementation.
 - **Gotcha — run tests per workspace, not a bare `vitest` at the repo root.**
   The `jsdom` environment is configured per workspace (in each workspace's
   `vitest.config.ts`), and there is no root Vitest config. Running `vitest`
@@ -232,6 +506,32 @@ run):
 See the [integration guide](integration.md) for how each adapter maps to these
 apps.
 
+## Third-party UI integrations
+
+Beyond the purpose-built examples, [`integrations/`](../../integrations/) wires
+the arena into **real upstream chat UIs** at pinned revisions. Each directory is
+self-contained (its own `package.json`, lockfile, tests, and README) and is not
+part of the root workspace, so none of them is installed or built by a plain
+`npm install`.
+
+| Directory | Upstream | Protocol | How to run it (from that directory) |
+|---|---|---|---|
+| [`integrations/vercel-ai-chatbot/`](../../integrations/vercel-ai-chatbot/) | `vercel/ai-chatbot` template | `vercel-ai` | `npm install`, `npm run setup`, `npm test` |
+| [`integrations/assistant-ui/`](../../integrations/assistant-ui/) | assistant-ui monorepo, `examples/with-ag-ui` | `ag-ui` | `npm install`, `npm run setup`, `npm test` |
+| [`integrations/open-webui/`](../../integrations/open-webui/) | Open WebUI container image (v0.10.2) | `openai` | `npm install`, `docker compose up -d`, `npm run arena` (blocks), then `npm test` |
+
+The two Node ones use the same **pinned clone + overlay** model: `upstream.json`
+records the exact upstream commit, `.upstream/` holds the gitignored clone,
+`overlay/` holds the arena-layer sources copied in verbatim, and
+`scripts/overlay.mjs` applies anchored patches to upstream's own files — each
+anchor must match exactly once, so a moved upstream line fails setup loudly
+instead of producing a half-integrated app. Open WebUI runs from its published
+image instead and reaches the arena through a small OpenAI-compatible bridge
+(`bridge/`), with the source checkout used only to verify claims.
+
+All three run key-free against the [mock provider](#mock-provider). See the
+[integration guide](integration.md) for what each protocol can and cannot carry.
+
 ## End-to-end tests
 
 `npm run e2e` (from the repo root, orchestrated by `e2e/run.mjs`) is a
@@ -247,4 +547,23 @@ deterministic, CI-friendly suite with no real API keys or external LLM calls:
 `e2e/tests/protocol.spec.ts` asserts the raw `vercel-ai` and `ag-ui` wire streams
 over HTTP (including that the Vercel path is votable and updates the
 leaderboard); `e2e/tests/examples.spec.ts` drives both example UIs in a headless
-browser through stream → vote → reveal.
+browser through stream → vote → reveal. Both share the expected mock roster and
+per-model output fingerprints from `e2e/tests/arena-fixtures.ts`.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on pushes to `main` and on every pull request,
+with in-flight runs for the same ref cancelled. **No job needs a secret:** every
+suite uses the deterministic mock provider and in-memory `pg-mem`, so CI works
+unchanged on forks.
+
+| Job | Steps |
+|---|---|
+| Node | `npm ci` → `npm run build --workspaces` → `npm run typecheck --workspaces` → the three workspace test suites. Build runs **first** because `web` typechecks against the SDK's emitted declaration files. |
+| Python | `pip install -r worker/requirements.txt` → `python -m pytest` in `worker/` |
+| End-to-end | `npm ci` at the root and in `e2e/` → `playwright install --with-deps chromium` → `npm run e2e`; Playwright artifacts are uploaded on failure |
+
+CI pins Node `22` and Python `3.11`. Locally the floor is lower — the root
+`engines` field asks for Node `>=20` and the worker for Python `>=3.10` — so a
+green local run on Node 20 is possible while CI exercises 22. See
+[CONTRIBUTING.md](../../CONTRIBUTING.md) for the contribution workflow.

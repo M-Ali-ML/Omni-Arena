@@ -40,7 +40,7 @@
 <main>
   <div class="crumb"><a href="../">Docs</a> · <a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="integration.html">Integration</a> · <a href="rating-methodology.html">Rating methodology</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a> · <a href="sdk.html">SDK</a></div>
   <h1>Rating methodology</h1>
-  <p class="lede">Blind pairwise votes become a statistically principled leaderboard. A standalone Python worker (<span class="mono">worker/</span>, <span class="mono">omniarena_rating</span>) runs off the request hot path: screen → aggregate → fit → interval → connectivity → write back.</p>
+  <p class="lede">Blind pairwise votes become a statistically principled leaderboard. A standalone Python worker (<span class="mono">worker/</span>, <span class="mono">omniarena_rating</span>) runs off the request hot path: screen → aggregate → fit → interval → connectivity → write back, appending a <a href="#rating-history">history snapshot</a> per refit so ratings can be charted over time. Everything here needs <em>pairwise</em> input — see <strong>What the engine cannot rate</strong>.</p>
 
   <h2>Pipeline</h2>
   <div class="flow">
@@ -54,11 +54,11 @@
       <div class="node"><div class="t">Intervals</div><div class="d">confidence.py · Fisher info + bootstrap</div></div>
       <div class="node"><div class="t">Connectivity</div><div class="d">connectivity.py · union-find components</div></div>
       <div class="node"><div class="t">Style pass</div><div class="d">style.py · joint confounder regression</div></div>
-      <div class="node"><div class="t">Write back</div><div class="d">writeback.py · upsert ratings</div></div>
+      <div class="node"><div class="t">Write back</div><div class="d">writeback.py · upsert ratings + append history</div></div>
     </div>
   </div>
   <div>
-    <span class="chip">Bradley-Terry</span><span class="chip">log-param MLE</span><span class="chip">L-BFGS-B</span><span class="chip">Rao-Kupper ties</span><span class="chip">ridge prior</span><span class="chip">sum-to-zero anchor</span><span class="chip">Fisher-info CIs</span><span class="chip">multinomial bootstrap</span><span class="chip">warm-start refits</span><span class="chip">style-controlled</span>
+    <span class="chip">Bradley-Terry</span><span class="chip">log-param MLE</span><span class="chip">L-BFGS-B</span><span class="chip">Rao-Kupper ties</span><span class="chip">ridge prior</span><span class="chip">sum-to-zero anchor</span><span class="chip">Fisher-info CIs</span><span class="chip">multinomial bootstrap</span><span class="chip">warm-start refits</span><span class="chip">periodic full recompute</span><span class="chip">style-controlled</span>
   </div>
 
   <h2>Bradley-Terry + Rao-Kupper ties</h2>
@@ -67,6 +67,19 @@
 P(j beats i) = σ(−d − η)          d = r_i − r_j
 P(tie)       = σ(d + η) − σ(d − η)</code></pre>
   <div class="callout">Working in log-space makes the log-likelihood <strong>convex</strong>, so SciPy <strong>L-BFGS-B</strong> with an <strong>analytic gradient</strong> (unit-tested vs finite differences) finds the unique optimum in a few iterations — no learning rate. Parameter vector: <span class="mono">[r_0…r_{n−1}, η]</span>.</div>
+
+  <h2 id="what-the-engine-cannot-rate">What the engine cannot rate</h2>
+  <p>Bradley-Terry is a model <strong>of comparisons</strong>: every term in its likelihood is a contest between two models, and there is no term for a verdict on one answer viewed alone. That bounds what OmniArena can rate.</p>
+  <table>
+    <tr><th>Situation</th><th>What the engine gets</th></tr>
+    <tr><td>A <span class="mono">single</span> round (<span class="mono">ARENA_TRIGGER=manual</span>, no opt-in; one model from <span class="mono">ARENA_DEFAULT_MODEL</span>)</td><td><strong>Nothing.</strong> The round persists no <span class="mono">matchups</span> row, no responses, no vote token, so it is not <em>filtered out</em> of the fit like a <span class="mono">skip</span> vote — it never reaches the database to be filtered.</td></tr>
+    <tr><td>One-sided feedback (a thumbs-up on a lone answer)</td><td><strong>No ingestion path.</strong> It says nothing about a pair, and BT has nowhere to put it. <span class="mono">POST /api/arena/vote</span> accepts only an HMAC-signed matchup token naming two slots; no endpoint, column, or worker path records a per-response rating.</td></tr>
+    <tr><td>A deployment serving mostly <span class="mono">single</span> rounds</td><td><strong>No ratings.</strong> <span class="mono">rating</span>, <span class="mono">ratingStdError</span>, <span class="mono">confidenceInterval</span>, <span class="mono">componentId</span> stay <span class="mono">null</span>; the leaderboard falls back to counts from whatever matchup rounds occurred, of which there may be none. A model only ever served in <span class="mono">single</span> mode never enters the comparison graph.</td></tr>
+  </table>
+  <div class="callout"><strong>Calibrated claim.</strong> Rao-Kupper ties instead of a <span class="mono">y=0.5</span> hack, Fisher-information intervals, joint style control, and the anomaly screen are concrete improvements over a hand-rolled Elo loop — <strong>given comparisons to fit</strong>. None substitutes for having comparisons. For a client that genuinely cannot present two answers (a strict OpenAI-compatible UI with one message channel), OmniArena has a graceful <em>serving</em> story (<span class="mono">single</span>, <span class="mono">votable: false</span>) and no rating story. Open WebUI, facing the same constraint, shipped its own single-blind thumbs-rated leaderboard on a hand-rolled Elo — see <a href="../../integrations/open-webui/"><span class="mono">integrations/open-webui/</span></a>.</div>
+
+  <h3>Not built: regenerate-as-slot-B</h3>
+  <div class="callout"><strong>Idea only — not implemented.</strong> Turning two sequential single answers into one genuine pair (serve an answer, regenerate the prompt with a second model, persist the two as a matchup, collect a real pairwise vote) would reach these clients. There is <strong>no</strong> such mode, schema, endpoint, or worker support: the enum admits only <span class="mono">matchup</span>, <span class="mono">single</span>, and a declared-but-unreachable <span class="mono">shadow</span> (<span class="mono">server/src/arena/mode.ts</span>). Recorded so it is not mistaken for a feature.</div>
 
   <h2>Identifiability: anchoring + ridge</h2>
   <p>Raw BT strengths are defined only up to an additive constant. Two mechanisms pin them down:</p>
@@ -95,18 +108,21 @@ P(tie)       = σ(d + η) − σ(d − η)</code></pre>
   <table>
     <tr><th>Aspect</th><th>Detail</th></tr>
     <tr><td>One-shot vs loop</td><td><span class="mono">python -m omniarena_rating</span> (once) or <span class="mono">--loop</span> every <span class="mono">REFIT_INTERVAL_SECONDS</span> (300). Docker's <span class="mono">worker</span> service runs the loop.</td></tr>
-    <tr><td>Warm start</td><td>Loop refits warm-start from the previous <span class="mono">[r…, η]</span> vector (in-memory only) ⇒ few iterations; skipped (cold refit) when the model set changes.</td></tr>
+    <tr><td>Warm start</td><td>Most loop refits warm-start from the previous <span class="mono">[r…, η]</span> vector (in-memory only) ⇒ few iterations; skipped (cold refit) when the model set changes.</td></tr>
+    <tr><td>Periodic full recompute</td><td>Every <span class="mono">FULL_REFIT_EVERY</span> refits (12 ⇒ <strong>hourly</strong> at the default interval; 0 disables) the warm state is discarded and the fit runs <strong>from scratch</strong> — the ground-truth pass that bounds how long an incremental chain can accumulate drift. The loop's first refit is already cold, so forced passes land on refits 1, 13, 25, … Each refit logs <span class="mono">mode=full</span> or <span class="mono">mode=incremental</span>.</td></tr>
+    <tr><td>Warm-path validation</td><td>The ridge makes the raw optimiser vector the <em>unique</em> minimiser, so the ground-truth pass also re-runs the incremental path over the <em>same</em> aggregates and warns when they disagree by more than <strong>half a standard error</strong>. SE units, not display points: L-BFGS-B stops on a <em>relative</em> function tolerance, so absolute accuracy loosens as vote volume grows.</td></tr>
     <tr><td>Aggregate-then-compute</td><td>SQL <span class="mono">GROUP BY</span> → <span class="mono">(model_lo, model_hi, wins_lo, wins_hi, ties)</span> triples; fit input bounded by ~<span class="mono">3·C(n,2)</span> rows regardless of vote volume (O(votes) → O(pairs)). Raw rows stay in Postgres.</td></tr>
   </table>
 
   <h2>Pre-fit anomaly screen</h2>
   <p><span class="mono">anomaly.py</span> screens anonymous sessions before aggregation (Bonferroni α/3); a rejection excludes the session from both passes. On by default (<span class="mono">--no-anomaly-filter</span> off).</p>
   <table>
-    <tr><th>Test</th><th>Null</th><th>Catches</th></tr>
-    <tr><td>Volume</td><td>Poisson upper tail <span class="mono">P(X≥n)</span> vs mean votes/session</td><td>vote-stuffing</td></tr>
-    <tr><td>Position bias</td><td>two-sided binomial on left/right vs p=0.5</td><td>always-left/right bots</td></tr>
-    <tr><td>Speed</td><td>median inter-vote gap below floor (1.5s)</td><td>automated clicking</td></tr>
+    <tr><th>Test</th><th>Null</th><th>Catches</th><th>Runs when</th></tr>
+    <tr><td>Volume</td><td>Poisson upper tail <span class="mono">P(X≥n)</span> vs mean votes/session</td><td>vote-stuffing</td><td>≥ 20 votes in the session</td></tr>
+    <tr><td>Position bias</td><td>two-sided binomial on decisive left/right vs <span class="mono">p=0.5</span></td><td>always-left/right bots</td><td>≥ 15 decisive votes</td></tr>
+    <tr><td>Speed</td><td>median inter-vote gap below floor (1.5 s)</td><td>automated clicking</td><td>≥ 8 vote timestamps</td></tr>
   </table>
+  <div class="callout"><span class="mono">α = 1e-3</span>, so each test rejects below <span class="mono">α/3 ≈ 3.3e-4</span>. The sample gates are why a <strong>small session is never flagged</strong> — a handful of votes cannot be distinguished from a fast, one-sided human. Votes with no <span class="mono">anonymous_session_id</span> are always kept: they cannot be attributed to a voter, so there is nothing to exclude.</div>
 
   <h2>Style-controlled ratings</h2>
   <p>Voters reward superficial traits. Following LMSYS, <span class="mono">style.py</span> folds them into the <strong>same</strong> BT regression as covariates so strengths and style betas fit <strong>jointly</strong>:</p>
@@ -130,7 +146,45 @@ P(tie)       = σ(d + η) − σ(d − η)</code></pre>
     <tr><td class="mono">componentId</td><td>Connected component; ratings comparable only within it</td></tr>
     <tr><td class="mono">styleControlledRating*</td><td>Style-controlled rating, SE, and CI (heavier <span class="mono">--style</span> pass)</td></tr>
   </table>
-  <div class="callout"><span class="mono">rating*</span>/<span class="mono">componentId</span> are <span class="mono">null</span> until the default pass runs; <span class="mono">styleControlled*</span> until the style pass runs. Clients fall back to <span class="mono">winRate</span>. See <a href="api.html">API → leaderboard</a> and <a href="data-model.html">Data model</a>.</div>
+  <div class="callout"><span class="mono">rating*</span>/<span class="mono">componentId</span> are <span class="mono">null</span> until the default pass runs; <span class="mono">styleControlled*</span> until the style pass runs. They also stay <span class="mono">null</span> for a model with no comparisons to fit (see <strong>What the engine cannot rate</strong>). Clients fall back to <span class="mono">winRate</span>. See <a href="api.html">API → leaderboard</a> and <a href="data-model.html">Data model</a>.</div>
+
+  <h3 id="leaderboard-counts">Where the counts come from</h3>
+  <p>The win/loss/tie columns are <strong>not</strong> the worker's. The server aggregates them directly over <span class="mono">models ⋈ matchups ⋈ preferences</span> for every enabled model, so they exist from the first vote and never wait on a refit.</p>
+  <table>
+    <tr><th>Field</th><th>Counted as</th></tr>
+    <tr><td class="mono">wins</td><td>votes whose <span class="mono">winner_model_id</span> is this model</td></tr>
+    <tr><td class="mono">losses</td><td><span class="mono">left</span>/<span class="mono">right</span> votes on its matchups where the winner is another model</td></tr>
+    <tr><td class="mono">ties</td><td><span class="mono">both_good</span> + <span class="mono">both_bad</span> votes on its matchups</td></tr>
+    <tr><td class="mono">skips</td><td><span class="mono">skip</span> votes on its matchups</td></tr>
+    <tr><td class="mono">totalVotes</td><td>every vote on its matchups, skips included</td></tr>
+    <tr><td class="mono">winRate</td><td><span class="mono">wins / (wins + losses + ties)</span>, or <span class="mono">0</span> when that denominator is zero</td></tr>
+  </table>
+  <div class="callout">The worker's own <span class="mono">games</span> figure (persisted with each rating and exposed by the <a href="#rating-history">rating history</a>) is a <strong>different number</strong>: summed from the aggregated pair triples, so it counts non-skip votes only and credits both models of a pair with the same total. A model whose only comparisons came from a session the anomaly screen excluded therefore shows <span class="mono">totalVotes &gt; 0</span> and <span class="mono">games = 0</span>.</div>
+
+  <h2 id="rating-history">Rating history</h2>
+  <p><span class="mono">model_ratings</span> is an <strong>upsert</strong> keyed by model, so it holds only the latest fit — it says where a model stands, never how it got there. Every refit therefore also appends one snapshot row per model to <span class="mono">model_rating_history</span> (migration <span class="mono">005_rating_history.sql</span>), in the <strong>same transaction</strong> as the upsert, so the two can never disagree about a refit.</p>
+  <table>
+    <tr><th>Column</th><th>Meaning</th></tr>
+    <tr><td class="mono">model_id, computed_at</td><td>Primary key. <span class="mono">computed_at</span> is <span class="mono">NOW()</span> — transaction-stable, so every row a refit writes shares one timestamp and one refit is one point on the x-axis</td></tr>
+    <tr><td class="mono">rating, rating_stderr, ci_lower, ci_upper</td><td>Exactly the display-scale values written to <span class="mono">model_ratings</span></td></tr>
+    <tr><td class="mono">component_id</td><td>The component this fit put the model in; it can change between refits as bridging games arrive</td></tr>
+    <tr><td class="mono">games</td><td>Non-skip comparisons behind this snapshot (see <a href="#leaderboard-counts">where the counts come from</a>)</td></tr>
+  </table>
+  <table>
+    <tr><th>Before reading a chart</th><th>Why</th></tr>
+    <tr><td>The series is <strong>per refit</strong>, not per vote</td><td>One point every <span class="mono">REFIT_INTERVAL_SECONDS</span> at the default cadence; a refit that skips (no enabled models, or no comparisons yet) writes nothing at all</td></tr>
+    <tr><td><strong>Both refit modes append</strong></td><td>A warm-started incremental refit and a cold ground-truth pass produce indistinguishable rows — which is what makes the warm-drift check a check on the solver rather than something a reader does by eye</td></tr>
+    <tr><td>Ratings move <strong>without any model changing</strong></td><td>They are anchored sum-to-zero per component, so one model's improvement lowers every other rating in its component, and a component split or merge re-anchors the whole group</td></tr>
+    <tr><td>The style pass has <strong>no history</strong></td><td><span class="mono">model_style_ratings</span> and <span class="mono">style_control_coefficients</span> are upserts with no append-only sibling, so style-controlled ratings have a current value only</td></tr>
+  </table>
+  <div class="callout">Exposed as <span class="mono">GET /api/arena/analytics/rating-history</span> (<a href="api.html">API → analytics</a>), which is what the rating-over-time chart reads. Empty until the first refit after the migration; rows are never updated or deleted, and a deleted model's snapshots go with it (<span class="mono">ON DELETE CASCADE</span>).</div>
+
+  <h2>Verification</h2>
+  <p>The worker suite (<span class="mono">worker/tests/</span>, pure-Python <span class="mono">pytest</span>, no database) is what keeps the claims above honest:</p>
+  <div>
+    <span class="chip">analytic gradient vs finite differences</span><span class="chip">recovers synthetic ratings</span><span class="chip">tie modeling + anchoring</span><span class="chip">Fisher CIs vs bootstrap</span><span class="chip">connectivity splits a disconnected graph</span><span class="chip">style control shrinks a verbosity advantage</span><span class="chip">anomaly screen flags spam/bot sessions</span><span class="chip">loop alternates cold and warm refits</span><span class="chip">history appended in the upsert's transaction</span>
+  </div>
+  <div class="callout">See <a href="setup.html">Setup → Rating worker</a> to run them.</div>
 </main>
 </body>
 </html>

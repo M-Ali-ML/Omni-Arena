@@ -14,6 +14,7 @@
   h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 8px; }
   h2 { font-size: 24px; font-weight: 600; margin: 64px 0 16px; }
   h3 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; }
+  h4 { font-size: 16px; font-weight: 600; margin: 24px 0 8px; }
   .crumb { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
   .crumb a { color: var(--muted); text-decoration: none; }
   .crumb a:hover { color: var(--text); }
@@ -36,19 +37,22 @@
   .arrow { text-align: center; color: var(--muted); font-size: 13px; }
   .ok { color: #37352F; font-weight: 600; }
   .no { color: #ACABA9; }
+  figure.shot { margin: 16px 0; }
+  figure.shot img { display: block; width: 100%; border: 1px solid var(--border); border-radius: 8px; }
+  figure.shot figcaption { color: var(--muted); font-size: 13px; margin-top: 8px; }
 </style>
 </head>
 <body>
 <main>
   <div class="crumb"><a href="../">Docs</a> · <a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="integration.html">Integration</a> · <a href="rating-methodology.html">Rating methodology</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a> · <a href="sdk.html">SDK</a></div>
   <h1>Integration guide</h1>
-  <p class="lede">One blind matchup — two anonymous models, one connection — framed in <strong>five wire protocols</strong> through a pluggable egress-adapter layer (<span class="mono">server/src/adapters/</span>). Pick the protocol that matches your stack.</p>
+  <p class="lede">One blind matchup — two anonymous models, one connection — framed in <strong>five wire protocols</strong> through a pluggable adapter layer (<span class="mono">server/src/adapters/</span>). Three of the five also parse their protocol's own <em>request</em> body, so a stock AG-UI, OpenAI, or AI SDK client can call the arena with no translation layer. Pick the protocol that matches your stack — and if your client fans a compare view out into one request per model, see <a href="#slot-join">slot join</a>.</p>
 
   <h2>One stream, five framings</h2>
   <p>Every protocol carries the identical internal sequence over two slots (A, B); only the framing differs. Each frame is schema-validated (<span class="mono">publicArenaEventSchema</span>) before it is written.</p>
   <div class="flow">
-    <div class="row"><div class="node"><div class="t">PublicArenaEvent stream</div><div class="d">matchup_started · token · slot_error · slot_done · matchup_done</div></div></div>
-    <div class="arrow">▼ selectAdapter(?protocol → Accept → default)</div>
+    <div class="row"><div class="node"><div class="t">PublicArenaEvent stream</div><div class="d">matchup_started · token · slot_error · slot_done · matchup_done · run_error <em>(terminal)</em></div></div></div>
+    <div class="arrow">▼ selectProtocol(?protocol → Accept → default)</div>
     <div class="row">
       <div class="node dim"><div class="t">Native SSE</div><div class="d">default · votable</div></div>
       <div class="node dim"><div class="t">AG-UI</div><div class="d">typed run/text events</div></div>
@@ -58,20 +62,66 @@
     </div>
   </div>
 
+  <h3 id="request-bodies">Which protocols accept their own request body</h3>
+  <div class="callout"><strong>Three of the five adapters are bidirectional</strong> — they parse their own protocol's canonical request envelope, so a stock client posts an unmodified native body and needs <strong>no translating transport</strong>. <strong>OmniArena's own body still works on every protocol.</strong> The two shapes are told apart structurally: a body with a <span class="mono">messages</span> array and no <span class="mono">prompt</span> is the protocol envelope; anything else is OmniArena's <span class="mono">{ prompt, sessionId?, conversationId?, arena?, joinKey? }</span>. A body carrying both stays on the OmniArena path, so existing transports keep their exact meaning. The <span class="mono">x-arena: on</span> header works either way (see <a href="setup.html#trigger-modes">Setup → trigger modes</a>).</div>
+  <table>
+    <tr><th>Protocol</th><th>Native request body accepted</th><th><span class="mono">sessionId</span> / <span class="mono">conversationId</span> / <span class="mono">arena</span> / <span class="mono">joinKey</span> ride in</th></tr>
+    <tr><td>AG-UI</td><td class="ok"><span class="mono">RunAgentInput</span> — what <span class="mono">HttpAgent</span>, <span class="mono">useAGUIRuntime</span>, CopilotKit and LangGraph post</td><td class="mono">forwardedProps</td></tr>
+    <tr><td>OpenAI SSE</td><td class="ok">a standard <span class="mono">/chat/completions</span> body</td><td>the <span class="mono">omni_arena</span> extension · <span class="mono">user</span> → <span class="mono">sessionId</span></td></tr>
+    <tr><td>Vercel AI SDK</td><td class="ok">the <span class="mono">useChat</span> body (v5 <span class="mono">parts</span> or v4 <span class="mono">content</span>)</td><td>top level, i.e. <span class="mono">useChat({ body })</span></td></tr>
+    <tr><td>Native SSE</td><td class="no">— its native body <em>is</em> OmniArena's</td><td>top level</td></tr>
+    <tr><td>A2UI</td><td class="no">— no canonical client request envelope exists</td><td>top level</td></tr>
+  </table>
+  <p>All five read the same four arena fields through one <span class="mono">arenaPropsSchema</span> (<span class="mono">request-adapter.ts</span>), so <a href="#slot-join">slot join</a> works on every path, not only the native one.</p>
+  <div class="callout"><strong>Three things to know before pointing a stock client at the arena.</strong> <strong>1.</strong> Only the <em>newest user message</em> becomes the prompt; earlier messages are ignored, because a multi-turn round rebuilds history from the <em>winning</em> responses the arena persisted (which needs a decisive vote) — trusting a client transcript would let the caller pick which blind answer becomes shared context. Multi-turn still means passing <span class="mono">conversationId</span> back. <strong>2.</strong> Fields the arena cannot honour (<span class="mono">temperature</span>, <span class="mono">tools</span>, <span class="mono">state</span>, <span class="mono">trigger</span>) are ignored, not rejected; non-text message parts contribute their text only. <strong>3.</strong> Validation stays strict on what <em>is</em> read (<span class="mono">request-adapter.ts</span> + each envelope's schema): a malformed <span class="mono">conversationId</span>, an envelope with no user message, or <span class="mono">stream: false</span> fails loudly with a field-named error.</div>
+
   <h3>Selecting a protocol</h3>
-  <p>Precedence: <span class="mono">?protocol=</span> query param → <span class="mono">Accept</span> media type → default native SSE. An unknown <span class="mono">?protocol=</span> falls back to SSE.</p>
+  <p><span class="mono">selectProtocol</span> resolves response framing <em>and</em> request parsing from one decision, so the client that asks for a protocol's framing is the one allowed to post its body. Precedence: <span class="mono">?protocol=</span> query param → <span class="mono">Accept</span> media type → default native SSE. An unknown <span class="mono">?protocol=</span> falls back to SSE. The arena is <em>also</em> served at <span class="mono">POST /chat/completions</span> and <span class="mono">POST /v1/chat/completions</span>, where the OpenAI protocol is implied by the path — an OpenAI client appends the path to a base URL and can never send <span class="mono">?protocol=</span>.</p>
   <table>
     <tr><th>Protocol</th><th><span class="mono">?protocol=</span> aliases</th><th><span class="mono">Accept</span> media type(s)</th><th>Response <span class="mono">content-type</span></th><th>Vote token on wire?</th><th>Slot A / B carried by</th></tr>
     <tr><td>Native SSE <span class="chip">default</span></td><td class="mono">sse · native · native-sse</td><td class="mono">text/event-stream</td><td class="mono">text/event-stream</td><td class="ok">Yes</td><td><span class="mono">slot</span> field per event</td></tr>
-    <tr><td>AG-UI</td><td class="mono">agui · ag-ui</td><td class="mono">application/vnd.ag-ui+json</td><td class="mono">text/event-stream</td><td class="no">No</td><td>two <span class="mono">slot</span>-tagged messages</td></tr>
-    <tr><td>A2UI</td><td class="mono">a2ui</td><td class="mono">application/vnd.a2ui+json · application/x-ndjson</td><td class="mono">application/x-ndjson</td><td class="no">No (id only)</td><td>two <span class="mono">surface</span>s A/B</td></tr>
+    <tr><td>AG-UI</td><td class="mono">agui · ag-ui</td><td class="mono">application/vnd.ag-ui+json</td><td class="mono">text/event-stream</td><td class="ok">Yes (<span class="mono">CUSTOM</span>)</td><td>two <span class="mono">slot</span>-tagged messages</td></tr>
+    <tr><td>A2UI</td><td class="mono">a2ui</td><td class="mono">application/vnd.a2ui+json · application/x-ndjson</td><td class="mono">application/x-ndjson</td><td class="ok">Yes</td><td>two <span class="mono">surface</span>s A/B</td></tr>
     <tr><td>Vercel AI SDK</td><td class="mono">vercel · vercel-ai · ai-sdk</td><td class="mono">application/vnd.vercel.ai.ui-message-stream+json</td><td class="mono">text/event-stream + header v1</td><td class="ok">Yes</td><td>A = text · B = data parts</td></tr>
-    <tr><td>OpenAI SSE</td><td class="mono">openai · openai-sse</td><td class="mono">application/vnd.openai.chat-chunk+json</td><td class="mono">text/event-stream</td><td class="no">No</td><td><span class="mono">choices[0]</span> / <span class="mono">choices[1]</span></td></tr>
+    <tr><td>OpenAI SSE</td><td class="mono">openai · openai-sse</td><td class="mono">application/vnd.openai.chat-chunk+json</td><td class="mono">text/event-stream</td><td class="ok">Yes (<span class="mono">omni_arena</span>)</td><td><span class="mono">choices[0]</span> / <span class="mono">choices[1]</span></td></tr>
   </table>
 
   <h2>Model A vs B, and voting</h2>
   <div class="callout"><strong>Vote flow (all protocols):</strong> obtain <span class="mono">matchupId</span> + <span class="mono">matchupToken</span> → user picks a winner once both slots finish → <span class="mono">POST /api/arena/vote</span> with <span class="mono">{ matchupId, matchupToken, vote }</span> → <span class="mono">{ accepted, models: { A, B } }</span> reveal. Votes: <span class="chip">left</span><span class="chip">right</span><span class="chip">both_good</span><span class="chip">both_bad</span><span class="chip">skip</span></div>
-  <div class="callout"><strong>Vote-token availability differs.</strong> Native SSE, A2UI, and Vercel AI SDK put the token on the wire (SSE + Vercel are fully self-contained; A2UI carries only the id). <strong>AG-UI and OpenAI SSE do NOT expose the vote token</strong> — their vocabularies have no field for it, so voting over those protocols needs the token from another channel (a parallel native-SSE request or a server wrapper). Verified: <span class="mono">vercel-ai.ts</span> includes <span class="mono">matchupToken</span> in <span class="mono">data-arena-meta</span>; <span class="mono">ag-ui.ts</span> / <span class="mono">openai-sse.ts</span> emit no token field.</div>
+  <div class="callout"><strong>Every protocol carries the vote token</strong> when there is one, each in its own idiom, so no path needs a second channel: native SSE on <span class="mono">matchup_started</span>, Vercel AI SDK in <span class="mono">data-arena-meta</span>, A2UI on <span class="mono">surface_init</span>, AG-UI in a <span class="mono">CUSTOM</span> event named <span class="mono">arena_matchup</span>, OpenAI SSE in an optional <span class="mono">omni_arena</span> object on the first chunk. All five also carry <span class="mono">mode</span> and <span class="mono">votable</span>, so a client can hide the vote controls on a non-votable (<span class="mono">single</span>) round. <span class="mono">mode</span> is <span class="mono">matchup</span> or <span class="mono">single</span> in practice; <span class="mono">shadow</span> is declared in the shared event schema so consumers can be exhaustive, but no request currently resolves to it.</div>
+  <div class="callout"><strong>Identifiers you cannot use are not sent.</strong> A <span class="mono">single</span> round persists no matchup — no token to vote with, no conversation to continue, no turn to number — so all five protocols <strong>omit</strong> <span class="mono">matchupToken</span>, <span class="mono">conversationId</span>, and <span class="mono">turnIndex</span> rather than emitting an empty string or an id nothing can resolve (the old behaviour handed clients a <span class="mono">conversationId</span> that answered <span class="mono">404 Conversation not found</span> next turn). Absence is the signal; <span class="mono">votable: false</span> says it positively. Clients that stored the old <span class="mono">matchupToken: ""</span> sentinel should treat empty and absent alike. Recording no comparison, such a round also contributes nothing to the ratings: Bradley-Terry fits pairwise data only, so a <span class="mono">single</span> round is not a weaker rating signal but no rating signal at all (<a href="rating-methodology.html">what the engine cannot rate</a>).</div>
+  <div class="callout"><strong>Failures.</strong> One dead slot is that protocol's per-slot error and the other keeps streaming. A dead <em>round</em> is a terminal <span class="mono">run_error</span> — <span class="mono">RUN_ERROR</span> (AG-UI), <span class="mono">session_error</span> (A2UI), an <span class="mono">error</span> part (AI SDK), an <span class="mono">{ error }</span> frame (OpenAI), <span class="mono">event: run_error</span> (native) — with no <span class="mono">matchup_done</span> after it. Pre-stream failures stay HTTP status codes except on AG-UI, whose clients treat a non-2xx as a dead transport, so there they arrive in-band at <span class="mono">200</span>.</div>
+
+  <h2 id="slot-join">Slot join: one matchup over two requests</h2>
+  <p>Everything above assumes the default shape — both slots interleaved on <strong>one</strong> connection. A chat UI with a compare view does not send that shape: it fans a multi-model turn out into <strong>one request per model</strong>, each with a single answer channel and a shared conversation id. Open WebUI v0.10 is the measured case. Served naively it garbles both answers into one column, or produces two unrelated matchups and two half-votes.</p>
+  <div class="flow">
+    <div class="row">
+      <div class="node"><div class="t">Leader — first arrival <span class="mono">joinKey: "chat-7f3a"</span></div><div class="d">claims slot A · runs matchmaking, the conversation, persistence</div></div>
+      <div class="node"><div class="t">Sibling <span class="mono">joinKey: "chat-7f3a"</span></div><div class="d">claims slot B · mirrors the leader's round</div></div>
+    </div>
+    <div class="arrow">▼ same <span class="mono">matchupId</span> · <span class="mono">matchupToken</span> · <span class="mono">conversationId</span> · <span class="mono">turnIndex</span></div>
+    <div class="row">
+      <div class="node dim"><div class="t"><span class="mono">slots: ["A"]</span></div><div class="d">one column, one connection</div></div>
+      <div class="node dim"><div class="t"><span class="mono">slots: ["B"]</span></div><div class="d">one column, one connection</div></div>
+      <div class="node dim"><div class="t">One matchup row · one vote</div><div class="d"><span class="mono">mode: "matchup"</span> · <span class="mono">votable: true</span></div></div>
+    </div>
+  </div>
+  <div class="callout"><strong>Opt in with <span class="mono">joinKey</span></strong> — a correlation id the client already has (Open WebUI's <span class="mono">chat_id</span>). It rides the same extension slot as <span class="mono">sessionId</span>, so it works on every protocol, a stock OpenAI body's <span class="mono">omni_arena</span> object included. Matchmaking, blindness, the conversation and persistence happen exactly once, on the first request's path (<span class="mono">server/src/arena/join.ts</span>).</div>
+  <table>
+    <tr><td><strong><span class="mono">sessionId</span> required</strong></td><td>Authority is the whole <em>scope</em> — session + conversation + exact prompt, HMAC'd with a per-process secret — not the <span class="mono">joinKey</span>, which is only a correlation id. A <span class="mono">joinKey</span> without a session is refused rather than downgraded to a guessable string. A sibling differing in any scope field simply gets its own matchup.</td></tr>
+    <tr><td><strong>Unpaired degrades</strong></td><td>Window closes with no sibling → both slots on that one connection (<span class="mono">slots: ["A","B"]</span>, votable). Nothing generated in vain, and the vote stays honest because the user sees both answers either way.</td></tr>
+    <tr><td><strong>Slot B cannot be lost</strong></td><td>The leader owns the shared generation and all persistence, so slot B finishes and is recorded even if its sibling disconnects. The sibling has its own control-plane handle, so stopping <em>its</em> stream does not stop the round.</td></tr>
+    <tr><td><strong>Failures are symmetric</strong></td><td>A pre-stream error on the leader's path (<span class="mono">404 Conversation not found</span>, a write conflict) is forwarded to the sibling, so both halves of one turn fail the same way instead of one hanging.</td></tr>
+  </table>
+  <table>
+    <tr><th>Situation</th><th>Response</th></tr>
+    <tr><td><span class="mono">joinKey</span> with no <span class="mono">sessionId</span></td><td class="mono">400 join_requires_session</td></tr>
+    <tr><td>A third request on a scope whose slots are taken</td><td class="mono">409 join_slots_exhausted</td></tr>
+    <tr><td>A sibling arriving after the window closed</td><td class="mono">409 join_expired</td></tr>
+    <tr><td>Too many unpaired scopes in flight</td><td class="mono">503 join_unavailable</td></tr>
+    <tr><td>The leader never started the round</td><td class="mono">504 join_leader_timeout</td></tr>
+  </table>
+  <div class="callout">Those are HTTP statuses on every protocol except AG-UI, whose clients read a non-2xx as a dead transport and so receive them in-band as a <span class="mono">200</span> stream carrying <span class="mono">RUN_ERROR</span>. Tuning: <span class="mono">ARENA_JOIN_WINDOW_MS</span> (rendezvous window, default <span class="mono">2000</span>; <strong><span class="mono">0</span> disables joining</strong> and a <span class="mono">joinKey</span> is then ignored), <span class="mono">ARENA_JOIN_MAX_PENDING</span> (unpaired scopes held in memory, default <span class="mono">256</span>), and <span class="mono">ARENA_JOIN_MAX_QUEUED_EVENTS</span> (per-connection event backlog once joined, default <span class="mono">4096</span>). Joining is opt-in per request, so a client that never sends a <span class="mono">joinKey</span> is unaffected by any of them. See <a href="api.html">API → chat</a> for the request contract and <a href="setup.html">Setup</a> for all three.</div>
 
   <h2>Native SSE <span class="chip">default</span></h2>
   <p><span class="mono">?protocol=sse</span> · <span class="mono">sse.ts</span>. One <span class="mono">event:</span>/<span class="mono">data:</span> pair per event; no trailing sentinel.</p>
@@ -87,40 +137,49 @@ data: {"type":"matchup_done"}</code></pre>
   <table>
     <tr><td><strong>Slots</strong></td><td>every event carries a <span class="mono">slot</span> field</td></tr>
     <tr><td><strong>Vote token</strong></td><td><span class="ok">On <span class="mono">matchup_started</span></span> — self-contained</td></tr>
-    <tr><td><strong>Suits</strong></td><td>the demo, the <a href="sdk.html">@omni-arena/react</a> SDK, custom <span class="mono">EventSource</span>/fetch clients</td></tr>
+    <tr><td><strong>Errors</strong></td><td>one slot → <span class="mono">event: slot_error</span> · whole round → terminal <span class="mono">event: run_error</span> (<span class="mono">code</span>, <span class="mono">message</span>); pre-stream failures are HTTP statuses</td></tr>
+    <tr><td><strong>Suits</strong></td><td>the demo, the <a href="sdk.html">@omni-arena/react</a> SDK, custom <span class="mono">EventSource</span>/fetch clients — the only path that needs no transport of your own</td></tr>
   </table>
 
   <h2>AG-UI</h2>
   <p><span class="mono">?protocol=ag-ui</span> · <span class="mono">ag-ui.ts</span> · SSE, one <span class="mono">data:</span> line per typed AG-UI event. Two slots become two text messages in one run.</p>
 <pre><code>data: {"type":"RUN_STARTED","threadId":"c1","runId":"m1"}
+data: {"type":"CUSTOM","name":"arena_matchup","value":{"matchupId":"m1","matchupToken":"eyJ….sig",
+       "slots":["A","B"],"mode":"matchup","votable":true,"conversationId":"c1","turnIndex":0}}
 data: {"type":"TEXT_MESSAGE_START","messageId":"m1:A","role":"assistant","slot":"A"}
 data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"m1:B","delta":"Yo","slot":"B"}
 data: {"type":"CUSTOM","name":"slot_error","value":{"slot":"B","message":"boom"}}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"m1:B","delta":"\n\n[omni-arena:slot-error] boom\n","slot":"B"}
 data: {"type":"TEXT_MESSAGE_END","messageId":"m1:A","slot":"A"}
 data: {"type":"RUN_FINISHED","threadId":"c1","runId":"m1"}</code></pre>
   <table>
-    <tr><td><strong>Mapping</strong></td><td>started → <span class="mono">RUN_STARTED</span> + <span class="mono">TEXT_MESSAGE_START</span>×2 · token → <span class="mono">TEXT_MESSAGE_CONTENT</span> · error → <span class="mono">CUSTOM</span> · done → <span class="mono">TEXT_MESSAGE_END</span> / <span class="mono">RUN_FINISHED</span></td></tr>
-    <tr><td><strong>Slots</strong></td><td>tagged <span class="mono">slot</span>; <span class="mono">messageId = "&lt;runId&gt;:&lt;slot&gt;"</span>; <span class="mono">runId</span>=matchup, <span class="mono">threadId</span>=conversation</td></tr>
-    <tr><td><strong>Vote token</strong></td><td><span class="no">Not exposed</span> — needs another channel</td></tr>
-    <tr><td><strong>Suits</strong></td><td>agentic frontends — CopilotKit, LangGraph, CrewAI, assistant-ui's <span class="mono">react-ag-ui</span> runtime (see <a href="../../examples/assistant-ui/">examples/assistant-ui</a>)</td></tr>
+    <tr><td><strong>Request</strong></td><td><span class="ok">A canonical <span class="mono">RunAgentInput</span> is accepted</span>, so <span class="mono">new HttpAgent({ url })</span> — and <span class="mono">useAGUIRuntime</span>, CopilotKit, LangGraph — works with no subclass. Prompt = newest <span class="mono">user</span> message; <span class="mono">forwardedProps</span> carries <span class="mono">sessionId</span> / <span class="mono">conversationId</span> / <span class="mono">arena</span>; <span class="mono">state</span>, <span class="mono">tools</span>, <span class="mono">context</span> ignored. <span class="mono">threadId</span> is deliberately <em>not</em> read as a <span class="mono">conversationId</span> — clients mint their own (assistant-ui mints a UUID), which would 404 every stock client's first turn.</td></tr>
+    <tr><td><strong>Mapping</strong></td><td>started → <span class="mono">RUN_STARTED</span> + <span class="mono">CUSTOM arena_matchup</span> + <span class="mono">TEXT_MESSAGE_START</span>×2 · token → <span class="mono">TEXT_MESSAGE_CONTENT</span> · slot error → <span class="mono">CUSTOM slot_error</span> + marked <span class="mono">TEXT_MESSAGE_CONTENT</span> · done → <span class="mono">TEXT_MESSAGE_END</span> / <span class="mono">RUN_FINISHED</span> · run error → <span class="mono">RUN_ERROR</span></td></tr>
+    <tr><td><strong>Slots</strong></td><td>tagged <span class="mono">slot</span>; <span class="mono">messageId = "&lt;runId&gt;:&lt;slot&gt;"</span>; <span class="mono">runId</span>=matchup, <span class="mono">threadId</span>=conversation (or the matchup id when there is no conversation — AG-UI requires a thread)</td></tr>
+    <tr><td><strong>Vote token</strong></td><td><span class="ok">On <span class="mono">CUSTOM arena_matchup</span></span> (right after <span class="mono">RUN_STARTED</span>) — <span class="mono">CUSTOM</span> is AG-UI's sanctioned escape hatch; clients that ignore it still render correctly</td></tr>
+    <tr><td><strong>Dead slot is visible</strong></td><td>mainstream runtimes drop <span class="mono">CUSTOM</span> (assistant-ui's aggregator has no case for it), which left a failed slot as a blank column — so the failure also goes out as text prefixed <span class="mono">[omni-arena:slot-error]</span>, distinguishable from the model saying those words. The <span class="mono">CUSTOM</span> event stays authoritative.</td></tr>
+    <tr><td><strong>Errors in-band</strong></td><td>an AG-UI client settles a run on <span class="mono">RUN_ERROR</span> and reads a non-2xx as a dead transport, so <em>every</em> failure here — including the <span class="mono">409</span> "vote before continuing" — is a <span class="mono">200</span> stream carrying <span class="mono">RUN_ERROR</span> with a <span class="mono">code</span>. Mid-stream failures too: the response used to end with neither <span class="mono">RUN_FINISHED</span> nor an error, hanging clients.</td></tr>
+    <tr><td><strong>Suits</strong></td><td><strong>both directions</strong>: CopilotKit, LangGraph, CrewAI, assistant-ui's <span class="mono">react-ag-ui</span> runtime can call the arena directly, and the response drops into such a runtime unchanged, two concurrent messages and all. One caveat survives — runtimes discard <span class="mono">CUSTOM</span>, so <em>voting</em> still needs a raw <span class="mono">AgentSubscriber</span> beside the runtime. <a href="../../integrations/assistant-ui/"><span class="mono">integrations/assistant-ui/</span></a> runs against the real runtime; its agent subclass predates this adapter's request side and is no longer needed to <em>call</em> the arena.</td></tr>
   </table>
 
   <h2>A2UI</h2>
   <p><span class="mono">?protocol=a2ui</span> · <span class="mono">a2ui.ts</span> · <strong>NDJSON</strong>, one flat JSON object per line, versioned <span class="mono">a2ui/1</span>. Two side-by-side surfaces.</p>
-<pre><code>{"v":"a2ui/1","kind":"surface_init","matchupId":"m1","conversationId":"c1","turnIndex":0,"surfaces":["A","B"]}
+<pre><code>{"v":"a2ui/1","kind":"surface_init","matchupId":"m1","matchupToken":"eyJ….sig","conversationId":"c1",
+ "turnIndex":0,"surfaces":["A","B"],"mode":"matchup","votable":true}
 {"v":"a2ui/1","kind":"text_append","surface":"A","text":"He"}
 {"v":"a2ui/1","kind":"error","surface":"B","message":"boom"}
 {"v":"a2ui/1","kind":"surface_done","surface":"A"}
 {"v":"a2ui/1","kind":"session_done"}</code></pre>
   <table>
-    <tr><td><strong>Mapping</strong></td><td>started → <span class="mono">surface_init</span> · token → <span class="mono">text_append</span> · error → <span class="mono">error</span> · done → <span class="mono">surface_done</span> / <span class="mono">session_done</span></td></tr>
+    <tr><td><strong>Mapping</strong></td><td>started → <span class="mono">surface_init</span> · token → <span class="mono">text_append</span> · slot error → <span class="mono">error</span> · done → <span class="mono">surface_done</span> / <span class="mono">session_done</span> · run error → <span class="mono">session_error</span> (<span class="mono">code</span>, <span class="mono">message</span>)</td></tr>
     <tr><td><strong>Slots</strong></td><td>each message names its <span class="mono">surface</span> (A/B)</td></tr>
-    <tr><td><strong>Vote token</strong></td><td><span class="no">Id only</span> — <span class="mono">surface_init</span> carries <span class="mono">matchupId</span>, not the token</td></tr>
+    <tr><td><strong>Vote token</strong></td><td><span class="ok">On <span class="mono">surface_init</span></span> — flat and self-describing, alongside <span class="mono">matchupId</span>, <span class="mono">mode</span>, <span class="mono">votable</span></td></tr>
+    <tr><td><strong>Request</strong></td><td>OmniArena's own body — <strong>output-only on ingress</strong>. A2UI describes how an agent paints a UI, not how a client asks for one, so there is no canonical envelope to accept; inventing one would match no third-party client. If a de-facto request body emerges it plugs into the same <span class="mono">RequestAdapter</span> port the other three use.</td></tr>
     <tr><td><strong>Suits</strong></td><td>generative-UI frontends painting their own design system per surface</td></tr>
   </table>
 
   <h2>Vercel AI SDK</h2>
-  <p><span class="mono">?protocol=vercel-ai</span> · <span class="mono">vercel-ai.ts</span> · AI SDK UI Message Stream over SSE (header <span class="mono">x-vercel-ai-ui-message-stream: v1</span>), trailing <span class="mono">data: [DONE]</span>. A stock <span class="mono">useChat</span> consumes it.</p>
+  <p><span class="mono">?protocol=vercel-ai</span> · <span class="mono">vercel-ai.ts</span> · AI SDK UI Message Stream over SSE (header <span class="mono">x-vercel-ai-ui-message-stream: v1</span>), trailing <span class="mono">data: [DONE]</span>. A stock <span class="mono">useChat</span> can both <em>post</em> to and render it unchanged.</p>
 <pre><code>data: {"type":"start"}
 data: {"type":"data-arena-meta","data":{"matchupId":"m1","matchupToken":"eyJ….sig",
        "conversationId":"c1","turnIndex":0,"mainSlot":"A","dataSlot":"B"}}
@@ -132,27 +191,36 @@ data: {"type":"text-end","id":"m1"}
 data: {"type":"finish"}
 data: [DONE]</code></pre>
   <table>
+    <tr><td><strong>Request</strong></td><td><span class="ok">The <span class="mono">useChat</span> body is accepted</span> in both message shapes (v5 <span class="mono">parts</span>, v4 <span class="mono">content</span>). Arena inputs are read from the top level, where <span class="mono">useChat({ body })</span> puts extras — so <span class="mono">useChat({ api: "…?protocol=vercel", body: { sessionId } })</span> needs no route of its own. <span class="mono">id</span>, <span class="mono">trigger</span>, <span class="mono">messageId</span> ignored. A Next.js app will often still want a route in front, but as a proxy, not a translator.</td></tr>
     <tr><td><strong>Slots</strong></td><td><strong>A</strong> = primary text (<span class="mono">text-delta</span>) · <strong>B</strong> = <span class="mono">data-arena-b-delta</span> parts (then <span class="mono">data-arena-b-done</span>)</td></tr>
-    <tr><td><strong>Errors</strong></td><td>single-slot → <span class="mono">data-arena-error</span></td></tr>
+    <tr><td><strong>Errors</strong></td><td>single-slot → <span class="mono">data-arena-error</span> · whole round → the AI SDK's own <span class="mono">error</span> part (<span class="mono">errorText</span>), which <span class="mono">useChat</span> surfaces as the chat's error state</td></tr>
     <tr><td><strong>Vote token</strong></td><td><span class="ok">On <span class="mono">data-arena-meta</span></span> — the AI SDK path is votable with no second channel</td></tr>
-    <tr><td><strong>Suits</strong></td><td>the React + Vercel AI SDK family — <a href="https://github.com/vercel/ai-chatbot">AI Chatbot template</a>, Lobe Chat, any <span class="mono">useChat</span> app. Highest-leverage.</td></tr>
+    <tr><td><strong>Suits</strong></td><td>the React + Vercel AI SDK family — <a href="https://github.com/vercel/ai-chatbot">AI Chatbot template</a>, Lobe Chat, any <span class="mono">useChat</span> app. Lowest friction in practice: such an app already has a server route between <span class="mono">useChat</span> and the model, and that route becomes the transport.</td></tr>
     <tr><td><strong>Example</strong></td><td><a href="../../examples/vercel-ai-chatbot/">examples/vercel-ai-chatbot</a> (Next.js 16)</td></tr>
   </table>
 
   <h2>OpenAI-compatible SSE</h2>
-  <p><span class="mono">?protocol=openai</span> · <span class="mono">openai-sse.ts</span> · <span class="mono">chat.completion.chunk</span> frames, trailing <span class="mono">data: [DONE]</span>. Slots map onto two <span class="mono">choices</span> (A→0, B→1).</p>
+  <p><span class="mono">?protocol=openai</span> · <span class="mono">openai-sse.ts</span> · <span class="mono">chat.completion.chunk</span> frames, trailing <span class="mono">data: [DONE]</span>. <strong>Every frame lists both slots</strong> in slot order: <span class="mono">choices[0]</span> is always A, <span class="mono">choices[1]</span> always B. Point a client at <span class="mono">{base}</span> and it works: <span class="mono">POST /chat/completions</span> and <span class="mono">/v1/chat/completions</span> serve the arena with this protocol implied by the path, and <span class="mono">GET /models</span> answers the connection probe.</p>
 <pre><code>data: {"id":"chatcmpl-…","object":"chat.completion.chunk","created":1770000000,
-       "model":"omni-arena","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+       "model":"omni-arena","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null},
+                                       {"index":1,"delta":{"role":"assistant"},"finish_reason":null}],
+       "omni_arena":{"matchupId":"m1","matchupToken":"eyJ….sig","conversationId":"c1",
+                     "turnIndex":0,"mode":"matchup","votable":true}}
 data: {"id":"chatcmpl-…","object":"chat.completion.chunk","created":1770000000,
-       "model":"omni-arena","choices":[{"index":1,"delta":{"content":"Yo"},"finish_reason":null}]}
+       "model":"omni-arena","choices":[{"index":0,"delta":{"content":"He"},"finish_reason":null},
+                                       {"index":1,"delta":{},"finish_reason":null}]}
 data: {"id":"chatcmpl-…","object":"chat.completion.chunk","created":1770000000,
-       "model":"omni-arena","choices":[{"index":1,"delta":{},"finish_reason":"stop"}]}
+       "model":"omni-arena","choices":[{"index":0,"delta":{},"finish_reason":null},
+                                       {"index":1,"delta":{},"finish_reason":"stop"}]}
 data: [DONE]</code></pre>
+  <div class="callout"><strong>Why both choices in every frame.</strong> OpenAI's schema allows several <span class="mono">choices</span> (that is <span class="mono">n &gt; 1</span>) and each carries an <span class="mono">index</span> — but no real client demultiplexes on it: Open WebUI reads <span class="mono">choices[0].delta.content</span> in its SvelteKit parser and <span class="mono">choices[0]</span> in its Python middleware; langchain-openai takes the first choice only. Readers are <em>positional</em>. Emitting one choice per frame with the slot in <span class="mono">index</span> therefore spliced both models' tokens into one incoherent message — at <span class="mono">200</span>, with a clean <span class="mono">[DONE]</span>, i.e. silently. Pinning A to <span class="mono">choices[0]</span> gives a positional reader one coherent answer while <span class="mono">index</span>-aware clients still get B from the same frame.</div>
   <table>
-    <tr><td><strong>Slots</strong></td><td>A = <span class="mono">choices[0]</span>, B = <span class="mono">choices[1]</span>; <span class="mono">role</span> on start, <span class="mono">content</span> deltas, <span class="mono">finish_reason:"stop"</span> on done</td></tr>
-    <tr><td><strong>Errors</strong></td><td>inline as <span class="mono">content</span> on that choice (no error frame)</td></tr>
-    <tr><td><strong>Vote token</strong></td><td><span class="no">Not exposed</span> — OpenAI schema has no field; vote via another channel or not at all</td></tr>
-    <tr><td><strong>Suits</strong></td><td>OpenAI-compatible chat UIs — Open WebUI (largest, non-React), LibreChat, Lobe Chat, Chatbot-UI. Universal fallback.</td></tr>
+    <tr><td><strong>Request</strong></td><td><span class="ok">A standard <span class="mono">/chat/completions</span> body is accepted.</span> Prompt = newest <span class="mono">user</span> message (string or text parts); <span class="mono">user</span> seeds <span class="mono">sessionId</span>; sampling knobs and tool declarations ignored. No standard home exists for a conversation id or the arena opt-in, so those ride an <span class="mono">omni_arena</span> request extension — the mirror of the <span class="mono">omni_arena</span> object written onto chunk one. <strong><span class="mono">stream: false</span> is refused</strong> with a <span class="mono">400</span> naming the field: a matchup is two live streams, with no buffered <span class="mono">chat.completion</span> to return.</td></tr>
+    <tr><td><strong>Slots</strong></td><td>A = <span class="mono">choices[0]</span>, B = <span class="mono">choices[1]</span>; <span class="mono">role</span> on start, <span class="mono">content</span> deltas, <span class="mono">finish_reason:"stop"</span> on done (kept in later frames, not retracted); a slot idle in a frame gets an empty <span class="mono">delta</span>. A <span class="mono">single</span> round declares one slot, so one choice.</td></tr>
+    <tr><td><strong>Errors</strong></td><td>slot → top-level <span class="mono">omni_arena_error</span> (<span class="mono">{ slot, message }</span>) <em>plus</em> the same text in that choice's <span class="mono">delta.content</span> behind an <span class="mono">[omni-arena:slot-error]</span> marker, since a plain OpenAI client has no other channel and would otherwise read it as the model's own words · run → an <span class="mono">{ "error": { message, type, code } }</span> frame, then <span class="mono">[DONE]</span></td></tr>
+    <tr><td><strong>Vote token &amp; multi-turn</strong></td><td><span class="ok">Optional <span class="mono">omni_arena</span> on the first chunk only</span>, now including <span class="mono">conversationId</span> / <span class="mono">turnIndex</span> so multi-turn works here too. OpenAI's contract dictates the chunk shape, so it cannot be a required field; compatible clients ignore unknown top-level fields, so Open WebUI is unaffected.</td></tr>
+    <tr><td><strong>Model list</strong></td><td>OpenAI UIs probe <span class="mono">GET {base}/models</span> on connect; OmniArena answers that and <span class="mono">/v1/models</span> with the enabled roster (see <a href="api.html">API</a>)</td></tr>
+    <tr><td><strong>Suits</strong></td><td>OpenAI-compatible chat UIs — Open WebUI (largest, non-React), LibreChat, Lobe Chat, Chatbot-UI, any OpenAI SDK client. They can now <strong>call</strong> the arena directly. What "OpenAI-compatible" still does not give you is the <em>interaction</em>: the protocol has no vote, no reveal, and usually one message channel per turn, so rendering two columns and collecting a vote stays the app's problem. <a href="../../integrations/open-webui/"><span class="mono">integrations/open-webui/</span></a> solves that for Open WebUI, and two thirds of that bridge have since moved into the server: its request translation is redundant now that this adapter parses <span class="mono">/chat/completions</span> bodies, and its pairing of Open WebUI's two parallel model requests is what <a href="#slot-join">slot join</a> does natively. What stays genuinely bridge-shaped is the <em>interaction</em> — rendering the duel and collecting the vote and reveal in the message channel.</td></tr>
   </table>
 
   <h2>Reference example apps</h2>
@@ -162,6 +230,74 @@ data: [DONE]</code></pre>
     <tr><td><a href="../../examples/assistant-ui/">assistant-ui</a></td><td>Vite + React · assistant-ui</td><td class="mono">?protocol=vercel-ai</td><td><span class="mono">useAISDKRuntime</span> renders Model A; Model B alongside from the same data parts. assistant-ui also ships an AG-UI runtime.</td></tr>
   </table>
   <div class="callout">Zero-key local run: start the server with the deterministic <strong>mock provider</strong> (<span class="mono">ARENA_MOCK_PROVIDER=1</span> + <span class="mono">npm run db:seed:mock --workspace server</span>). <span class="mono">npm run e2e</span> from the repo root boots OmniArena (pg-mem + mock) plus both example servers and drives stream → vote → reveal in headless Chromium (Playwright, <span class="mono">e2e/</span>), and asserts the raw <span class="mono">vercel-ai</span> / <span class="mono">ag-ui</span> wire streams. See <a href="setup.html">Setup</a>.</div>
+
+  <h2>Integration into a real third-party app</h2>
+  <p>The examples above are purpose-built scaffolds. <a href="../../integrations/vercel-ai-chatbot/"><span class="mono">integrations/vercel-ai-chatbot/</span></a> answers the harder question — does arena mode survive inside an app that was never written for it?</p>
+  <div class="flow">
+      <div class="node"><div class="t">Pinned clone</div><div class="d">real <span class="mono">vercel/ai-chatbot</span> → gitignored <span class="mono">.upstream/</span></div></div>
+      <div class="arrow">→</div>
+      <div class="node"><div class="t">Committed overlay</div><div class="d">arena routes · matchup UI · protocol helpers</div></div>
+      <div class="arrow">→</div>
+      <div class="node"><div class="t">Anchored patches</div><div class="d">splice into the template's own wiring; a miss fails loudly</div></div>
+  </div>
+  <div class="callout">The upstream app keeps its NextAuth guest login, Postgres history, and message list — every chat is a matchup instead of a single model call. Its Playwright suite (<span class="mono">npm test</span> in that directory) needs no credentials: PGlite stands in for Postgres, the mock provider for the models.</div>
+  <p>Two more integrations exercise the other adapters against real upstream apps, and each documents what it found:</p>
+  <table>
+    <tr><th>Integration</th><th>Upstream app</th><th>Adapter</th><th>What it took</th></tr>
+    <tr><td><a href="../../integrations/open-webui/"><span class="mono">open-webui</span></a></td><td>Open WebUI (SvelteKit + FastAPI)</td><td class="mono">?protocol=openai</td><td>A bridge presenting an OpenAI surface — model list included — that renders the duel, vote, and reveal inside Open WebUI's single message channel.</td></tr>
+    <tr><td><a href="../../integrations/assistant-ui/"><span class="mono">assistant-ui</span></a></td><td>assistant-ui's <span class="mono">with-ag-ui</span> example</td><td class="mono">?protocol=ag-ui</td><td>A route forwarding the AG-UI stream to the stock <span class="mono">@assistant-ui/react-ag-ui</span> runtime, plus arena UI for vote and reveal.</td></tr>
+  </table>
+  <div class="callout">Their findings are the reason for several contracts above — positional <span class="mono">choices[0]</span>, <span class="mono">RUN_ERROR</span>, marked slot failures, omitted identifiers, the request envelopes themselves, and <a href="#slot-join">slot join</a> — each came from watching a real client mishandle the alternative. Both were built against the output-only adapters and still carry their own request translation, and the Open WebUI bridge still does its own request pairing; both are redundant now but are left in place (and still passing) rather than rewritten. Read their READMEs as records of what the arena looked like when each was built, not as a current description of the server.</div>
+
+  <h3>What the adapters look like in a real app</h3>
+  <p>Both Next.js integrations photograph themselves: every image below is the real app against the real server. Regenerate a set with <span class="mono">npm run screenshots</span> in that integration's directory, which drives it with Playwright against a key-free provider.</p>
+  <h4>Vercel AI SDK, inside <span class="mono">vercel/ai-chatbot</span></h4>
+  <figure class="shot">
+    <img src="../images/integrations/vercel-ai-chatbot/01-streaming.png" alt="Two anonymous answers streaming side by side in the vercel/ai-chatbot message list">
+    <figcaption>Slot A on the main text channel, slot B from <span class="mono">data-arena-b-delta</span> parts — two anonymous columns, one connection; vote controls present but disabled until both finish.</figcaption>
+  </figure>
+  <figure class="shot">
+    <img src="../images/integrations/vercel-ai-chatbot/02-vote.png" alt="The finished pair with the five-way vote bar enabled and identities still hidden">
+    <figcaption>Both answers done. Five ways to vote — A is better, B is better, Both good, Both bad, Skip — and still no idea which model wrote which.</figcaption>
+  </figure>
+  <figure class="shot">
+    <img src="../images/integrations/vercel-ai-chatbot/03-reveal.png" alt="After voting: both models named, the winning column marked">
+    <figcaption><span class="mono">POST /api/arena/vote</span> returns the reveal; the client marks the winner and continues from it.</figcaption>
+  </figure>
+  <figure class="shot">
+    <img src="../images/integrations/vercel-ai-chatbot/04-multi-turn.png" alt="A follow-up question rendered as turn 2 of the same arena conversation">
+    <figcaption>Turn 2 of the same OmniArena conversation, continued from the answer that won.</figcaption>
+  </figure>
+  <figure class="shot">
+    <img src="../images/integrations/vercel-ai-chatbot/05-leaderboard.png" alt="The leaderboard popover listing both models with their win rates and records">
+    <figcaption>The trophy in the composer toolbar opens the leaderboard, proxied server-side so the arena is never exposed to the browser.</figcaption>
+  </figure>
+  <figure class="shot">
+    <img src="../images/integrations/vercel-ai-chatbot/06-single-model.png" alt="A single, non-votable round: one column and no vote bar">
+    <figcaption><span class="mono">votable: false</span> in <span class="mono">data-arena-meta</span> → one column, no vote controls. The degradation every adapter's <span class="mono">mode</span>/<span class="mono">votable</span> fields exist for — graceful at the <em>rendering</em> layer only: a readable answer instead of a vote bar that cannot work, at the cost of a round the rating engine has nothing to learn from.</figcaption>
+  </figure>
+
+  <h4>AG-UI, inside assistant-ui's <span class="mono">with-ag-ui</span> example</h4>
+  <figure class="shot">
+    <img src="../images/integrations/assistant-ui/01-streaming.png" alt="Two anonymous answers streaming side by side in assistant-ui, the vote bar disabled while both slots are still writing">
+    <figcaption>Two concurrent AG-UI text messages in one run, which the stock <span class="mono">@assistant-ui/react-ag-ui</span> runtime aggregates into one assistant message with two text parts — rendered as the A and B columns, blind, vote bar disabled until both finish.</figcaption>
+  </figure>
+  <figure class="shot">
+    <img src="../images/integrations/assistant-ui/02-vote.png" alt="The finished pair with the five-way vote bar enabled and both models still anonymous">
+    <figcaption>Both answers done, both still labelled <span class="mono">anonymous</span>, and the five-way vote enabled.</figcaption>
+  </figure>
+  <figure class="shot">
+    <img src="../images/integrations/assistant-ui/03-reveal.png" alt="After the vote: both columns named with their models and the picked column badged">
+    <figcaption>The vote uses the <span class="mono">matchupId</span> and <span class="mono">matchupToken</span> read off the <span class="mono">CUSTOM arena_matchup</span> event — which the runtime itself discards, so the app mirrors it from a raw agent subscriber. Only after the vote are the columns named and the pick badged.</figcaption>
+  </figure>
+  <figure class="shot">
+    <img src="../images/integrations/assistant-ui/04-multi-turn.png" alt="A follow-up question answered as turn 2 of the same conversation, below the previous round's reveal">
+    <figcaption>A decisive vote left a winning response, so the follow-up is turn 2 of the <em>same</em> conversation with a fresh blind matchup — driven by the <span class="mono">conversationId</span> and <span class="mono">turnIndex</span> on that same <span class="mono">CUSTOM</span> event.</figcaption>
+  </figure>
+  <figure class="shot">
+    <img src="../images/integrations/assistant-ui/05-single-model.png" alt="Arena mode off: one column labelled Single model, with the vote bar replaced by an explanation">
+    <figcaption>Arena mode off → <span class="mono">mode: "single"</span> and <span class="mono">votable: false</span>; one column, vote bar replaced by an explanation rather than a vote that cannot be cast.</figcaption>
+  </figure>
 </main>
 </body>
 </html>

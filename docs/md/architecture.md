@@ -7,46 +7,56 @@ Related: [API](api.md) · [Integration](integration.md) · [Rating methodology](
 
 ## System overview
 
-The repo is an npm workspace monorepo with four packages:
+The repo is an npm workspace monorepo with four packages, plus two directories of
+non-workspace consumer code (`examples/`, `integrations/`) and the `e2e/` harness:
 
 | Package | Path | Role |
 |---|---|---|
-| `@omni-arena/server` | `server/` | Fastify API: matchmaking, dual-model streaming through the protocol-adapter layer, WebSocket control plane, voting, leaderboard |
-| `@omni-arena/react` | `packages/react-sdk/` | Published headless React SDK (`useArenaChat`, `useArenaLeaderboard`); the demo consumes it. See [SDK](sdk.md) |
+| `@omni-arena/server` | `server/` | Fastify API: matchmaking, dual-model streaming through the protocol-adapter layer, WebSocket control plane, slot join, voting, leaderboard, analytics |
+| `@omni-arena/react` | `packages/react-sdk/` | Published headless React SDK: hooks plus the framework-free protocol/stream/vote/session modules they are built from; the demo consumes it. See [SDK](sdk.md) |
 | `@omni-arena/web` | `web/` | Vite + React demo UI; the reference consumer of `@omni-arena/react` |
 | `omniarena-rating` | `worker/` | Python Bradley-Terry rating worker (NumPy/SciPy) |
 
 ```
-[ web (React demo) ] ── imports ──▶ [ @omni-arena/react (SDK hooks) ]
-   │ useArenaChat / useArenaLeaderboard
+[ web (React demo) ] ── imports ──▶ [ @omni-arena/react (SDK hooks + helpers) ]
+   │ useArenaChat / useArenaVote / useArenaLeaderboard / useArena*Analytics
    │ (Vite dev proxy → :3001)
    ▼
 [ server (Fastify) ]
    ├─ routes/chat        POST /api/arena/chat   → EventAdapter (5 wire protocols)
+   │                     also POST /chat/completions and /v1/chat/completions
+   ├─ routes/models      GET  /models and /v1/models (OpenAI-compatible roster)
    ├─ routes/control     GET  /api/arena/control (WebSocket: stop / steer-stub)
    ├─ routes/vote        POST /api/arena/vote   → reveal identities
-   ├─ routes/leaderboard GET  /api/arena/leaderboard  (win-rate + ratings)
+   ├─ routes/leaderboard GET  /api/arena/leaderboard  (win-rate + ratings + context)
+   ├─ routes/analytics   GET  /api/arena/analytics/*  (summary / head-to-head /
+   │                     model-metrics / activity / style-control / rating-history)
    ├─ ArenaCore          fan-out to two providers, one event stream (AbortSignal)
-   ├─ adapters/          selectAdapter → SSE (default) / AG-UI / A2UI / Vercel / OpenAI
+   ├─ adapters/          selectProtocol → SSE (default) / AG-UI / A2UI / Vercel / OpenAI
+   │                     egress EventAdapter + ingress RequestAdapter
+   ├─ JoinBroker         pairs two sibling requests into one matchup (opt-in joinKey)
    ├─ MatchupRegistry    AbortController per in-flight matchup (control plane)
    ├─ SmartMatchmaker    prioritizes under-sampled / high-variance pairs
    │                     (RandomMatchmaker still available; MATCHMAKER=random)
    ├─ MatchupTokenService HMAC-signed matchup tokens
-   ├─ provider adapters   Google / OpenAI / Ollama / vLLM / host proxy
+   ├─ provider adapters   Google / OpenAI / Ollama / vLLM / host proxy / mock
    └─ PostgresRepository conversations / turns / matchups / responses / preferences
+                         + leaderboard and analytics aggregations
               │
               ▼
         [ PostgreSQL ] ◀── model_ratings + model_style_ratings ── [ worker (Python) ]
-              │                                          BT + tie model, Fisher CIs,
-              ▼                                          anomaly screen, style control
-     [ configured model endpoints ]                      (periodic batch refit)
+              │              + model_rating_history (append-only)   BT + tie model, Fisher CIs,
+              ▼                                                     anomaly screen, style control
+     [ configured model endpoints ]                                 (periodic batch refit)
 ```
 
 The rating worker runs **off the hot path**: the request/stream/vote loop never
 waits on it. It periodically screens anomalous voting sessions, aggregates votes
 in-database, refits ratings, and upserts a `model_ratings` snapshot the
-leaderboard reads via LEFT JOIN. A heavier periodic pass fits style-controlled
-ratings into `model_style_ratings`.
+leaderboard reads via LEFT JOIN — appending the same rows to
+`model_rating_history` in the same transaction, so rating-over-time charts have
+a trail. A heavier periodic pass fits style-controlled ratings into
+`model_style_ratings`.
 
 ## Distribution topology (single container)
 
@@ -54,8 +64,12 @@ OmniArena is self-hosted as a **single container per deployment**: one Fastify
 process serves both the JSON/streaming API and the built web UI on one port
 (`PORT`, default 3001), same-origin. Static serving activates only when the
 `web/dist` bundle exists (production/Docker) via `@fastify/static`, with an SPA
-fallback that returns `index.html` for non-`/api`, non-`/health` GET routes;
-`WEB_DIST_DIR` overrides the bundle path. In the npm dev path the bundle is
+fallback that returns `index.html` for any GET route outside the API prefixes
+`/api`, `/health`, `/v1`, `/models`, `/chat/completions`, `/completions`, and
+`/embeddings`. That list matters because the OpenAI-compatible surface lives at
+top-level paths: without it an unmatched `GET /v1/models` would answer `text/html`
+at 200 and an OpenAI client would report a mimetype error rather than a missing
+route. `WEB_DIST_DIR` overrides the bundle path. In the npm dev path the bundle is
 absent, so Vite serves the UI on `:5173` and the API stays on `:3001`.
 `docker compose up` brings up Postgres, the rating worker, and the app, whose
 entrypoint runs migrate → seed → start. See [Setup](setup.md).
@@ -72,8 +86,10 @@ Even in the MVP, the core is separated from its edges by small interfaces in
 | `MatchmakingPort` | `SmartMatchmaker` (default) / `RandomMatchmaker` (fallback) | King-of-the-Hill / bandit variants |
 | `MatchmakingStatsPort` | `PostgresRepository` (pair game counts + rating-interval widths) | unchanged |
 | `PreferenceRepositoryPort` | `PostgresRepository` | unchanged |
-| `LeaderboardPort` | win-rate SQL + `model_ratings` + `model_style_ratings` LEFT JOINs in `PostgresRepository` | more surfaced rating variants |
-| `EventAdapter` (egress port) | native SSE (default) + AG-UI, A2UI, Vercel AI SDK, OpenAI SSE, chosen by `selectAdapter` | more wire protocols |
+| `LeaderboardPort` | win-rate SQL + `model_ratings` + `model_style_ratings` LEFT JOINs in `PostgresRepository`, plus `getRatingContext()` for component connectivity and the fitted style coefficients | more surfaced rating variants |
+| `AnalyticsPort` | summary / head-to-head / model-metrics / activity / style-control / rating-history aggregations in `PostgresRepository` (percentiles and time-bucketing computed in TypeScript to stay pg-mem-testable) | prompt-category scoping |
+| `EventAdapter` (egress port) | native SSE (default) + AG-UI, A2UI, Vercel AI SDK, OpenAI SSE, chosen by `selectProtocol` | more wire protocols |
+| `RequestAdapter` (ingress port) | AG-UI, OpenAI, and Vercel AI SDK request envelopes; native SSE and A2UI have none and accept only OmniArena's own body | more envelopes |
 
 Tests inject in-memory implementations behind the same ports.
 
@@ -100,23 +116,58 @@ model version. Each matchup stores the configured `HARNESS_VERSION`.
 There is exactly one internal event stream. Every event an adapter is allowed to
 emit is described by the zod `publicArenaEventSchema` in
 `server/src/core/events.ts` (`matchup_started`, `token`, `slot_error`,
-`slot_done`, `matchup_done`). That single stream is fanned out to **five wire
-protocols** through a small egress port, so the chat route never knows any
-framing details.
+`slot_done`, `run_error`, `matchup_done`). That single stream is fanned out to
+**five wire protocols** through a small egress port, so the chat route never
+knows any framing details.
 
 - **`EventAdapter` port** (`server/src/adapters/event-adapter.ts`) — three
   members: `headers` (response headers the protocol needs before the first
   chunk), `serialize(event)` (wire-ready bytes for one schema-validated event),
-  and `finalize()` (trailing bytes before close, e.g. a `[DONE]` sentinel).
+  and `finalize()` (trailing bytes before close, e.g. a `[DONE]` sentinel), plus
+  an optional `inBandErrors` flag for a protocol whose clients settle a run on a
+  terminal error *event* and treat a non-2xx as a dead transport (AG-UI): the
+  route then delivers a pre-stream failure as a `run_error` at 200 instead of an
+  HTTP status.
+- **`RequestAdapter` port** (`server/src/adapters/request-adapter.ts`) — the
+  ingress half, implemented by the three protocols that have a canonical client
+  request envelope (AG-UI's `RunAgentInput`, OpenAI's `/chat/completions` body,
+  the AI SDK's `useChat` body). Two members: `claims(body)` — is this the
+  protocol's own envelope rather than OmniArena's? — and `parse(body)`, which
+  translates it into the one internal `ArenaChatRequest` the route runs on. So a
+  stock client of those protocols needs no transport in front of the endpoint, and
+  the route keeps a single code path. Detection is structural (a `messages` array
+  and no `prompt`), so OmniArena's own body is unchanged on every protocol — see
+  [Integration → request bodies](integration.md#which-protocols-accept-their-own-request-body).
 - **Adapters** — `sse.ts` (native, default), `ag-ui.ts`, `a2ui.ts`,
   `vercel-ai.ts`, `openai-sse.ts`. Each validates against
   `publicArenaEventSchema` at the boundary before framing, so a malformed chunk
-  fails loudly instead of reaching a client.
-- **`selectAdapter(protocol, accept)`** (`server/src/adapters/registry.ts`) —
-  picks an adapter from the `?protocol=` query param, then the `Accept` header
-  media type, then the default. An unknown value falls back to native SSE, which
-  is preserved **byte-for-byte**, so the demo, the SDK, and any existing client
-  are unaffected.
+  fails loudly instead of reaching a client; the three with a request envelope
+  validate that against their own zod schema at the same boundary.
+- **Slot failures on text-only protocols** (`server/src/adapters/slot-error.ts`)
+  — AG-UI and OpenAI have no per-message error taxonomy, only assistant text, so
+  a `slot_error` is carried twice there: structurally (AG-UI's `CUSTOM
+  slot_error`, the OpenAI adapter's `omni_arena_error` extension) for clients that
+  read it, and as text prefixed with the shared `[omni-arena:slot-error]` marker
+  so a client that only renders content shows something instead of a permanently
+  blank column. The marker is what keeps that text distinguishable from the model
+  having said those words.
+- **`selectProtocol(protocol, accept)`** (`server/src/adapters/registry.ts`) —
+  resolves both halves from one decision: the `?protocol=` query param, then the
+  `Accept` header media type, then the default. An unknown value falls back to
+  native SSE, which is preserved **byte-for-byte**, so the demo, the SDK, and any
+  existing client are unaffected. The OpenAI protocol is additionally implied by
+  the `/chat/completions` and `/v1/chat/completions` paths, which a client
+  configured with a base URL reaches on its own.
+
+- **Roster discovery** (`server/src/routes/models.ts`) — `GET /models` and
+  `GET /v1/models` return the enabled roster in OpenAI's `{object: "list", data}`
+  shape (both paths, because a deployment may be configured with or without the
+  `/v1` prefix). It is part of the adapter surface rather than an extra: an OpenAI
+  client's *first* call is the model list — Open WebUI treats it as the connection
+  check and builds its picker from it — so without it the OpenAI adapter is
+  undiscoverable however well-formed its stream is. The roster is not secret (the
+  leaderboard already names every model); what stays blind is which two models a
+  given matchup drew.
 
 See [API → Protocol selection](api.md) for the aliases, media types, and
 per-protocol framing. The key invariant: internal event **semantics are
@@ -140,6 +191,52 @@ acts on an in-flight matchup out-of-band from the token stream.
 - **`steer`** is a **schema-validated, documented stub**: it returns a negative
   ack (`accepted: false`) so the wire contract and seam exist, but the
   instruction is not yet wired into the running producers.
+
+## Slot join: one matchup across two requests
+
+The default shape puts both slots on one connection. Real compare-view chat UIs
+don't do that: they fan a multi-model turn out into **one request per model**
+sharing a conversation identifier (Open WebUI v0.10 is the measured case, see
+`integrations/open-webui/`). Each of those requests has exactly one answer
+channel, so interleaving both slots on it either garbles the two answers together
+or produces two unrelated matchups and two half-votes.
+
+Slot join (`server/src/arena/join.ts`) fixes that server-side. A client opts in by
+sending `joinKey` on `POST /api/arena/chat`; two requests that resolve to the same
+scope inside a short window become **one** matchup, each streaming its own slot
+over its own connection, with one `matchups` row and one vote.
+
+| Piece | Role |
+|---|---|
+| `JoinBroker.claim(scope)` | Assigns roles. First arrival is the **leader** (slot A), the sibling is the **follower** (slot B). Fully synchronous — no `await` between deriving the scope key and recording the claim — so on Node's single-threaded loop two simultaneous siblings can never both win, whatever order they are dispatched in. |
+| `JoinScope` | What a join is authorized by: the HMAC of `{sessionId, conversationId, prompt, joinKey}` under a per-process random secret. The `joinKey` alone is only a correlation ID the client already has, so it is deliberately *not* the capability; the tuple is strictly stronger than the session ID that already gates conversation access, and the key never leaves the process. |
+| `JoinedRound` | The single shared generation, demultiplexed into one `SlotChannel` per slot. The **leader owns the pump and all persistence** and keeps consuming even if its own client disconnects, so slot B still finishes and is recorded. |
+| `SlotChannel` | Single-producer/single-consumer queue drained by one HTTP response. Aborting one connection ends only that connection. Each side gets `matchup_done` as soon as *its* slot finishes rather than waiting for the other. The backlog is capped at `ARENA_JOIN_MAX_QUEUED_EVENTS` (default 4096), after which that slot fails rather than growing without bound. |
+| `JoinHandshake` | What the leader publishes to the follower once the matchup exists: `matchupId`, `matchupToken`, `conversationId`, `turnIndex`. |
+
+Everything that could duplicate arena semantics happens **only** on the leader's
+path — reading the conversation, the matchmaker, the token, the `matchups` insert
+— and the follower mirrors slot B. Each connection announces only its own slot in
+`matchup_started` (`slots: ["A"]` / `["B"]`), and the leader's control-plane
+`AbortController` cascades onto the shared generation, so one `stop` stops both.
+
+Failure modes are explicit rather than silent, because a client that thinks it
+joined but didn't would show one answer and cast a meaningless vote:
+
+| Condition | Status / code |
+|---|---|
+| `joinKey` without a `sessionId` | `400 join_requires_session` |
+| Both slots of the scope already claimed | `409 join_slots_exhausted` |
+| Sibling arrives after the window closed | `409 join_expired` |
+| More than `ARENA_JOIN_MAX_PENDING` unpaired scopes | `503 join_unavailable` |
+| Leader never publishes (window + 30 s) | `504 join_leader_timeout` |
+| Pre-stream failure on the leader | The leader's own status/code, forwarded verbatim so both siblings report the same thing (`500 join_failed` when it is unclassified) |
+
+A window that closes with no sibling is **not** an error: the round degrades to
+exactly the default shape — both slots on the leader's connection, votable,
+nothing wasted. `ARENA_JOIN_WINDOW_MS=0` disables joining entirely and a
+`joinKey` is then ignored. See [Setup → environment variables](setup.md) for the
+two knobs and their bounds.
 
 ## Multi-turn linear history
 
@@ -180,12 +277,23 @@ redact stored content.
   expiry. Only its SHA-256 hash is stored in the database.
 - Voting verifies signature, expiry, claims-vs-database consistency, and the
   stored hash; a unique constraint enforces one vote per matchup.
+- The invariant is asserted as a property rather than per-adapter:
+  `server/src/blindness.test.ts` generates its cases from the protocol registry and
+  checks that no model identity reaches the wire in **any** protocol, on a single
+  connection and on both siblings of a [joined](#slot-join-one-matchup-across-two-requests)
+  matchup — so a newly added adapter is covered without a new test.
 
 ## Bradley-Terry rating worker
 
 The `worker/` package (`omniarena_rating`) computes the style-agnostic default
 leaderboard rating. It is a separate Python process (NumPy/SciPy), not part of
 the Fastify request path, and follows a strict *aggregate-then-compute* design.
+
+Its only input is recorded **comparisons** — `preferences ⋈ matchups`. A
+non-votable `single` round persists neither, so it never reaches the worker, and
+a deployment that mostly serves such rounds has nothing to rate. See
+[Rating methodology → what the engine cannot
+rate](rating-methodology.md#what-the-engine-cannot-rate).
 
 | Step | Module | What it does |
 |---|---|---|
@@ -203,8 +311,17 @@ Ratings are reported on an Elo-like display scale
 [rating methodology](rating-methodology.md) doc for the full statistical story.
 
 The worker runs one-shot (`python -m omniarena_rating`) or as a periodic loop
-(`--loop`) with warm-started refits; the Docker Compose `worker` service runs
-the loop. Only `both_good`/`both_bad` count as ties; `skip` votes are dropped.
+(`--loop`); the Docker Compose `worker` service runs the loop. Loop refits are
+warm-started, except that every `FULL_REFIT_EVERY` refits (default 12) the warm
+state is discarded for a from-scratch ground-truth fit, which also cross-checks
+the warm path for drift. Only `both_good`/`both_bad` count as ties; `skip` votes
+are dropped.
+
+The compose `worker` service runs **both passes**: its image `CMD` is
+`--loop --style`, so a stock `docker compose up` keeps `model_style_ratings` and
+`style_control_coefficients` current alongside `model_ratings`, and the
+dashboard's style panels have data from the first refit onward. See
+[Setup → rating worker](setup.md#rating-worker).
 
 ### Rating methodology
 
@@ -277,20 +394,68 @@ every pair reachable so the comparison graph stays connected. It is the default;
 
 ## Frontend
 
-The headless hooks now live in the published **`@omni-arena/react`** SDK
+The headless hooks live in the published **`@omni-arena/react`** SDK
 (`packages/react-sdk/`), and the demo imports them — a single source of truth.
-`useArenaChat` POSTs the prompt, parses the native SSE stream into per-slot
-state, submits votes with the matchup token, and exposes revealed identities
-only after a successful vote; `useArenaLeaderboard` fetches the leaderboard.
-Both accept an optional `baseUrl` (default `""` = same-origin/proxied). See
-[SDK](sdk.md).
+The package is deliberately layered: the protocol, session, stream, and vote
+concerns are **framework-free modules**, and each hook is a thin React shell over
+them, so a non-React (or server-side) client can reuse the same wire logic
+instead of reimplementing it.
 
-`web/src/App.tsx` is a single-page demo (prompt box, two anonymous panes with
-markdown rendering, five vote buttons, reveal, leaderboard) that consumes those
-hooks from `@omni-arena/react`. When a model has a worker-computed rating, the
-leaderboard shows the Elo-like rating with its ±CI half-width; otherwise it
-falls back to the win-rate percentage. When a style-controlled rating exists, it
-is shown alongside as `style <rating>`.
+| Module | Exports | Responsibility |
+|---|---|---|
+| `protocol.ts` | `parseArenaMatchup`, `parseArenaReveal`, `parseArenaSlotError`, `isArenaSlot`/`isArenaVote`/`isDecisiveVote`, `ARENA_VOTE_VALUES` | Narrow untrusted wire JSON into typed events; the one place the wire shape is known |
+| `session.ts` | `getSessionId`, `ARENA_SESSION_STORAGE_KEY` | Anonymous session ID, persisted in `localStorage`, degrading to in-memory when storage is unavailable |
+| `stream.ts` | `readArenaStream`, `createArenaSseDecoder` | Incremental SSE decoding over a `ReadableStream`, independent of any hook |
+| `vote.ts` | `submitArenaVote` | One `POST /api/arena/vote` with the matchup token |
+| `useArenaChat.ts` | `useArenaChat` | POSTs the prompt, drives `readArenaStream` into per-slot state, votes through `submitArenaVote`, and exposes revealed identities only after a successful vote |
+| `useArenaVote.ts` | `useArenaVote` | Voting on its own, for a UI that renders the stream itself (the integrations do) |
+| `useArenaLeaderboard.ts` | `useArenaLeaderboard` | Leaderboard payload including rating context |
+| `useArenaAnalytics.ts` | `useArenaSummary`, `useArenaHeadToHead`, `useArenaModelMetrics`, `useArenaActivity`, `useArenaStyleControl`, `useArenaRatingHistory` | One hook per analytics endpoint, all with the same `{ data, refresh, error }` shape |
+
+Every hook accepts an optional `baseUrl` (default `""` = same-origin/proxied).
+See [SDK](sdk.md).
+
+The demo app (`web/`) is a two-page SPA under `react-router-dom` (the server's
+SPA fallback makes deep links work in production):
+
+- **`/` — ArenaPage** (`web/src/routes/ArenaPage.tsx`): the original demo —
+  prompt box, two anonymous markdown panes, five vote buttons, reveal, and the
+  leaderboard. When a model has a worker-computed rating, the leaderboard shows
+  the Elo-like rating with its ±CI half-width; otherwise it falls back to the
+  win-rate percentage. When a style-controlled rating exists, it is shown
+  alongside as `style <rating>`.
+- **`/insights` — InsightsPage** (`web/src/routes/InsightsPage.tsx`): the
+  analytics dashboard — a summary stat strip plus four tabs of charts
+  (`web/src/dashboard/`, chart primitives in `web/src/charts/`):
+  - **Rankings** — win-rate lollipop diverging from a 50% reference line,
+    Bradley-Terry forest plot with 95% CI whiskers, raw-vs-style-controlled
+    dumbbell, rank-shift bump chart, and vote-outcome stacked bars. Built
+    entirely from the leaderboard payload.
+  - **Head-to-head** — pair win-rate matrix (CSS grid, win-rate/games toggle,
+    click-to-drill-down), pair drill-down card, tie-rate-per-pair bars, and a
+    connectivity callout grouping models by `componentId`.
+  - **Style & bias** — the style-coefficient panel, per-model slot-A vs slot-B
+    position-bias dumbbell, verbosity/latency/markdown-density vs win-rate
+    scatters, and per-model latency spread (p50–p90).
+  - **Activity** — rating-over-time lines (from `model_rating_history`),
+    stacked vote volume by outcome, and cumulative games per model.
+
+  Ranked row charts (lollipop, forest, dumbbells, bars, matrix) are hand-rolled
+  CSS grid/SVG for precise control; time series and scatters use `recharts`.
+
+  Because every chart is derived from recorded votes, a fresh deployment has
+  nothing to plot. Individual cards can only report *what* is missing, so
+  `GettingStartedNotice` states the remedy once at the page level: the
+  [demo-data seeder](setup.md#demo-data) when no votes exist, the worker command
+  when votes exist but no fit does. It disappears once both are present. The page
+  fetches the summary aggregate once and passes it to both the stat strip and the
+  notice rather than each hook self-fetching.
+  Each tab is a **nested route** (`/insights/rankings`, `/insights/head-to-head`,
+  `/insights/style`, `/insights/activity`; the index redirects to `rankings`), so
+  a tab is a shareable deep link rather than component state, and each tab is
+  lazily imported on its own — the voting page never pays for the charting
+  bundle, and opening one tab does not load the other three. Unknown paths
+  redirect to `/`.
 
 Beyond the bundled demo, two reference integrations live in
 [`examples/`](../../examples/): a Next.js + Vercel AI SDK app
@@ -300,13 +465,48 @@ the deterministic end-to-end suite in `e2e/` (`npm run e2e`, Playwright + the
 mock provider), which also asserts the raw `vercel-ai` and `ag-ui` wire streams.
 See the [integration guide](integration.md) and [Setup](setup.md).
 
+## Integrations layer
+
+[`integrations/`](../../integrations/) is the layer above the examples: instead of
+apps written for the arena, it wires the arena into **real upstream chat UIs at
+pinned revisions**, which is what turns "the protocol should work" into evidence
+that it does. Each directory is outside the npm workspace with its own
+`package.json`, lockfile, tests, and README, so a root install never builds them
+and an upstream's dependency tree cannot affect the published packages.
+
+| Directory | Upstream | Protocol | Shape |
+|---|---|---|---|
+| `integrations/vercel-ai-chatbot/` | `vercel/ai-chatbot` | `vercel-ai` | Pinned clone + overlay |
+| `integrations/assistant-ui/` | assistant-ui monorepo, `examples/with-ag-ui` | `ag-ui` | Pinned clone + overlay |
+| `integrations/open-webui/` | Open WebUI container image | `openai` | Published image + OpenAI-compatible bridge |
+
+The two Node integrations share one mechanism: `upstream.json` pins the exact
+commit, `.upstream/` is the gitignored clone, `overlay/` holds the arena sources
+copied in verbatim, and `scripts/overlay.mjs` applies **anchored** patches to
+upstream's own files — each anchor must match exactly once, so an upstream that
+moved a line fails setup loudly instead of yielding a half-integrated app. The
+arena-specific code is therefore reviewable in `overlay/` without reading a diff
+against a vendored tree.
+
+Open WebUI is the case that shaped the server: it sends **one request per model**
+for a compare turn, which is what [slot join](#slot-join-one-matchup-across-two-requests)
+exists to serve, and it reaches the arena through a small OpenAI-compatible
+bridge in `integrations/open-webui/bridge/` rather than an overlay, because the UI
+ships as a container image. All three run key-free against the mock provider.
+
 ## What is intentionally not built yet
 
-- **Mid-stream steering wiring** — the control plane's `steer` message is a
+- **Mid-stream steering execution** — the control plane's `steer` message is a
   schema-validated, documented stub returning a negative ack; the instruction is
-  not yet threaded into the running producers in `ArenaCore`.
+  not yet threaded into the running producers in `ArenaCore`. `stop` is real.
+- **`sampled` trigger** — `ARENA_TRIGGER` accepts only `always` and `manual`
+  (`arenaTriggerSchema` in `server/src/arena/mode.ts`), so `sampled` is rejected at
+  boot rather than silently behaving like another mode. The seam exists —
+  `resolveArenaPlan` already takes an injectable `rng` — but nothing branches on it
+  yet. Likewise the `shadow` plan variant is declared so consumers can be
+  exhaustive ahead of time, and is currently unreachable. See
+  [Setup → trigger modes](setup.md#trigger-modes).
 - **Multimodal input** — deferred.
-- **Mid-stream steering execution** — see above.
 
 OmniArena does not scrub or redact stored prompts/responses — content is
 persisted as received.

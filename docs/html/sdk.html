@@ -33,28 +33,140 @@
 <main>
   <div class="crumb"><a href="../">Docs</a> · <a href="architecture.html">Architecture</a> · <a href="api.html">API</a> · <a href="integration.html">Integration</a> · <a href="rating-methodology.html">Rating methodology</a> · <a href="data-model.html">Data model</a> · <a href="setup.html">Setup</a> · <a href="sdk.html">SDK</a></div>
   <h1>SDK</h1>
-  <p class="lede"><span class="mono">@omni-arena/react</span> — the published, <strong>headless</strong> React SDK for OmniArena: blind side-by-side comparisons over one SSE stream, blind voting with identity reveal, multi-turn continuation, and the Bradley-Terry leaderboard. No UI, no styling — just state and actions.</p>
+  <p class="lede"><span class="mono">@omni-arena/react</span> — the <strong>headless</strong> React SDK for OmniArena: blind side-by-side comparisons over one SSE stream, blind voting with identity reveal, multi-turn continuation, and the Bradley-Terry leaderboard. No UI, no styling — just state and actions.</p>
 
-  <div class="callout">Lives in the <span class="mono">packages/react-sdk/</span> workspace and is the single source of truth for the arena hooks; the demo app in <span class="mono">web/</span> is its reference consumer.</div>
+  <div class="callout">Workspace package at <span class="mono">packages/react-sdk/</span> (name <span class="mono">@omni-arena/react</span>); the demo app in <span class="mono">web/</span> is its reference consumer. Not published to npm yet.</div>
+
+  <h2>Two layers</h2>
+  <p>Which layer you want depends on who owns the conversation state.</p>
+  <table>
+    <tr><th>Layer</th><th>Use when</th><th>What it is</th></tr>
+    <tr><td class="mono">Primitives</td><td>An existing chat app (Vercel AI Chatbot's <span class="mono">useChat</span>, assistant-ui's runtime, CopilotKit, your own) already owns the connection, the stream, and the persisted message store.</td><td>Stateless, React-free functions and types: session id, vote call, SSE decoding, wire parsers. They add arena semantics without competing for that state, and run in a server route as happily as in the browser.</td></tr>
+    <tr><td class="mono">useArenaChat</td><td>Greenfield app with no chat runtime of its own.</td><td>The all-in-one hook. Built <em>on</em> the primitives, so there is one implementation of each piece.</td></tr>
+  </table>
 
   <h2>Install</h2>
-<pre><code>npm install @omni-arena/react react</code></pre>
-  <p><span class="mono">react</span> (&gt;=18) is a peer dependency.</p>
+  <p>From another package in this monorepo, depend on it the same way <span class="mono">web/</span> does:</p>
+<pre><code>{
+  "dependencies": {
+    "@omni-arena/react": "*"
+  }
+}</code></pre>
+  <p><span class="mono">react</span> (&gt;=18) is a peer dependency. Once published to npm: <span class="mono">npm install @omni-arena/react react</span>.</p>
 
   <h2>Exports</h2>
-  <p>Two hooks and their public types:</p>
+  <p>The primitives, three arena hooks, six analytics hooks (one per <a href="api.html"><span class="mono">/api/arena/analytics/*</span></a> endpoint), and their public types:</p>
   <div>
+    <span class="chip">getSessionId</span>
+    <span class="chip">submitArenaVote</span>
+    <span class="chip">createArenaSseDecoder</span>
+    <span class="chip">readArenaStream</span>
+    <span class="chip">parseArenaMatchup</span>
+    <span class="chip">parseArenaReveal</span>
+    <span class="chip">parseArenaSlotError</span>
+    <span class="chip">isDecisiveVote</span>
+    <span class="chip">isArenaSlot</span>
+    <span class="chip">isArenaVote</span>
+    <span class="chip">ARENA_VOTE_VALUES</span>
+    <span class="chip">ARENA_SESSION_STORAGE_KEY</span>
+    <span class="chip">useArenaVote</span>
     <span class="chip">useArenaChat</span>
     <span class="chip">useArenaLeaderboard</span>
+    <span class="chip">useArenaSummary</span>
+    <span class="chip">useArenaHeadToHead</span>
+    <span class="chip">useArenaModelMetrics</span>
+    <span class="chip">useArenaActivity</span>
+    <span class="chip">useArenaStyleControl</span>
+    <span class="chip">useArenaRatingHistory</span>
     <span class="chip">ArenaSlot</span>
     <span class="chip">ArenaVote</span>
+    <span class="chip">ArenaMode</span>
+    <span class="chip">ArenaMatchupInfo</span>
+    <span class="chip">ArenaReveal</span>
+    <span class="chip">ArenaSlotError</span>
+    <span class="chip">ArenaStreamEvent</span>
+    <span class="chip">ArenaStreamEventType</span>
+    <span class="chip">ArenaSseDecoder</span>
     <span class="chip">SlotState</span>
     <span class="chip">RevealedModel</span>
+    <span class="chip">GetSessionIdOptions</span>
+    <span class="chip">SubmitArenaVoteInput</span>
+    <span class="chip">UseArenaVoteOptions</span>
+    <span class="chip">ArenaVoteTarget</span>
     <span class="chip">LeaderboardModel</span>
+    <span class="chip">LeaderboardComponents</span>
+    <span class="chip">StyleControlReport</span>
+    <span class="chip">StyleEffect</span>
     <span class="chip">UseArenaChatOptions</span>
     <span class="chip">UseArenaLeaderboardOptions</span>
+    <span class="chip">AnalyticsResource</span>
+    <span class="chip">AnalyticsModelRef</span>
+    <span class="chip">ArenaSummary</span>
+    <span class="chip">HeadToHeadStats</span>
+    <span class="chip">HeadToHeadPair</span>
+    <span class="chip">ModelMetricsEntry</span>
+    <span class="chip">ActivityStats</span>
+    <span class="chip">ActivityBucketSize</span>
+    <span class="chip">ActivityVoteBucket</span>
+    <span class="chip">ActivityCumulativeBucket</span>
+    <span class="chip">StyleControlStats</span>
+    <span class="chip">StyleCoefficient</span>
+    <span class="chip">RatingHistoryStats</span>
+    <span class="chip">RatingHistoryPoint</span>
+    <span class="chip">UseArenaAnalyticsOptions</span>
+    <span class="chip">UseArenaActivityOptions</span>
+    <span class="chip">UseArenaRatingHistoryOptions</span>
   </div>
-  <div class="callout"><span class="mono">ArenaSlot</span> = <span class="mono">"A" | "B"</span>; <span class="mono">ArenaVote</span> = <span class="mono">"left" | "right" | "both_good" | "both_bad" | "skip"</span>.</div>
+  <div class="callout"><span class="mono">packages/react-sdk/src/index.ts</span> is the complete public surface — <span class="mono">exports</span> in <span class="mono">package.json</span> exposes only the package root, so nothing outside that file is importable. <span class="mono">ArenaSlot</span> = <span class="mono">"A" | "B"</span>; <span class="mono">ArenaVote</span> = <span class="mono">"left" | "right" | "both_good" | "both_bad" | "skip"</span>.</div>
+
+  <h2>Primitives (host-app integration)</h2>
+  <p>Stateless and free of React and DOM assumptions, so each one can be called from a Next.js route handler, an edge function, or a non-React client.</p>
+  <table>
+    <tr><th>Export</th><th>Signature</th><th>Purpose</th></tr>
+    <tr><td class="mono">getSessionId(options?)</td><td class="mono">(GetSessionIdOptions) =&gt; string</td><td>The anonymous session id the arena ties conversation ownership to. Persisted in <span class="mono">localStorage</span> under <span class="mono">ARENA_SESSION_STORAGE_KEY</span> (<span class="mono">omni-arena-session</span>); pass <span class="mono">{ storage, key, prefix }</span> to relocate it, or call it where there is no storage (a server route) to mint a one-off id.</td></tr>
+    <tr><td class="mono">submitArenaVote(input)</td><td class="mono">(SubmitArenaVoteInput) =&gt; Promise&lt;ArenaReveal&gt;</td><td><span class="mono">POST /api/arena/vote</span>. Rejects with the server's own message (<span class="mono">Vote already recorded</span>, <span class="mono">Invalid matchup token</span>, …); resolves with the reveal. Takes <span class="mono">baseUrl</span> and an optional <span class="mono">signal</span>, so a host's proxy route can forward its own vote.</td></tr>
+    <tr><td class="mono">useArenaVote(options?)</td><td class="mono">see below</td><td>A vote button's worth of state around <span class="mono">submitArenaVote</span>, for apps whose runtime owns the messages and only needs the reveal.</td></tr>
+    <tr><td class="mono">createArenaSseDecoder&lt;T&gt;()</td><td class="mono">() =&gt; ArenaSseDecoder&lt;T&gt;</td><td>Incremental SSE decoder: <span class="mono">push(chunk)</span> returns the events a chunk completed, <span class="mono">flush()</span> the trailing one. Handles CRLF, multi-line <span class="mono">data:</span>, chunk-split multi-byte characters, and a <span class="mono">data: [DONE]</span> sentinel. Generic over the payload because the adapters reframe the same round.</td></tr>
+    <tr><td class="mono">readArenaStream&lt;T&gt;(source)</td><td class="mono">(Response | ReadableStream) =&gt; AsyncGenerator&lt;T&gt;</td><td>The same decoder as a <span class="mono">for await</span> iterator, for a consumer that made the request itself.</td></tr>
+    <tr><td class="mono">parseArenaMatchup(value)</td><td class="mono">(unknown) =&gt; ArenaMatchupInfo | null</td><td>Normalise a round from a <span class="mono">matchup_started</span> event, AG-UI's <span class="mono">arena_matchup</span> custom value, or a <span class="mono">data-arena-meta</span> part — all carry the same fields.</td></tr>
+    <tr><td class="mono">parseArenaReveal(value)</td><td class="mono">(unknown) =&gt; ArenaReveal | null</td><td>Read a reveal from a vote response or an adapter's reveal part. Null on a half-reveal, so a UI cannot show one identity while still claiming the round is blind.</td></tr>
+    <tr><td class="mono">parseArenaSlotError(value)</td><td class="mono">(unknown) =&gt; ArenaSlotError | null</td><td>Read a per-slot failure; defaults the message.</td></tr>
+    <tr><td class="mono">isDecisiveVote(vote)</td><td class="mono">(ArenaVote) =&gt; boolean</td><td>Whether the vote leaves a winning response, i.e. whether the next turn may pass <span class="mono">conversationId</span>. Only <span class="mono">left</span>/<span class="mono">right</span> do.</td></tr>
+    <tr><td class="mono">isArenaSlot / isArenaVote / ARENA_VOTE_VALUES</td><td class="mono">—</td><td>Guards and the five vote values, for validating untyped payloads at a host boundary.</td></tr>
+  </table>
+
+  <h3>The normalised round</h3>
+<pre><code>{
+  matchupId: string;           // always present; the control-plane stream id
+  matchupToken: string | null; // null on a round with nothing to vote on
+  conversationId?: string;     // omitted when the server persisted nothing
+  turnIndex?: number;          // omitted with conversationId
+  slots: ArenaSlot[];          // defaults to ["A", "B"]
+  mode: ArenaMode;             // defaults to "matchup"
+  votable: boolean;            // authoritative; defaults to true for older servers
+}</code></pre>
+  <div class="callout"><span class="mono">matchupToken</span>, <span class="mono">conversationId</span>, and <span class="mono">turnIndex</span> are optional on the wire and omitted entirely for a <span class="mono">single</span> (non-votable) round, so the parser normalises an empty-string token to <span class="mono">null</span> and leaves the two conversation fields off the result rather than inventing defaults — a host that sends a fabricated <span class="mono">conversationId</span> back gets a 404.</div>
+  <h3>The reveal</h3>
+<pre><code>{
+  models: Record&lt;ArenaSlot, RevealedModel&gt;; // RevealedModel = { id, displayName }
+  vote: ArenaVote | null;                    // the vote it was granted for
+}</code></pre>
+  <div class="callout">Both slots must be present or <span class="mono">parseArenaReveal()</span> returns <span class="mono">null</span> — a half-reveal would let a UI name one model while still calling the round blind. <span class="mono">vote</span> is <span class="mono">null</span> when the payload did not carry one; <span class="mono">submitArenaVote()</span> always fills it in, because it knows the vote it sent, so a UI can badge the winning column without tracking the choice itself.</div>
+  <div class="callout"><span class="mono">useArenaVote(options?)</span> takes <span class="mono">{ baseUrl?, matchupId?, matchupToken? }</span> and returns <span class="mono">{ vote, reset, reveal, isVoting, error, canVote }</span>. <span class="mono">vote(choice, target?)</span> resolves to the <span class="mono">ArenaReveal</span> or to <span class="mono">null</span> with the message in <span class="mono">error</span> — it never throws — and <span class="mono">target</span> overrides the round for a host that keeps several rounds on screen. <span class="mono">canVote</span> is true only while there is a <span class="mono">matchupId</span> <em>and</em> a non-null <span class="mono">matchupToken</span> <em>and</em> no reveal yet, so one round cannot be voted on twice; <span class="mono">reset()</span> clears the reveal, the error, and the in-flight flag.</div>
+  <p>A host app that owns its own stream typically needs three of these: <span class="mono">getSessionId()</span> when it starts a round, <span class="mono">parseArenaMatchup()</span> on the round's metadata, and <span class="mono">submitArenaVote()</span>/<span class="mono">useArenaVote()</span> when the user votes.</p>
+<pre><code>// A host's own proxy route: forward the vote, keep the reveal server-side.
+import { submitArenaVote } from "@omni-arena/react";
+
+export async function POST(request: Request) {
+  const { matchupId, matchupToken, vote } = await request.json();
+  const reveal = await submitArenaVote({
+    matchupId,
+    matchupToken,
+    vote,
+    baseUrl: process.env.OMNIARENA_URL,
+  });
+  return Response.json(reveal);
+}</code></pre>
 
   <h2><span class="mono">useArenaChat(options?)</span></h2>
   <p>Starts and continues matchups, streams both responses into per-slot state, and records votes.</p>
@@ -62,23 +174,47 @@
     <tr><th>Field</th><th>Type</th><th>Description</th></tr>
     <tr><td class="mono">sendPrompt(prompt)</td><td class="mono">(string) =&gt; Promise&lt;void&gt;</td><td>Start or continue a matchup; streams tokens into <span class="mono">slots</span>.</td></tr>
     <tr><td class="mono">vote(vote)</td><td class="mono">(ArenaVote) =&gt; Promise&lt;void&gt;</td><td>Record a vote and reveal identities.</td></tr>
+    <tr><td class="mono">stop()</td><td class="mono">() =&gt; Promise&lt;void&gt;</td><td>Abort the in-flight matchup over the <a href="api.html"><span class="mono">/api/arena/control</span></a> WebSocket, then settle both slots locally. No-op when nothing is streaming; failures land in <span class="mono">error</span> rather than throwing.</td></tr>
     <tr><td class="mono">resetConversation()</td><td class="mono">() =&gt; void</td><td>Abort any stream and clear all state.</td></tr>
     <tr><td class="mono">slots</td><td class="mono">Record&lt;ArenaSlot, SlotState&gt;</td><td>Per-slot <span class="mono">content</span>, <span class="mono">status</span> (idle/streaming/done/error), <span class="mono">error</span>.</td></tr>
     <tr><td class="mono">isStreaming</td><td class="mono">boolean</td><td>A matchup is currently streaming.</td></tr>
     <tr><td class="mono">canVote</td><td class="mono">boolean</td><td>A matchup is ready to be voted on.</td></tr>
     <tr><td class="mono">revealedModels</td><td class="mono">Record&lt;ArenaSlot, RevealedModel&gt; | undefined</td><td>Model identities, only after voting.</td></tr>
     <tr><td class="mono">conversationId</td><td class="mono">string | undefined</td><td>The active multi-turn conversation, if any.</td></tr>
-    <tr><td class="mono">error</td><td class="mono">string | null</td><td>Last request error.</td></tr>
+    <tr><td class="mono">error</td><td class="mono">string | null</td><td>Last request error, including a terminal <span class="mono">run_error</span> reported mid-stream.</td></tr>
   </table>
-  <div class="callout">Manages an anonymous session id in <span class="mono">localStorage</span> and continues a conversation only after a decisive <span class="mono">left</span>/<span class="mono">right</span> vote, matching the server's linear-history rules (see <a href="api.html">API</a>).</div>
+  <div class="callout">A round the server persisted nothing for (a <span class="mono">single</span> one) arrives with no <span class="mono">conversationId</span> and no vote token, and the hook holds none: <span class="mono">canVote</span> stays <span class="mono">false</span> and the next prompt starts fresh instead of sending back an id the server would reject.</div>
+  <div class="callout">A composition of the primitives above — <span class="mono">getSessionId()</span> for the session, <span class="mono">createArenaSseDecoder()</span> for the stream, <span class="mono">parseArenaMatchup()</span> for the round, <span class="mono">submitArenaVote()</span> for the vote — plus the React state and the control socket. Continues a conversation only after a decisive <span class="mono">left</span>/<span class="mono">right</span> vote, matching the server's linear-history rules (see <a href="api.html">API</a>). The control socket is opened lazily on the first <span class="mono">stop()</span> and closed on the <span class="mono">stopped</span> acknowledgement, on <span class="mono">resetConversation()</span>, or on unmount, so a hook that never stops a matchup never opens a WebSocket.</div>
 
   <h2><span class="mono">useArenaLeaderboard(options?)</span></h2>
   <p>Fetches standings once on mount; call <span class="mono">refresh()</span> after a vote to update them.</p>
-<pre><code>{ models: LeaderboardModel[]; refresh(): Promise&lt;void&gt;; error: string | null }</code></pre>
-  <div class="callout"><span class="mono">LeaderboardModel</span> carries win/loss/tie/skip counts, <span class="mono">winRate</span>, and the optional worker-computed <span class="mono">rating*</span> and <span class="mono">styleControlled*</span> fields (see <a href="api.html">API → leaderboard</a>).</div>
+  <table>
+    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+    <tr><td class="mono">models</td><td class="mono">LeaderboardModel[]</td><td>Win/loss/tie/skip counts, <span class="mono">winRate</span>, and the optional worker-computed <span class="mono">rating*</span> and <span class="mono">styleControlled*</span> fields.</td></tr>
+    <tr><td class="mono">components</td><td class="mono">LeaderboardComponents</td><td>Connectivity of the comparison graph: <span class="mono">count</span> (<span class="mono">null</span> before the worker has run) and <span class="mono">groups</span>. Ratings are only comparable within one component, so a UI showing them should surface this.</td></tr>
+    <tr><td class="mono">styleControl</td><td class="mono">StyleControlReport</td><td>The fitted style confounders (<span class="mono">effects</span>, each with <span class="mono">logOdds</span>, <span class="mono">points</span>, <span class="mono">basis</span>, <span class="mono">perUnit</span>), plus <span class="mono">votesObserved</span> and <span class="mono">computedAt</span>.</td></tr>
+    <tr><td class="mono">refresh()</td><td class="mono">() =&gt; Promise&lt;void&gt;</td><td>Re-fetch; call after a vote.</td></tr>
+    <tr><td class="mono">error</td><td class="mono">string | null</td><td>Last request error.</td></tr>
+  </table>
+  <div class="callout">Both context fields are read as optional on the wire and fall back to an empty report (<span class="mono">count: null</span>, <span class="mono">effects: []</span>), so the hook keeps working against a server that predates them. See <a href="api.html">API → leaderboard</a> for the field-by-field meaning.</div>
+
+  <h2>Analytics hooks</h2>
+  <p>One hook per <a href="api.html"><span class="mono">/api/arena/analytics/*</span></a> endpoint, powering the demo's insights dashboard. Each fetches once on mount and returns the same shape, exported as <span class="mono">AnalyticsResource&lt;T&gt;</span>:</p>
+<pre><code>{ data: T | null; refresh(): Promise&lt;void&gt;; error: string | null }</code></pre>
+  <p>Endpoints are relative to <span class="mono">/api/arena</span>; the hooks prepend <span class="mono">baseUrl</span> and that prefix themselves.</p>
+  <table>
+    <tr><th>Hook</th><th>Endpoint</th><th><span class="mono">data</span> type</th><th>Extra options</th></tr>
+    <tr><td class="mono">useArenaSummary()</td><td class="mono">/analytics/summary</td><td class="mono">ArenaSummary</td><td>—</td></tr>
+    <tr><td class="mono">useArenaHeadToHead()</td><td class="mono">/analytics/head-to-head</td><td class="mono">HeadToHeadStats</td><td>—</td></tr>
+    <tr><td class="mono">useArenaModelMetrics()</td><td class="mono">/analytics/model-metrics</td><td class="mono">{ models: ModelMetricsEntry[] }</td><td>—</td></tr>
+    <tr><td class="mono">useArenaActivity()</td><td class="mono">/analytics/activity</td><td class="mono">ActivityStats</td><td><span class="mono">bucket: "day" | "hour"</span> (default <span class="mono">day</span>)</td></tr>
+    <tr><td class="mono">useArenaStyleControl()</td><td class="mono">/analytics/style-control</td><td class="mono">StyleControlStats</td><td>—</td></tr>
+    <tr><td class="mono">useArenaRatingHistory()</td><td class="mono">/analytics/rating-history</td><td class="mono">RatingHistoryStats</td><td><span class="mono">since: string</span> (ISO 8601)</td></tr>
+  </table>
+  <div class="callout"><span class="mono">data</span> is <span class="mono">null</span> until the first response arrives; every payload type is exported and mirrors the API contract. <span class="mono">useArenaModelMetrics()</span> is the one hook whose payload is a wrapper object rather than the named type — the endpoint answers <span class="mono">{ models: [...] }</span>, so read <span class="mono">data.models</span>. All take the same <span class="mono">baseUrl</span> option as the arena hooks; the last two extend it with the option above (<span class="mono">UseArenaActivityOptions</span>, <span class="mono">UseArenaRatingHistoryOptions</span>).</div>
 
   <h2>The <span class="mono">baseUrl</span> option</h2>
-  <p>Both hooks take <span class="mono">options.baseUrl?: string</span> — the origin/path prefix the arena API is served from. Default <span class="mono">""</span> hits the same-origin <span class="mono">/api/arena/*</span> routes (e.g. behind a dev proxy, as the demo does). Pass an absolute origin to target a remote server.</p>
+  <p>Every hook — and <span class="mono">submitArenaVote()</span> — takes <span class="mono">baseUrl?: string</span>: the origin/path prefix the arena API is served from. Default <span class="mono">""</span> hits the same-origin <span class="mono">/api/arena/*</span> routes (e.g. behind a dev proxy, as the demo does). Pass an absolute origin to target a remote server.</p>
 <pre><code>useArenaChat({ baseUrl: "https://arena.example.com" });
 useArenaLeaderboard({ baseUrl: "https://arena.example.com" });</code></pre>
 
@@ -96,7 +232,7 @@ export function Arena() {
     &lt;/div&gt;
   );
 }</code></pre>
-  <div class="callout">The demo app <span class="mono">web/src/App.tsx</span> is the reference consumer: it wires the same two hooks into a prompt box, two anonymous markdown panes, five vote buttons, the identity reveal, and the leaderboard.</div>
+  <div class="callout">The demo app (<span class="mono">web/</span>) is the reference consumer: <span class="mono">web/src/routes/ArenaPage.tsx</span> wires <span class="mono">useArenaChat</span> and <span class="mono">useArenaLeaderboard</span> into a prompt box, two anonymous markdown panes, five vote buttons, the identity reveal, and the leaderboard, while the <span class="mono">/insights</span> dashboard (<span class="mono">web/src/routes/InsightsPage.tsx</span> + <span class="mono">web/src/dashboard/</span>) consumes <span class="mono">useArenaSummary</span>, <span class="mono">useArenaHeadToHead</span>, <span class="mono">useArenaModelMetrics</span>, <span class="mono">useArenaActivity</span>, and <span class="mono">useArenaRatingHistory</span>. Its style-bias tab reads the confounders off <span class="mono">useArenaLeaderboard</span>'s <span class="mono">styleControl</span> field rather than calling <span class="mono">useArenaStyleControl</span>, so that hook has no demo consumer — a host app that wants the style fit without the standings is its intended caller.</div>
 </main>
 </body>
 </html>
