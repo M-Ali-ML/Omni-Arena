@@ -7,7 +7,7 @@
 //
 // Usage: node scripts/e2e.mjs [--skip-build] [-- <playwright args>]
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -50,6 +50,18 @@ function runOrExit(command, args, cwd, env) {
 for (const dir of [integrationDir, toolsDir]) {
   if (!existsSync(path.join(dir, "node_modules"))) {
     runOrExit("npm", ["install"], dir);
+  }
+}
+
+const rootPgMem = path.resolve(integrationDir, "../../node_modules/pg-mem");
+if (!existsSync(rootPgMem)) {
+  const localPgMem = path.resolve(integrationDir, "node_modules/pg-mem");
+  if (existsSync(localPgMem)) {
+    try {
+      symlinkSync(localPgMem, rootPgMem, "dir");
+    } catch {
+      // Ignore if symlink fails
+    }
   }
 }
 
