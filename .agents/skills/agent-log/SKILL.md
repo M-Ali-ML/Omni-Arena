@@ -54,4 +54,4 @@ Rules:
 
 ## Reading the Log
 
-When starting work on this repo, skim the top ~10 entries of `artifacts/AGENT_LOG.md` to pick up recent changes, open bugs, and gotchas before making changes.
+When starting work on this repo, skim the top ~10 entries of `artifacts/AGENT_LOG.md` to pick up recent changes, open bugs, and gotchas before making changes. For the **current work queue** (what to do next), read `artifacts/NEXT_STEPS.md` and update it at sign-off via the `next-steps` skill (`.agents/skills/next-steps/SKILL.md`).
