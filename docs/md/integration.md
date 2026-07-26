@@ -355,10 +355,9 @@ data: {"type":"RUN_FINISHED","threadId":"c1","runId":"m1"}
   `GET /api/arena/matchups/:id`) rather than through the runtime's message
   state — an `AgentSubscriber` on the raw event stream also works and is what
   the shipped integration did before the header existed. [`integrations/assistant-ui/`](../../integrations/assistant-ui/)
-  runs against the real `@assistant-ui/react-ag-ui` runtime and its findings are
-  worth reading — note that its custom agent subclass predates the request side
-  of this adapter and is no longer necessary to *call* the arena.
-  The [`examples/assistant-ui/`](../../examples/assistant-ui/) app runs on
+  runs against the real `@assistant-ui/react-ag-ui` runtime and now votes via the
+  header; its remaining custom agent only injects `forwardedProps` / `x-arena`
+  that `useAgUiRuntime` cannot set. The [`examples/assistant-ui/`](../../examples/assistant-ui/) app runs on
   assistant-ui too, via the AI SDK runtime.
 
 ---
@@ -607,7 +606,7 @@ each documents what it found:
 | Integration | Upstream app | Adapter | What it took |
 |---|---|---|---|
 | [`integrations/open-webui/`](../../integrations/open-webui/) | Open WebUI (SvelteKit + FastAPI) | OpenAI SSE | A bridge that presents an OpenAI surface to Open WebUI — including the model list — and renders the duel, vote, reveal, and multi-turn continuation (per-chat `conversationId`) inside Open WebUI's message channel. |
-| [`integrations/assistant-ui/`](../../integrations/assistant-ui/) | assistant-ui's `with-ag-ui` example | AG-UI | A route that forwards the AG-UI stream to the stock `@assistant-ui/react-ag-ui` runtime, plus arena UI for the vote and reveal. |
+| [`integrations/assistant-ui/`](../../integrations/assistant-ui/) | assistant-ui's `with-ag-ui` example | AG-UI | A route that forwards the AG-UI stream (and `x-arena-matchup`) to the stock `@assistant-ui/react-ag-ui` runtime, plus arena UI for vote, reveal, multi-turn, and reload rehydration. |
 
 Their findings are the reason for several of the contracts documented above —
 positional `choices[0]`, `RUN_ERROR`, marked slot failures, omitted identifiers,
@@ -675,17 +674,17 @@ enabled — A is better, B is better, Both good, Both bad, Skip:
 
 ![The finished pair with the five-way vote bar enabled and both models still anonymous](../images/integrations/assistant-ui/02-vote.png)
 
-The vote uses the `matchupId` and `matchupToken` read off the `CUSTOM`
-`arena_matchup` event — which the runtime itself discards, so the app mirrors it
-from a raw agent subscriber. Only after `POST /api/arena/vote` are the columns
-named and the pick badged:
+The vote uses the `matchupId` and `matchupToken` read off the chat response's
+`x-arena-matchup` header — which the Next proxy forwards and the thin agent's
+`fetch` wrapper records, because the stock runtime discards `CUSTOM`. Only after
+`POST /api/arena/vote` are the columns named and the pick badged:
 
 ![After the vote: both columns named with their models and the picked column badged](../images/integrations/assistant-ui/03-reveal.png)
 
 Because that vote was decisive it left a winning response, so the follow-up is
 turn 2 of the *same* conversation — continued from the winner, with a fresh blind
-matchup for the new turn. The `conversationId` and `turnIndex` that make this
-possible ride the same `CUSTOM` event:
+matchup for the new turn. Continuation follows the vote response's `continuable`
+flag; a reload rebuilds the thread from `GET /api/arena/conversations/:id`:
 
 ![A follow-up question answered as turn 2 of the same conversation, below the previous round's reveal](../images/integrations/assistant-ui/04-multi-turn.png)
 

@@ -1,5 +1,4 @@
 import { connection } from "next/server";
-import { auth } from "@/app/(auth)/auth";
 import { arenaFetch } from "@/lib/arena/server";
 import { ChatbotError } from "@/lib/errors";
 
@@ -16,11 +15,6 @@ export async function GET() {
   await connection();
 
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return new ChatbotError("unauthorized:chat").toResponse();
-    }
-
     const response = await arenaFetch("/api/arena/leaderboard", {
       headers: { accept: "application/json" },
       method: "GET",

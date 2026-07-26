@@ -8,51 +8,29 @@ harness on port 3011 (`npm run arena`).
 
 Each item is written as it was observed, before anything was changed.
 
-> **Since then, findings 1, 2, 5, 6, 8, 9 and 11 have been fixed** — 1, 2, 5, 6, 8
-> and 11 in `server/` (and 6 and 9 in `packages/react-sdk` too). Finding 1: the
-> AG-UI path accepts a stock `RunAgentInput` via `agUiRequestAdapter` — prompt
-> from the last user message, arena inputs from `forwardedProps` — so the envelope
-> no longer has to be translated client-side; `threadId` is deliberately *not*
-> mapped onto `conversationId` (clients mint their own thread ids, and that
-> mapping would 404 every first turn). Finding 9: `@omni-arena/react` now ships
-> the protocol-agnostic core the finding asked for (`getSessionId`, `useArenaVote`,
-> reveal types, plus `protocol` / `session` / `stream` / `vote` modules);
-> `useArenaChat` itself still owns a native-SSE message state machine and is not
-> a drop-in for a third-party runtime, but the package is no longer unusable
-> beside one. AG-UI now emits `RUN_ERROR` — including for pre-stream failures,
-> which arrive in-band at 200 because a non-2xx is a dead transport to an AG-UI
-> client; a dead slot also arrives as text prefixed `[omni-arena:slot-error]`,
-> since mainstream runtimes discard `CUSTOM`; a non-votable round omits
-> `matchupToken` / `conversationId` / `turnIndex` instead of shipping empty or
-> unusable ones. Finding 8 is only half-fixed: the `409` continuation refusal now
-> arrives as a `RUN_ERROR` with the machine-readable code
-> `conversation_not_ready`, but no `continuable` flag was added, so the
-> "left|right ⇒ decisive" rule is still the client's to encode. Finding 11 is
-> fixed outright: the mock provider's answer text is identity-free, and
-> `server/src/blindness.test.ts` guards it. This integration's overlay,
-> `tests/protocol.spec.ts` and `tests/arena.spec.ts` were updated accordingly.
->
-> **Findings 4, 7, 8 and 10 have since been answered on the server too**, though
-> this integration has not yet been rewritten onto them. Finding 4: the matchup
-> metadata is repeated in an `x-arena-matchup` response header (every protocol,
-> exposed through CORS) and readable back from `GET /api/arena/matchups/:id`
-> (no token, identities only against a recorded vote) — so a runtime that drops
-> `CUSTOM` no longer needs a raw subscriber to vote. Finding 7: a
-> `RunAgentInput`'s `threadId`/`runId` are echoed on `RUN_STARTED` /
-> `RUN_FINISHED`, while `messageId` stays `<matchupId>:<slot>`. Finding 8: the
-> vote response now carries `continuable` and echoes `conversationId`. Finding
-> 10: `GET /api/arena/conversations/:id?sessionId=` returns every turn —
-> prompts, both answers, vote, reveal where one exists, and the still-unvoted
-> last turn — so a thread survives a reload. Finding 3 stands (parse the
-> `messageId`).
+> **Since then, findings 1, 2, 4, 5, 6, 7, 8, 9, 10 and 11 have been fixed** —
+> the server ones in `server/` (and 6 and 9 in `packages/react-sdk` too), and this
+> integration now rides those surfaces end to end. Finding 1: the AG-UI path
+> accepts a stock `RunAgentInput` via `agUiRequestAdapter` — prompt from the last
+> user message, arena inputs from `forwardedProps` — so the envelope no longer
+> has to be translated client-side; `threadId` is deliberately *not* mapped onto
+> `conversationId`. Finding 4: matchup metadata (including the vote token) is
+> repeated in an `x-arena-matchup` response header; this host's chat proxy
+> forwards it and the agent's `fetch` wrapper records it, so voting no longer
+> needs a raw `CUSTOM` subscriber. Finding 7: client `threadId`/`runId` are
+> echoed on `RUN_STARTED`/`RUN_FINISHED`. Finding 8: `POST /api/arena/vote`
+> returns `continuable` + `conversationId`, and the vote bar / store consume
+> that flag rather than re-encoding left|right. Finding 10: this host rehydrates
+> through `GET /api/arena/conversations/:id` via a `ThreadHistoryAdapter` after
+> a reload. Finding 9: `@omni-arena/react` ships the protocol-agnostic core; this
+> overlay still keeps its own thin `lib/arena/` (written before the split).
+> Finding 3 stands (parse the `messageId`).
 
 **Headline:** the adapter's *output* is good. Two concurrent slot messages in one
 run pass `@ag-ui/client`'s event verifier unmodified, reach `RUN_FINISHED`, and
 land in assistant-ui as one assistant message with two text parts — the blind
-side-by-side arena maps onto AG-UI cleanly, which was the open question. The
-ingress half of finding 1 is fixed; what remains on the input path is getting
-arena props into a run that `useAgUiRuntime` builds itself, and the metadata
-channel (finding 4) is still the load-bearing gap for voting.
+side-by-side arena maps onto AG-UI cleanly. What remains of the custom agent is
+only injecting `forwardedProps` / `x-arena` that `useAgUiRuntime` cannot set.
 
 ---
 
@@ -153,35 +131,22 @@ Not a bug, but worth stating normatively in `docs/md/integration.md`: **parse th
 `messageId`; do not rely on `slot`.** Our UI does exactly that
 (`lib/arena/protocol.ts: matchupIdFromMessageId`).
 
-## 4. The vote token rides a `CUSTOM` event that conformant runtimes discard
+## 4. The vote token rides a `CUSTOM` event that conformant runtimes discard (resolved)
 
 `arena_matchup` (with `matchupToken`) is a `CUSTOM` event. assistant-ui parses
 `CUSTOM` and dispatches it into the run aggregator, which has **no case for it**
 — the aggregator handles `RUN_*`, `TEXT_MESSAGE_*`, `THINKING_*`, `REASONING_*`,
 `TOOL_CALL_*` and `ACTIVITY_SNAPSHOT`, and silently drops everything else, `CUSTOM`
 and `STATE_SNAPSHOT` included. So through the runtime's public surface — messages,
-parts, metadata — the token does not exist, and the AG-UI path is **not** votable
-the way `docs/md/integration.md` implies.
+parts, metadata — the token does not exist, and the AG-UI path was **not** votable
+the way `docs/md/integration.md` implied.
 
-The workaround (`lib/arena/agent.ts`) is to construct the `HttpAgent` yourself and
-attach a raw `AgentSubscriber` alongside the runtime, mirroring the matchup
-metadata into a module-level store. That works, but it means the arena's most
-important payload lives outside the runtime's state model, and any consumer that
-uses the convenience path (`useAGUIRuntime({ url })`, CopilotKit's provider) gets
-a stream it can render and cannot vote on.
-
-**Suggested fixes**, roughly in order of value:
-
-1. Also return the matchup metadata as a response header (e.g.
-   `x-arena-matchup: {json}`). Any proxy or fetch-level wrapper can read it
-   without the runtime's cooperation — that is all this integration's Next.js
-   route would have needed.
-2. Add a small REST read: `GET /api/arena/matchups/:id` returning
-   `{ mode, votable, conversationId, turnIndex }` (token excluded), so a client
-   that only has the `messageId` can recover the round's shape.
-3. Keep `CUSTOM` as the primary channel — it is the right AG-UI-native choice —
-   but document that mainstream runtimes drop it and that a raw subscriber is
-   required.
+> **Resolved in `server/` + this host.** Every chat response also carries the
+> matchup metadata on `x-arena-matchup` (CORS-exposed), and
+> `GET /api/arena/matchups/:id` returns the round without the token. This
+> integration's `/api/arena/chat` proxy forwards the header; `ArenaHttpAgent`'s
+> `fetch` wrapper parses it into `arenaStore`. Voting no longer needs a raw
+> `CUSTOM` subscriber — that path remains valid but is no longer load-bearing.
 
 ## 5. A dead slot is invisible
 
@@ -201,32 +166,31 @@ field, and the surviving slot is still labelled `A`, which reads oddly in a
 non-comparison context (we relabel it "SINGLE MODEL"). Omitting `matchupToken`
 when there is no token would be cleaner and type-safe (`matchupToken?: string`).
 
-## 7. `threadId` / `runId` are server-minted and ignore the client's
+## 7. `threadId` / `runId` are server-minted and ignore the client's (resolved)
 
-`RUN_STARTED.threadId` is OmniArena's `conversationId` and `runId` is the
-`matchupId`. The ingress now reads `RunAgentInput` (finding 1), but it still does
-not echo the client's `threadId`/`runId` into `RUN_STARTED` — the AG-UI contract
-expects them echoed, and clients use them to correlate runs they started. It gets
-stranger across turns: after a tie the next turn starts a *new* conversation, so
-the stream's `threadId` changes underneath what assistant-ui still considers one
-thread. Nothing broke in practice, but any consumer keying state off `threadId`
-will.
+`RUN_STARTED.threadId` used to be OmniArena's `conversationId` and `runId` the
+`matchupId`. The AG-UI contract expects the client's ids echoed, and clients use
+them to correlate runs they started.
 
-## 8. Continuation rules are implicit, and failure is an HTTP 409
+> **Resolved in `server/`.** A `RunAgentInput`'s `threadId`/`runId` are echoed on
+> `RUN_STARTED` / `RUN_FINISHED`. Slot `messageId`s stay `<matchupId>:<slot>`, so
+> slot identity parsing is unchanged. This host's `tests/protocol.spec.ts`
+> asserts the echo.
+
+## 8. Continuation rules are implicit, and failure is an HTTP 409 (resolved)
 
 Only a decisive vote (`left`/`right`) leaves a winning response, and only then may
 the next turn pass `conversationId`; otherwise the arena answers
 `409 "Vote for a winning response before continuing this conversation"`. Nothing
-in the stream tells a client which case it is in — `arena_matchup` carries
-`votable` but no `continuable`, so every consumer has to re-encode the rule
-"left|right ⇒ decisive" (see `lib/arena/protocol.ts: isDecisive`). Since the 409
-also isn't an AG-UI event (#2), guessing wrong produces a transport error rather
-than something renderable.
+in the stream used to tell a client which case it was in — `arena_matchup`
+carried `votable` but no `continuable`, so every consumer re-encoded
+"left|right ⇒ decisive".
 
-**Suggested fix:** put the answer in the vote response (`POST /api/arena/vote`
-already returns `{ accepted, models }` — add `continuable: boolean` and echo the
-`conversationId` to continue with), or add `continuable` to the next round's
-`arena_matchup`.
+> **Resolved in `server/` + this host.** `POST /api/arena/vote` returns
+> `{ accepted, models, continuable, conversationId }`. The 409 refusal also
+> arrives as an in-band `RUN_ERROR` with code `conversation_not_ready` on the
+> AG-UI path. This host's store and vote bar consume `continuable` directly;
+> `isDecisive` remains only as a fallback for older vote payloads.
 
 ## 9. `@omni-arena/react` cannot be used with any third-party runtime (resolved)
 
@@ -255,13 +219,20 @@ court.
 > `lib/arena/` store and vote path (written before the split); the SDK core is
 > what a new AG-UI / CopilotKit host would reach for.
 
-## 10. No conversation rehydration (missing feature, not a bug)
+## 10. No conversation rehydration (resolved)
 
-Reload the page and the thread is gone. OmniArena has the conversation server-side
-(`conversationId`, turns, winning responses) but exposes no read endpoint, and the
-AG-UI stream emits no `MESSAGES_SNAPSHOT`. For assistant-ui specifically — whose
-thread list and persistence are headline features — this is the biggest gap:
-there is no way to build a real arena app with history on top of the current API.
+Reload the page and the thread used to be gone. OmniArena had the conversation
+server-side but exposed no read endpoint, and the AG-UI stream emits no
+`MESSAGES_SNAPSHOT`.
+
+> **Resolved in `server/` + this host.** `GET /api/arena/conversations/:id?sessionId=`
+> returns every turn (prompts, both answers, vote, reveal, and a still-unvoted
+> last turn), session-scoped. This host persists the `conversationId` (and any
+> still-needed vote token) in `localStorage`, proxies the GET, and feeds the
+> result into assistant-ui through a `ThreadHistoryAdapter`. Note: the read
+> endpoint never returns `matchupToken`, so an unvoted last turn is only
+> votable after reload if the client kept the token from the original stream
+> header — which this host does.
 
 ## 11. The mock provider defeats blind testing (resolved)
 
@@ -308,14 +279,12 @@ fix it.
 ## Which runtime is the better integration story
 
 The AG-UI path is the better *protocol* fit — one run, two typed message streams,
-a sanctioned escape hatch for metadata — and it is the only path where the vote
-token travels in-band. But today it still needs more client code than the AI SDK
-path (`examples/assistant-ui/`), mostly because of #4: a raw subscriber (or
-equivalent) is required to receive the matchup metadata mainstream runtimes drop.
-Finding 1's envelope gap is closed, but `useAgUiRuntime` still builds
-`RunAgentInput` itself and only fills `forwardedProps` from its own model
-context, so a thin agent subclass remains the way to attach session id,
-continuation id, arena opt-in and `x-arena`. Fix the metadata channel (#4) and
-that remaining injection gap, and `useAgUiRuntime` becomes a genuinely drop-in
-consumer, at which point AG-UI is clearly the story to lead with for agentic
-frontends.
+a sanctioned escape hatch for metadata, plus the `x-arena-matchup` header for
+runtimes that drop `CUSTOM`. Finding 4 is closed on this host: voting works
+against the stock `@assistant-ui/react-ag-ui` runtime without a `CUSTOM`
+subscriber. What remains is the thin `ArenaHttpAgent` that injects
+`forwardedProps` (`sessionId` / `conversationId` / `arena`) and `x-arena` —
+`useAgUiRuntime` still builds `RunAgentInput` itself and only fills
+`forwardedProps` from its own model context, with no hook for a request header.
+That is a few dozen lines, not a translating transport, and AG-UI is clearly the
+story to lead with for agentic frontends.

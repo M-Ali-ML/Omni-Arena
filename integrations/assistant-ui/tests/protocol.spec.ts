@@ -2,17 +2,39 @@ import { expect, test } from "@playwright/test";
 
 /**
  * The app's `/api/arena/chat` route is a byte-for-byte proxy of OmniArena's
- * AG-UI stream — no protocol translation. This asserts the wire the browser's
- * AG-UI client actually receives.
+ * AG-UI stream — no protocol translation — and forwards `x-arena-matchup` so
+ * the browser can vote without a `CUSTOM` subscriber.
  */
 test("the app proxies OmniArena's AG-UI stream unmodified", async ({ request }) => {
   const response = await request.post("/api/arena/chat", {
     headers: { "content-type": "application/json", "x-arena": "on" },
-    data: { prompt: "wire check", sessionId: "protocol-spec", arena: true },
+    data: {
+      threadId: "protocol-thread",
+      runId: "protocol-run",
+      state: {},
+      messages: [
+        { id: "m1", role: "user", content: "wire check" },
+      ],
+      tools: [],
+      context: [],
+      forwardedProps: { sessionId: "protocol-spec", arena: true },
+    },
   });
 
   expect(response.status()).toBe(200);
   expect(response.headers()["content-type"]).toContain("text/event-stream");
+
+  const header = response.headers()["x-arena-matchup"];
+  expect(header).toBeTruthy();
+  const headerMatchup = JSON.parse(header!);
+  expect(headerMatchup).toMatchObject({
+    slots: ["A", "B"],
+    mode: "matchup",
+    votable: true,
+    turnIndex: 0,
+  });
+  expect(typeof headerMatchup.matchupToken).toBe("string");
+  expect(headerMatchup.matchupToken.length).toBeGreaterThan(0);
 
   const events = (await response.text())
     .split("\n\n")
@@ -22,18 +44,21 @@ test("the app proxies OmniArena's AG-UI stream unmodified", async ({ request }) 
   const types = events.map((event) => event.type);
   expect(types[0]).toBe("RUN_STARTED");
   expect(types.at(-1)).toBe("RUN_FINISHED");
+  // Client threadId/runId are echoed (finding 7).
+  expect(events[0].threadId).toBe("protocol-thread");
+  expect(events[0].runId).toBe("protocol-run");
 
   const matchup = events.find(
     (event) => event.type === "CUSTOM" && event.name === "arena_matchup",
   );
   expect(matchup?.value).toMatchObject({
+    matchupId: headerMatchup.matchupId,
+    matchupToken: headerMatchup.matchupToken,
     slots: ["A", "B"],
     mode: "matchup",
     votable: true,
     turnIndex: 0,
   });
-  expect(typeof matchup?.value.matchupToken).toBe("string");
-  expect(matchup?.value.matchupToken.length).toBeGreaterThan(0);
 
   // Two concurrent text messages, one per slot, tagged by message id.
   const starts = events.filter((event) => event.type === "TEXT_MESSAGE_START");
@@ -61,7 +86,15 @@ test("the app proxies OmniArena's AG-UI stream unmodified", async ({ request }) 
 test("a refused run comes back as an in-band AG-UI RUN_ERROR", async ({ request }) => {
   const response = await request.post("/api/arena/chat", {
     headers: { "content-type": "application/json", "x-arena": "on" },
-    data: { prompt: "", sessionId: "protocol-spec", arena: true },
+    data: {
+      threadId: "protocol-thread",
+      runId: "protocol-run",
+      state: {},
+      messages: [{ id: "m1", role: "user", content: "" }],
+      tools: [],
+      context: [],
+      forwardedProps: { sessionId: "protocol-spec", arena: true },
+    },
   });
 
   expect(response.status()).toBe(200);
@@ -73,7 +106,9 @@ test("a refused run comes back as an in-band AG-UI RUN_ERROR", async ({ request 
   expect(events).toHaveLength(1);
   expect(events[0].type).toBe("RUN_ERROR");
   // OmniArena now emits the terminal error itself, with a machine-readable
-  // code, instead of a JSON 400 the proxy had to translate.
+  // code, instead of a JSON 400 the proxy had to translate. An empty user
+  // message fails the RunAgentInput adapter before the OmniArena `prompt`
+  // field is ever materialised.
   expect(events[0].code).toBe("invalid_request");
-  expect(events[0].message).toContain("prompt");
+  expect(events[0].message).toMatch(/invalid request|messages|prompt/i);
 });

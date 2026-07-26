@@ -2,8 +2,8 @@ import { arenaUrl } from "@/lib/arena/server";
 
 /**
  * Records the blind vote and returns OmniArena's reveal
- * (`{ accepted, models: { A, B } }`). The vote token this needs arrived on the
- * AG-UI stream in the `CUSTOM arena_matchup` event.
+ * (`{ accepted, models, continuable, conversationId }`). The vote token this
+ * needs arrived on the chat response's `x-arena-matchup` header.
  */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

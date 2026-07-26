@@ -17,6 +17,8 @@ const arenaVoteRequest = z.object({
 type VoteResponse = {
   accepted: boolean;
   models: ArenaReveal["models"];
+  continuable?: boolean;
+  conversationId?: string;
 };
 
 /**
@@ -54,6 +56,13 @@ export async function POST(request: Request) {
     });
     const payload = (await response.json()) as VoteResponse;
 
+    const revealData = {
+      models: payload.models,
+      vote: body.vote,
+      ...(payload.continuable !== undefined ? { continuable: payload.continuable } : {}),
+      ...(payload.conversationId ? { conversationId: payload.conversationId } : {}),
+    };
+
     const [stored] = await getMessageById({ id: body.messageId });
     if (stored) {
       const parts = stored.parts as Record<string, unknown>[];
@@ -62,14 +71,14 @@ export async function POST(request: Request) {
         parts: [
           ...parts.filter((part) => part.type !== "data-arena-reveal"),
           {
-            data: { models: payload.models, vote: body.vote },
+            data: revealData,
             type: "data-arena-reveal",
           },
         ],
       });
     }
 
-    return Response.json({ models: payload.models, vote: body.vote });
+    return Response.json(revealData);
   } catch (error) {
     if (error instanceof ChatbotError) {
       return error.toResponse();
