@@ -65,7 +65,14 @@ test.describe("Omni-Arena inside Open WebUI", () => {
     const reveal = answers(page).nth(1);
     await expect(reveal).toContainText(/A was Mock Model (Alpha|Beta)/);
     await expect(reveal).toContainText(/B was Mock Model (Alpha|Beta)/);
+    await expect(reveal).toContainText("continues this conversation from the winning answer");
     await page.screenshot({ path: "docs/duel-vote-reveal.png", fullPage: true });
+
+    // Headline: a decisive vote continues the same arena conversation.
+    await send(page, "Go deeper on indexing.");
+    await waitForAnswer(page, 2, "Answer A");
+    await expect(answers(page).nth(2)).toContainText("Answer B");
+    await expect(answers(page).nth(2)).toContainText("identities are revealed once you do");
   });
 
   test("side-by-side: Open WebUI's compare view renders one arena slot per column", async ({

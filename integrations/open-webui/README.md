@@ -42,7 +42,7 @@ With the bridge in place, arena mode works better in Open WebUI than expected:
 | Reveal after voting | ✅ works |
 | Leaderboard with Bradley-Terry ratings | ✅ works — `!leaderboard` |
 | Single (non-votable) mode | ✅ works |
-| Multi-turn continuation from the winner | ⚠️ the adapter now carries `conversationId` (finding 4, since fixed); the bridge does not yet use it |
+| Multi-turn continuation from the winner | ✅ works — bridge keeps the last continuable `conversationId` per Open WebUI chat |
 | One-click vote buttons | ❌ no UI extension point; votes are typed messages |
 | Live streaming of slot B in duel mode | ⚠️ buffered until slot A finishes |
 
@@ -213,12 +213,14 @@ npm run test:e2e   # just the Playwright UI suite
   with well-formed `chat.completion.chunk` frames on `choices[0]` and a trailing
   `[DONE]`, then the arena semantics on top — two anonymous answers, the
   rendezvous that joins two parallel requests into one matchup, the vote, the
-  reveal, single mode, the leaderboard, and the non-streaming task path. It runs
+  reveal, multi-turn continuation on the same conversation after a decisive
+  vote, single mode, the leaderboard, and the non-streaming task path. It runs
   inside the bridge container because the bridge has no host port.
-- **`e2e/tests/arena.spec.js`** (6 tests) drives the real Open WebUI UI in
-  headless Chromium: the duel, the side-by-side compare view, the vote and
-  reveal, single mode, the leaderboard, the raw passthrough rendering slot A
-  alone, and the `/`-prefix refusal.
+- **`test:e2e`** (6 tests) drives the real Open WebUI UI in
+  headless Chromium: the duel, multi-turn continuation after a decisive vote,
+  the side-by-side compare view, the vote and reveal, single mode, the
+  leaderboard, the raw passthrough rendering slot A alone, and the `/`-prefix
+  refusal.
 
 `e2e/tests/direct-probe.spec.js` is excluded from the suite; it is the one-off
 experiment behind [finding 1](#1-omni-arena-serves-no-openai-api-paths-so-open-webui-discovers-nothing),
@@ -525,6 +527,14 @@ Two smaller notes on the mode work as it stands:
   winner is marked.
 - One vote per matchup, enforced across the two parallel requests a compare turn
   produces.
+- **Multi-turn continuation from the winner.** After a decisive `!a` / `!b`, the
+  bridge keeps the server's `conversationId` (only when the vote response says
+  `continuable: true`) keyed by Open WebUI's `X-OpenWebUI-Chat-Id`, and sends it
+  on the next prompt. A missed mapping — TTL expiry, bridge restart, or a chat
+  with no forwarded id — degrades to a **new** matchup, never a wrong one.
+  Non-decisive votes (`!tie` / `!bad` / `!skip`) clear the slot so the next turn
+  starts fresh. Open WebUI's own transcript is still ignored by the arena; only
+  the winning responses the server persisted become shared context.
 - `single` mode, correctly non-votable.
 - Leaderboard in chat, including Bradley-Terry ratings when the worker runs.
 - The stack is key-free with `ARENA_MOCK_PROVIDER`, and switches to real
@@ -532,11 +542,6 @@ Two smaller notes on the mode work as it stands:
 
 ### Does not work
 
-- **Multi-turn arena continuation.** Every turn is still a fresh matchup and Open
-  WebUI's chat history is never sent to the arena. This was blocked by the wire
-  (finding 4, since fixed — `omni_arena` now carries `conversationId` /
-  `turnIndex`); what remains is bridge work: keeping the last winner's
-  conversation per Open WebUI chat and sending it back.
 - **One-click voting.** Open WebUI has no extension point for custom controls in
   the message area over an OpenAI connection — no buttons, no side panel, no
   callback. Its built-in 👍/👎 write to its own `feedbacks` table and are never
@@ -552,6 +557,12 @@ Two smaller notes on the mode work as it stands:
   has no place to render it as anything richer.
 - **Editing/regenerating a message.** Regeneration issues a fresh request, so it
   starts a new matchup; the previous one is left unvoted. Harmless but untidy.
+- **Reload restoring arena continuation.** Open WebUI keeps the chat transcript,
+  but the bridge's `continueFrom` map is in-process memory. A page reload in the
+  same live bridge still continues (same `X-OpenWebUI-Chat-Id`); a bridge
+  restart drops the mapping and the next prompt is a new matchup. The server's
+  `GET /api/arena/conversations/:id` could rehydrate, but the bridge has nowhere
+  durable to keep the id across restarts.
 - **Blindness with the mock provider.** `MockModelProvider` writes its own
   display name into its output, so the demo is only blind in the UI-chrome
   sense. Real providers do not do this.
@@ -608,7 +619,7 @@ integrations/open-webui/
 │       ├── arena.mjs               Omni-Arena client + openai-sse stream parser
 │       ├── openai.mjs              single-choice chunk writer
 │       ├── models.mjs              the pseudo-model roster
-│       ├── state.mjs               per-chat matchup state + the slot rendezvous
+│       ├── state.mjs               per-chat matchup + continuation state + slot rendezvous
 │       └── channel.mjs             async queue used to demultiplex the two slots
 ├── scripts/
 │   ├── arena.mjs                   boots Omni-Arena from repo source on :3021

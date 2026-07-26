@@ -554,13 +554,14 @@ data: [DONE]
   protocol has no vote, no reveal, and (in most UIs) one message channel per
   turn, so rendering two columns and collecting a vote inside such an app remains
   the app's problem. [`integrations/open-webui/`](../../integrations/open-webui/)
-  ships a bridge that solves exactly that for Open WebUI. Two thirds of that
-  bridge have since moved into the server: its request translation is redundant
-  now that this adapter parses `/chat/completions` bodies, and its pairing of
-  Open WebUI's two parallel model requests is what
+  ships a bridge that solves exactly that for Open WebUI — duel rendering, typed
+  `!a`/`!b` votes, reveal, and multi-turn continuation (the bridge keeps the last
+  continuable `conversationId` per Open WebUI chat id and sends it back). Two
+  thirds of that bridge have since moved into the server: its request translation
+  is redundant now that this adapter parses `/chat/completions` bodies, and its
+  pairing of Open WebUI's two parallel model requests is what
   [slot join](#slot-join-one-matchup-over-two-requests) now does natively. What
-  remains genuinely bridge-shaped is the *interaction* — rendering the duel and
-  collecting the vote and reveal inside Open WebUI's message channel.
+  remains genuinely bridge-shaped is the *interaction* layer.
 
 ---
 
@@ -604,7 +605,7 @@ each documents what it found:
 
 | Integration | Upstream app | Adapter | What it took |
 |---|---|---|---|
-| [`integrations/open-webui/`](../../integrations/open-webui/) | Open WebUI (SvelteKit + FastAPI) | OpenAI SSE | A bridge that presents an OpenAI surface to Open WebUI — including the model list — and renders the duel, vote, and reveal inside Open WebUI's single message channel. |
+| [`integrations/open-webui/`](../../integrations/open-webui/) | Open WebUI (SvelteKit + FastAPI) | OpenAI SSE | A bridge that presents an OpenAI surface to Open WebUI — including the model list — and renders the duel, vote, reveal, and multi-turn continuation (per-chat `conversationId`) inside Open WebUI's message channel. |
 | [`integrations/assistant-ui/`](../../integrations/assistant-ui/) | assistant-ui's `with-ag-ui` example | AG-UI | A route that forwards the AG-UI stream (and `x-arena-matchup`) to the stock `@assistant-ui/react-ag-ui` runtime, plus arena UI for vote, reveal, multi-turn, and reload rehydration. |
 
 Their findings are the reason for several of the contracts documented above —

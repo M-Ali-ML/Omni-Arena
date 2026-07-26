@@ -52,6 +52,15 @@ async function readCompletion(response) {
   // Multiple choices in one frame is legal (`n > 1`) but only ever read
   // positionally, so it is counted rather than treated as a defect.
   let multiChoiceFrames = 0;
+  const matchupHeader = response.headers.get("x-arena-matchup");
+  let matchup = null;
+  if (matchupHeader) {
+    try {
+      matchup = JSON.parse(matchupHeader);
+    } catch {
+      problems.push("unparseable x-arena-matchup header");
+    }
+  }
   if (!response.ok) {
     problems.push(`status ${response.status}`);
     return {
@@ -61,6 +70,7 @@ async function readCompletion(response) {
       sawDone: false,
       chunks: [],
       multiChoiceFrames,
+      matchup,
     };
   }
   const contentType = response.headers.get("content-type") ?? "";
@@ -117,7 +127,7 @@ async function readCompletion(response) {
       text += parsed.choices[0]?.delta?.content ?? "";
     }
   }
-  return { text, problems, frames, sawDone, chunks, multiChoiceFrames };
+  return { text, problems, frames, sawDone, chunks, multiChoiceFrames, matchup };
 }
 
 const complete = (model, prompt, chatId, extra = {}) =>
@@ -205,6 +215,100 @@ section("A second, different vote on the same matchup does not double-count");
     "the earlier vote stands",
     /already scored as \*\*A\*\*/i.test(result.text),
     result.text.slice(0, 200),
+  );
+}
+
+// ------------------------------------------- 2b. multi-turn continuation
+
+section("Multi-turn — a decisive vote continues the same conversation");
+{
+  const chat = CHAT("continue");
+  const turn0 = await readCompletion(
+    await complete("omni-arena-duel", "What is Redis?", chat),
+  );
+  check(
+    "turn 0 carries a conversation id",
+    typeof turn0.matchup?.conversationId === "string",
+    JSON.stringify(turn0.matchup),
+  );
+  check(
+    "turn 0 is the first turn",
+    turn0.matchup?.turnIndex === 0,
+    JSON.stringify(turn0.matchup),
+  );
+
+  const vote = await readCompletion(await complete("omni-arena-duel", "!a", chat));
+  check("decisive vote is accepted", vote.text.includes("Recorded"), vote.text.slice(0, 160));
+  check(
+    "reveal offers continuation",
+    /continues this conversation from the winning answer/i.test(vote.text),
+    vote.text.slice(0, 240),
+  );
+
+  const turn1 = await readCompletion(
+    await complete("omni-arena-duel", "How does persistence work?", chat),
+  );
+  check(
+    "turn 1 stays on the same conversation",
+    turn1.matchup?.conversationId === turn0.matchup?.conversationId,
+    `turn0=${turn0.matchup?.conversationId} turn1=${turn1.matchup?.conversationId}`,
+  );
+  check(
+    "turn 1 advances the turn index",
+    turn1.matchup?.turnIndex === 1,
+    JSON.stringify(turn1.matchup),
+  );
+  check(
+    "turn 1 still streams two anonymous answers",
+    variantsIn(turn1.text).size === 2 && turn1.text.includes("**Answer A**"),
+    turn1.text.slice(0, 200),
+  );
+}
+
+section("Multi-turn — a non-decisive vote starts a fresh conversation next turn");
+{
+  const chat = CHAT("tie");
+  const turn0 = await readCompletion(
+    await complete("omni-arena-duel", "Compare TCP and UDP.", chat),
+  );
+  const vote = await readCompletion(await complete("omni-arena-duel", "!tie", chat));
+  check("tie is accepted", vote.text.includes("Recorded"), vote.text.slice(0, 160));
+  check(
+    "tie does not offer continuation",
+    !/continues this conversation/i.test(vote.text),
+    vote.text.slice(0, 240),
+  );
+
+  const turn1 = await readCompletion(
+    await complete("omni-arena-duel", "What about SCTP?", chat),
+  );
+  check(
+    "the follow-up is a new conversation",
+    typeof turn1.matchup?.conversationId === "string" &&
+      turn1.matchup.conversationId !== turn0.matchup?.conversationId,
+    `turn0=${turn0.matchup?.conversationId} turn1=${turn1.matchup?.conversationId}`,
+  );
+  check(
+    "the new conversation starts at turn 0",
+    turn1.matchup?.turnIndex === 0,
+    JSON.stringify(turn1.matchup),
+  );
+}
+
+section("Multi-turn — without a vote, a follow-up is a new matchup");
+{
+  const chat = CHAT("novote");
+  const turn0 = await readCompletion(
+    await complete("omni-arena-duel", "What is a bloom filter?", chat),
+  );
+  const turn1 = await readCompletion(
+    await complete("omni-arena-duel", "And a cuckoo filter?", chat),
+  );
+  check(
+    "an unvoted follow-up does not reuse the conversation",
+    typeof turn1.matchup?.conversationId === "string" &&
+      turn1.matchup.conversationId !== turn0.matchup?.conversationId,
+    `turn0=${turn0.matchup?.conversationId} turn1=${turn1.matchup?.conversationId}`,
   );
 }
 
