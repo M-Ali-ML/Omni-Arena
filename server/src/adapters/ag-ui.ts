@@ -3,7 +3,7 @@ import {
   publicArenaEventSchema,
   type PublicArenaEvent,
 } from "../core/events.js";
-import type { EventAdapter } from "./event-adapter.js";
+import type { EventAdapter, RunCorrelation } from "./event-adapter.js";
 import {
   arenaPropsSchema,
   invalidRequest,
@@ -105,8 +105,15 @@ const agUiEventSchema = z.discriminatedUnion("type", [
 
 type AgUiEvent = z.infer<typeof agUiEventSchema>;
 
-const messageId = (runId: string, slot: "A" | "B"): string =>
-  `${runId}:${slot}`;
+/**
+ * Slot identity survives only here in practice: assistant-ui's parser
+ * whitelists known fields and strips the top-level `slot`, so the id
+ * convention is the load-bearing channel (finding 3). It is keyed on the
+ * matchup, never on the echoed `runId`, so a client that minted its own run id
+ * can still recover the round from a message.
+ */
+const messageId = (matchupId: string, slot: "A" | "B"): string =>
+  `${matchupId}:${slot}`;
 
 function frame(events: AgUiEvent[]): string {
   return events
@@ -115,10 +122,15 @@ function frame(events: AgUiEvent[]): string {
 }
 
 export function createAgUiAdapter(): EventAdapter {
+  let matchupId = "";
   let runId = "";
   let threadId = "";
+  let client: RunCorrelation = {};
 
   return {
+    correlate(correlation: RunCorrelation): void {
+      client = correlation;
+    },
     headers: {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-transform",
@@ -130,11 +142,18 @@ export function createAgUiAdapter(): EventAdapter {
       publicArenaEventSchema.parse(event);
       switch (event.type) {
         case "matchup_started": {
-          runId = event.matchupId;
-          // AG-UI requires a thread on every run. A round with no persisted
-          // conversation has no thread of its own, so the run stands alone
-          // under its own id rather than borrowing an id nothing can continue.
-          threadId = event.conversationId ?? event.matchupId;
+          matchupId = event.matchupId;
+          // AG-UI's contract is that a server echoes the ids the client sent,
+          // and clients key their own run state off them. The arena's ids are
+          // the fallback for a client that minted none, and they keep
+          // identifying the round either way: `messageId` stays
+          // `<matchupId>:<slot>` (the channel every consumer parses the slot
+          // out of), and the matchup metadata below carries the ids in full.
+          runId = client.runId ?? event.matchupId;
+          // A round with no persisted conversation has no thread of its own,
+          // so the run stands alone under its own id rather than borrowing an
+          // id nothing can continue.
+          threadId = client.threadId ?? event.conversationId ?? event.matchupId;
           return frame([
             { type: "RUN_STARTED", threadId, runId },
             {
@@ -153,7 +172,7 @@ export function createAgUiAdapter(): EventAdapter {
             ...event.slots.map(
               (slot): AgUiEvent => ({
                 type: "TEXT_MESSAGE_START",
-                messageId: messageId(runId, slot),
+                messageId: messageId(matchupId, slot),
                 role: "assistant",
                 slot,
               }),
@@ -164,7 +183,7 @@ export function createAgUiAdapter(): EventAdapter {
           return frame([
             {
               type: "TEXT_MESSAGE_CONTENT",
-              messageId: messageId(runId, event.slot),
+              messageId: messageId(matchupId, event.slot),
               delta: event.token,
               slot: event.slot,
             },
@@ -182,7 +201,7 @@ export function createAgUiAdapter(): EventAdapter {
             },
             {
               type: "TEXT_MESSAGE_CONTENT",
-              messageId: messageId(runId, event.slot),
+              messageId: messageId(matchupId, event.slot),
               delta: slotErrorText(event.message),
               slot: event.slot,
             },
@@ -191,7 +210,7 @@ export function createAgUiAdapter(): EventAdapter {
           return frame([
             {
               type: "TEXT_MESSAGE_END",
-              messageId: messageId(runId, event.slot),
+              messageId: messageId(matchupId, event.slot),
               slot: event.slot,
             },
           ]);
@@ -236,10 +255,19 @@ export const agUiRequestAdapter: RequestAdapter = {
     if (!parsed.success) {
       return invalidRequest(parsed.error);
     }
-    return toArenaChatRequest(
+    const result = toArenaChatRequest(
       lastUserPrompt(parsed.data.messages),
       parsed.data.forwardedProps,
       "messages",
     );
+    return result.ok
+      ? {
+          ...result,
+          correlation: {
+            threadId: parsed.data.threadId,
+            runId: parsed.data.runId,
+          },
+        }
+      : result;
   },
 };

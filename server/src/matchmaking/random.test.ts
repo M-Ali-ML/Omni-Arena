@@ -20,6 +20,7 @@ function repoWith(models: Model[]): PreferenceRepositoryPort {
     recordPreference: async () => {},
     getConversationContext: async () => ({ status: "not_found" }),
     getMatchup: async () => null,
+    getConversationTurns: async () => ({ status: "not_found" }),
   };
 }
 

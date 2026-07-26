@@ -336,16 +336,25 @@ data: {"type":"RUN_FINISHED","threadId":"c1","runId":"m1"}
   `mode`, `votable`, `conversationId`, `turnIndex`) — so the AG-UI path is
   **votable** without a second channel. AG-UI's typed taxonomy has no token
   field, and `CUSTOM` is its sanctioned escape hatch for exactly this; a client
-  that ignores `CUSTOM` events still renders the stream correctly.
+  that ignores `CUSTOM` events still renders the stream correctly. Because
+  mainstream runtimes *do* ignore it, the same metadata is repeated in the
+  `x-arena-matchup` response header and readable back from
+  [`GET /api/arena/matchups/:id`](api.md#get-apiarenamatchupsmatchupid) — the
+  header is the one a fetch wrapper or proxy can reach without the runtime's
+  cooperation.
+- **Run ids are echoed:** a `RunAgentInput` carrying `threadId`/`runId` gets
+  them back on `RUN_STARTED` and `RUN_FINISHED`. The slot channel does not move
+  with them — `messageId` is always `<matchupId>:<slot>`.
 - **Suits:** frontends built on the AG-UI event taxonomy — CopilotKit, LangGraph,
   CrewAI, assistant-ui's first-party
   [`@assistant-ui/react-ag-ui`](https://github.com/assistant-ui/assistant-ui)
   runtime — **in both directions**: they can post to the arena directly, and the
   response drops into such a runtime unchanged, two concurrent messages included.
   One caveat survives: mainstream runtimes discard `CUSTOM` events, so a client
-  that wants to *vote* still needs to read the metadata off the raw event stream
-  (a `AgentSubscriber` alongside the runtime) rather than through the runtime's
-  message state. [`integrations/assistant-ui/`](../../integrations/assistant-ui/)
+  that wants to *vote* reads the metadata from the `x-arena-matchup` header (or
+  `GET /api/arena/matchups/:id`) rather than through the runtime's message
+  state — an `AgentSubscriber` on the raw event stream also works and is what
+  the shipped integration did before the header existed. [`integrations/assistant-ui/`](../../integrations/assistant-ui/)
   runs against the real `@assistant-ui/react-ag-ui` runtime and its findings are
   worth reading — note that its custom agent subclass predates the request side
   of this adapter and is no longer necessary to *call* the arena.

@@ -154,12 +154,15 @@ empty-string token to `null` and leaves the two conversation fields off the
 result rather than inventing defaults — a host that sends a fabricated
 `conversationId` back gets a 404.
 
-A reveal is `{ models: Record<ArenaSlot, RevealedModel>, vote: ArenaVote | null }`
-— the two identities plus the vote they were granted for, so a UI can badge the
-winning column without tracking the choice itself. `RevealedModel` is
-`{ id, displayName }`. `parseArenaReveal()` sets `vote` to `null` when the
-payload did not carry one; `submitArenaVote()` always fills it in, because it
-knows the vote it sent.
+A reveal is `{ models: Record<ArenaSlot, RevealedModel>, vote: ArenaVote | null,
+continuable: boolean, conversationId?: string }` — the two identities, the vote
+they were granted for (so a UI can badge the winning column without tracking the
+choice itself), and whether the next turn may continue this conversation.
+`RevealedModel` is `{ id, displayName }`. `parseArenaReveal()` sets `vote` to
+`null` when the payload did not carry one; `submitArenaVote()` always fills it
+in, because it knows the vote it sent. `continuable` and `conversationId` come
+straight from the vote response; against a server that predates those fields,
+`continuable` falls back to the `left`/`right` rule.
 
 `useArenaVote(options?)` takes `{ baseUrl?, matchupId?, matchupToken? }` and
 returns `{ vote, reset, reveal, isVoting, error, canVote }`. `vote(choice,

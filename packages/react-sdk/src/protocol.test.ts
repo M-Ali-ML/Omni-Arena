@@ -86,7 +86,24 @@ describe("parseArenaReveal", () => {
         B: { id: "model_2", displayName: "Beta" },
       },
       vote: "left",
+      // Derived here: this response predates the server's own `continuable`.
+      continuable: true,
     });
+  });
+
+  it("prefers the server's continuation answer over the derived one", () => {
+    expect(
+      parseArenaReveal({
+        accepted: true,
+        vote: "left",
+        continuable: false,
+        conversationId: "conv_1",
+        models: {
+          A: { id: "model_1", displayName: "Alpha" },
+          B: { id: "model_2", displayName: "Beta" },
+        },
+      }),
+    ).toMatchObject({ continuable: false, conversationId: "conv_1" });
   });
 
   it("falls back to the display name when an adapter drops the id", () => {

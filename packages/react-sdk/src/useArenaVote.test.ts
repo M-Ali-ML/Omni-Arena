@@ -26,7 +26,11 @@ describe("useArenaVote", () => {
       await result.current.vote("left");
     });
 
-    expect(result.current.reveal).toEqual({ models: revealed, vote: "left" });
+    expect(result.current.reveal).toEqual({
+      models: revealed,
+      vote: "left",
+      continuable: true,
+    });
     expect(result.current.isVoting).toBe(false);
     expect(result.current.error).toBeNull();
     expect(result.current.canVote).toBe(false);

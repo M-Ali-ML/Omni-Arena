@@ -14,9 +14,11 @@ import type {
   PreferenceRepositoryPort,
 } from "./core/ports.js";
 import { registerAnalyticsRoutes } from "./routes/analytics.js";
-import { registerChatRoute } from "./routes/chat.js";
+import { MATCHUP_HEADER, registerChatRoute } from "./routes/chat.js";
 import { registerControlRoute } from "./routes/control.js";
+import { registerConversationRoute } from "./routes/conversations.js";
 import { registerLeaderboardRoute } from "./routes/leaderboard.js";
+import { registerMatchupRoute } from "./routes/matchups.js";
 import { registerModelsRoute } from "./routes/models.js";
 import { registerVoteRoute } from "./routes/vote.js";
 import type { MatchupTokenService } from "./token.js";
@@ -66,6 +68,10 @@ export async function createApp(
   await app.register(cors, {
     origin: dependencies.webOrigin ?? "http://localhost:5173",
     methods: ["GET", "POST"],
+    // A browser hides every non-safelisted response header unless it is named
+    // here, which would make the matchup header invisible to exactly the
+    // fetch-level wrappers it exists for.
+    exposedHeaders: [MATCHUP_HEADER],
   });
   await app.register(websocket);
 
@@ -79,6 +85,8 @@ export async function createApp(
   app.get("/health", async () => ({ status: "ok" }));
   registerChatRoute(app, { ...dependencies, registry, joinBroker, modeConfig });
   registerVoteRoute(app, dependencies);
+  registerMatchupRoute(app, dependencies);
+  registerConversationRoute(app, dependencies);
   registerLeaderboardRoute(app, dependencies.repository);
   registerModelsRoute(app, dependencies.repository);
   if (dependencies.analytics) {

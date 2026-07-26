@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
+import type { ArenaSlot } from "../core/events.js";
 import type {
   ActivityBucketSize,
   ActivityCumulativeBucket,
@@ -7,7 +8,9 @@ import type {
   ActivityVoteBucket,
   AnalyticsPort,
   ArenaSummary,
+  ArenaVote,
   ChatMessage,
+  ConversationTurn,
   HeadToHeadPair,
   HeadToHeadStats,
   LeaderboardComponents,
@@ -16,6 +19,7 @@ import type {
   MatchmakingStats,
   MatchmakingStatsPort,
   MatchupRecord,
+  MatchupView,
   Model,
   ModelMetricsEntry,
   PreferenceRecord,
@@ -371,16 +375,14 @@ export class PostgresRepository
     };
   }
 
-  async getMatchup(matchupId: string): Promise<{
-    id: string;
-    matchupTokenHash: string;
-    slotA: Model;
-    slotB: Model;
-  } | null> {
+  async getMatchup(matchupId: string): Promise<MatchupView | null> {
     const result = await this.pool.query<
       ModelRow & {
         matchup_id: string;
         matchup_token_hash: string;
+        conversation_id: string;
+        turn_index: number;
+        vote: ArenaVote | null;
         b_id: string;
         b_display_name: string;
         b_provider: string;
@@ -391,6 +393,9 @@ export class PostgresRepository
       `SELECT
         mt.id AS matchup_id,
         mt.matchup_token_hash,
+        t.conversation_id,
+        t.turn_index,
+        p.vote,
         a.id,
         a.display_name,
         a.provider,
@@ -402,8 +407,10 @@ export class PostgresRepository
         b.provider_model_id AS b_provider_model_id,
         b.enabled AS b_enabled
       FROM matchups mt
+      JOIN turns t ON t.matchup_id = mt.id
       JOIN models a ON a.id = mt.slot_a_model_id
       JOIN models b ON b.id = mt.slot_b_model_id
+      LEFT JOIN preferences p ON p.matchup_id = mt.id
       WHERE mt.id = $1`,
       [matchupId],
     );
@@ -414,6 +421,9 @@ export class PostgresRepository
     return {
       id: row.matchup_id,
       matchupTokenHash: row.matchup_token_hash,
+      conversationId: row.conversation_id,
+      turnIndex: Number(row.turn_index),
+      vote: row.vote,
       slotA: mapModel(row),
       slotB: mapModel({
         id: row.b_id,
@@ -422,6 +432,116 @@ export class PostgresRepository
         provider_model_id: row.b_provider_model_id,
         enabled: row.b_enabled,
       }),
+    };
+  }
+
+  /**
+   * The whole thread behind one conversation, unvoted last turn included —
+   * that pending pair is exactly the state a reload has to restore. Both slots
+   * come back on every turn; disclosing which model wrote which is the
+   * caller's decision and is gated on `vote` in `routes/reveal.ts`.
+   */
+  async getConversationTurns(
+    conversationId: string,
+    anonymousSessionId: string | null,
+  ): Promise<
+    | { status: "ready"; conversationId: string; turns: ConversationTurn[] }
+    | { status: "not_found" }
+    | { status: "forbidden" }
+  > {
+    // One row per (turn, response): at most two per turn, so the fan-out is
+    // bounded and the turns are reassembled below rather than in SQL.
+    const result = await this.pool.query<
+      ModelRow & {
+        anonymous_session_id: string | null;
+        turn_index: number;
+        matchup_id: string;
+        prompt: string;
+        vote: ArenaVote | null;
+        slot: ArenaSlot | null;
+        content: string | null;
+        error: string | null;
+        b_id: string;
+        b_display_name: string;
+        b_provider: string;
+        b_provider_model_id: string;
+        b_enabled: boolean;
+      }
+    >(
+      `SELECT
+        c.anonymous_session_id,
+        t.turn_index,
+        t.matchup_id,
+        t.prompt,
+        p.vote,
+        r.slot,
+        r.content,
+        r.error,
+        a.id,
+        a.display_name,
+        a.provider,
+        a.provider_model_id,
+        a.enabled,
+        b.id AS b_id,
+        b.display_name AS b_display_name,
+        b.provider AS b_provider,
+        b.provider_model_id AS b_provider_model_id,
+        b.enabled AS b_enabled
+      FROM conversations c
+      JOIN turns t ON t.conversation_id = c.id
+      JOIN matchups mt ON mt.id = t.matchup_id
+      JOIN models a ON a.id = mt.slot_a_model_id
+      JOIN models b ON b.id = mt.slot_b_model_id
+      LEFT JOIN preferences p ON p.matchup_id = t.matchup_id
+      LEFT JOIN responses r ON r.matchup_id = t.matchup_id
+      WHERE c.id = $1
+      ORDER BY t.turn_index, r.slot`,
+      [conversationId],
+    );
+    if (result.rows.length === 0) {
+      return { status: "not_found" };
+    }
+    if (result.rows[0]?.anonymous_session_id !== anonymousSessionId) {
+      return { status: "forbidden" };
+    }
+
+    const turns = new Map<number, ConversationTurn>();
+    for (const row of result.rows) {
+      const turnIndex = Number(row.turn_index);
+      let turn = turns.get(turnIndex);
+      if (!turn) {
+        turn = {
+          turnIndex,
+          matchupId: row.matchup_id,
+          prompt: row.prompt,
+          answers: [],
+          vote: row.vote,
+          slotA: mapModel(row),
+          slotB: mapModel({
+            id: row.b_id,
+            display_name: row.b_display_name,
+            provider: row.b_provider,
+            provider_model_id: row.b_provider_model_id,
+            enabled: row.b_enabled,
+          }),
+        };
+        turns.set(turnIndex, turn);
+      }
+      if (row.slot && row.content !== null) {
+        turn.answers.push({
+          slot: row.slot,
+          content: row.content,
+          error: row.error,
+        });
+      }
+    }
+
+    return {
+      status: "ready",
+      conversationId,
+      turns: [...turns.values()].sort(
+        (left, right) => left.turnIndex - right.turnIndex,
+      ),
     };
   }
 

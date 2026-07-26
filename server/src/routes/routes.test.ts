@@ -123,10 +123,50 @@ class MemoryRepository implements PreferenceRepositoryPort {
       ? {
           id: matchup.id,
           matchupTokenHash: matchup.matchupTokenHash,
+          conversationId: matchup.conversation.id,
+          turnIndex: matchup.conversation.turnIndex,
+          vote: this.preferences.get(matchup.id)?.vote ?? null,
           slotA,
           slotB,
         }
       : null;
+  }
+
+  async getConversationTurns(
+    conversationId: string,
+    anonymousSessionId: string | null,
+  ) {
+    const matchups = [...this.matchups.values()]
+      .filter((matchup) => matchup.conversation.id === conversationId)
+      .sort(
+        (left, right) =>
+          left.conversation.turnIndex - right.conversation.turnIndex,
+      );
+    if (matchups.length === 0) {
+      return { status: "not_found" as const };
+    }
+    if (matchups[0]?.conversation.anonymousSessionId !== anonymousSessionId) {
+      return { status: "forbidden" as const };
+    }
+    return {
+      status: "ready" as const,
+      conversationId,
+      turns: matchups.map((matchup) => ({
+        turnIndex: matchup.conversation.turnIndex,
+        matchupId: matchup.id,
+        prompt: matchup.prompt,
+        answers: this.responses
+          .filter((response) => response.matchupId === matchup.id)
+          .map((response) => ({
+            slot: response.slot,
+            content: response.content,
+            error: response.error,
+          })),
+        vote: this.preferences.get(matchup.id)?.vote ?? null,
+        slotA,
+        slotB,
+      })),
+    };
   }
 
   async getLeaderboard(): Promise<LeaderboardEntry[]> {
@@ -837,6 +877,296 @@ describe("arena routes", () => {
       expect(chat.body.trimEnd().endsWith("data: [DONE]")).toBe(true);
       // The default path stays plain SSE (no chat-completion framing).
       expect(chat.body).not.toContain("matchup_started");
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+/**
+ * Reading a round back out of band: the header, the matchup GET, and the
+ * conversation GET are what a host uses when its runtime dropped the stream's
+ * metadata or when the page was reloaded and the client state is gone.
+ */
+describe("out-of-band reads", () => {
+  const start = (
+    app: Awaited<ReturnType<typeof setup>>["app"],
+    payload: Record<string, unknown>,
+    url = "/api/arena/chat",
+  ) => app.inject({ method: "POST", url, payload });
+
+  it("repeats the matchup metadata in a response header on every protocol", async () => {
+    const { app } = await setup();
+    try {
+      for (const url of [
+        "/api/arena/chat",
+        "/api/arena/chat?protocol=ag-ui",
+        "/api/arena/chat?protocol=vercel",
+      ]) {
+        const chat = await start(app, {
+          prompt: "Hello",
+          sessionId: "anon_header_read",
+        }, url);
+        const header = JSON.parse(
+          chat.headers["x-arena-matchup"] as string,
+        ) as Record<string, unknown>;
+
+        // Same payload the stream carries, minus the event type — this is the
+        // only copy a runtime that discards CUSTOM events can reach.
+        expect(header).toMatchObject({
+          mode: "matchup",
+          votable: true,
+          slots: ["A", "B"],
+          turnIndex: 0,
+        });
+        expect(header.matchupToken).toBeTruthy();
+        expect(header.conversationId).toBeTruthy();
+        expect(JSON.stringify(header)).not.toContain(slotA.displayName);
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("omits the token from the header of a non-votable round", async () => {
+    const { app } = await setup({ trigger: "manual", defaultModel: slotA.id });
+    try {
+      const chat = await start(app, {
+        prompt: "Hello",
+        sessionId: "anon_header_single",
+      });
+      expect(JSON.parse(chat.headers["x-arena-matchup"] as string)).toEqual({
+        matchupId: expect.any(String),
+        slots: ["A"],
+        mode: "single",
+        votable: false,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("serves a matchup's shape without its token, revealing only after a vote", async () => {
+    const { app } = await setup();
+    try {
+      const chat = await start(app, {
+        prompt: "Hello",
+        sessionId: "anon_matchup_get",
+      });
+      const started = parseEvents(chat.body)[0];
+      const matchupId = started?.matchupId as string;
+
+      const open = await app.inject({
+        method: "GET",
+        url: `/api/arena/matchups/${matchupId}`,
+      });
+      expect(open.statusCode).toBe(200);
+      expect(open.json()).toEqual({
+        matchupId,
+        conversationId: started?.conversationId,
+        turnIndex: 0,
+        mode: "matchup",
+        votable: true,
+        continuable: false,
+        vote: null,
+        models: null,
+      });
+      // The token is a capability, not metadata: an unauthenticated read that
+      // returned it would let anyone with a matchup id vote.
+      expect(open.body).not.toContain(started?.matchupToken as string);
+      expect(open.body).not.toContain(slotA.displayName);
+
+      await app.inject({
+        method: "POST",
+        url: "/api/arena/vote",
+        payload: {
+          matchupId,
+          matchupToken: started?.matchupToken,
+          vote: "left",
+        },
+      });
+
+      const voted = await app.inject({
+        method: "GET",
+        url: `/api/arena/matchups/${matchupId}`,
+      });
+      expect(voted.json()).toMatchObject({
+        votable: false,
+        continuable: true,
+        vote: "left",
+        models: {
+          A: { id: slotA.id, displayName: slotA.displayName },
+          B: { id: slotB.id, displayName: slotB.displayName },
+        },
+      });
+
+      const missing = await app.inject({
+        method: "GET",
+        url: "/api/arena/matchups/00000000-0000-4000-8000-0000000000ff",
+      });
+      expect(missing.statusCode).toBe(404);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("tells a voter whether the conversation can be continued", async () => {
+    const { app } = await setup();
+    try {
+      for (const [vote, continuable] of [
+        ["left", true],
+        ["both_good", false],
+      ] as const) {
+        const chat = await start(app, {
+          prompt: "Hello",
+          sessionId: `anon_continuable_${vote}`,
+        });
+        const started = parseEvents(chat.body)[0];
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/arena/vote",
+          payload: {
+            matchupId: started?.matchupId,
+            matchupToken: started?.matchupToken,
+            vote,
+          },
+        });
+        expect(response.json()).toMatchObject({
+          accepted: true,
+          continuable,
+          conversationId: started?.conversationId,
+        });
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rehydrates a conversation including the turn still awaiting a vote", async () => {
+    const { app } = await setup();
+    try {
+      const first = await start(app, {
+        prompt: "First turn",
+        sessionId: "anon_rehydrate",
+      });
+      const started = parseEvents(first.body)[0];
+      const conversationId = started?.conversationId as string;
+      await app.inject({
+        method: "POST",
+        url: "/api/arena/vote",
+        payload: {
+          matchupId: started?.matchupId,
+          matchupToken: started?.matchupToken,
+          vote: "left",
+        },
+      });
+      await start(app, {
+        prompt: "Follow up",
+        sessionId: "anon_rehydrate",
+        conversationId,
+      });
+
+      const thread = await app.inject({
+        method: "GET",
+        url: `/api/arena/conversations/${conversationId}?sessionId=anon_rehydrate`,
+      });
+      expect(thread.statusCode).toBe(200);
+      const body = thread.json();
+      expect(body).toMatchObject({
+        conversationId,
+        // The unvoted second turn is exactly the state a reload must restore,
+        // and it is not continuable until it is decided.
+        continuable: false,
+        nextTurnIndex: 2,
+      });
+      expect(body.turns).toHaveLength(2);
+      expect(body.turns[0]).toMatchObject({
+        turnIndex: 0,
+        prompt: "First turn",
+        votable: false,
+        vote: "left",
+        models: {
+          A: { id: slotA.id, displayName: slotA.displayName },
+          B: { id: slotB.id, displayName: slotB.displayName },
+        },
+      });
+      expect(body.turns[0].answers).toEqual([
+        { slot: "A", content: "Answer from alpha", error: null },
+        { slot: "B", content: "Answer from beta", error: null },
+      ]);
+      // The open turn's answers are readable; its identities are not.
+      expect(body.turns[1]).toMatchObject({
+        turnIndex: 1,
+        prompt: "Follow up",
+        votable: true,
+        vote: null,
+        models: null,
+      });
+      expect(JSON.stringify(body.turns[1])).not.toContain(slotA.displayName);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("answers another session's conversation with a 403", async () => {
+    const { app } = await setup();
+    try {
+      const chat = await start(app, {
+        prompt: "Private",
+        sessionId: "anon_owner",
+      });
+      const conversationId = parseEvents(chat.body)[0]
+        ?.conversationId as string;
+
+      const stranger = await app.inject({
+        method: "GET",
+        url: `/api/arena/conversations/${conversationId}?sessionId=anon_stranger`,
+      });
+      expect(stranger.statusCode).toBe(403);
+
+      const missing = await app.inject({
+        method: "GET",
+        url: "/api/arena/conversations/00000000-0000-4000-8000-0000000000ff",
+      });
+      expect(missing.statusCode).toBe(404);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("echoes an AG-UI client's own run ids without moving the slot channel", async () => {
+    const { app } = await setup();
+    try {
+      const chat = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat?protocol=ag-ui",
+        payload: {
+          threadId: "client-thread",
+          runId: "client-run",
+          messages: [{ id: "m1", role: "user", content: "Hello" }],
+          forwardedProps: { sessionId: "anon_correlate" },
+        },
+      });
+      const events = parseEvents(chat.body);
+      const matchupId = (
+        events.find((event) => event.name === "arena_matchup")?.value as {
+          matchupId: string;
+        }
+      ).matchupId;
+
+      for (const type of ["RUN_STARTED", "RUN_FINISHED"]) {
+        expect(events.find((event) => event.type === type)).toMatchObject({
+          threadId: "client-thread",
+          runId: "client-run",
+        });
+      }
+      // Slot identity still travels on `<matchupId>:<slot>`, which is what
+      // clients parse; echoing the run id must not move that channel.
+      expect(
+        events
+          .filter((event) => event.type === "TEXT_MESSAGE_START")
+          .map((event) => event.messageId),
+      ).toEqual([`${matchupId}:A`, `${matchupId}:B`]);
     } finally {
       await app.close();
     }

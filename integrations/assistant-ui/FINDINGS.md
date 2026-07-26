@@ -31,7 +31,20 @@ Each item is written as it was observed, before anything was changed.
 > fixed outright: the mock provider's answer text is identity-free, and
 > `server/src/blindness.test.ts` guards it. This integration's overlay,
 > `tests/protocol.spec.ts` and `tests/arena.spec.ts` were updated accordingly.
-> Findings 3, 4, 7 and 10 stand.
+>
+> **Findings 4, 7, 8 and 10 have since been answered on the server too**, though
+> this integration has not yet been rewritten onto them. Finding 4: the matchup
+> metadata is repeated in an `x-arena-matchup` response header (every protocol,
+> exposed through CORS) and readable back from `GET /api/arena/matchups/:id`
+> (no token, identities only against a recorded vote) — so a runtime that drops
+> `CUSTOM` no longer needs a raw subscriber to vote. Finding 7: a
+> `RunAgentInput`'s `threadId`/`runId` are echoed on `RUN_STARTED` /
+> `RUN_FINISHED`, while `messageId` stays `<matchupId>:<slot>`. Finding 8: the
+> vote response now carries `continuable` and echoes `conversationId`. Finding
+> 10: `GET /api/arena/conversations/:id?sessionId=` returns every turn —
+> prompts, both answers, vote, reveal where one exists, and the still-unvoted
+> last turn — so a thread survives a reload. Finding 3 stands (parse the
+> `messageId`).
 
 **Headline:** the adapter's *output* is good. Two concurrent slot messages in one
 run pass `@ag-ui/client`'s event verifier unmodified, reach `RUN_FINISHED`, and

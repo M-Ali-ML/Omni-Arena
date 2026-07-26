@@ -12,7 +12,12 @@ anywhere in the API is the **matchup token**: an HMAC-signed capability
 (`MATCHUP_TOKEN_SECRET`) minted on `matchup_started` and required by
 `POST /api/arena/vote`, which is what stops a caller voting on a matchup it
 never saw. Everything else — the leaderboard, the model list, the analytics
-aggregates — is public, and exposes model-level data only.
+aggregates — is public, and exposes model-level data only. The two read
+endpoints that return a caller's own rounds are the exception to "model-level
+only": [`GET /api/arena/matchups/:id`](#get-apiarenamatchupsmatchupid) needs the
+round's unguessable UUID and never returns its token, and
+[`GET /api/arena/conversations/:id`](#get-apiarenaconversationsconversationid)
+is additionally scoped to the anonymous session that owns the conversation.
 
 Browser callers are gated by CORS instead: the server allows exactly one
 origin, `WEB_ORIGIN` (default `http://localhost:5173`), and only the `GET` and
@@ -72,6 +77,20 @@ Response: `200` with `content-type: text/event-stream`. Each event has an
 | `slot_done` | `{ type, slot }` | Content and latency are stripped from the public event. |
 | `run_error` | `{ type, code, message }` | Terminal: the whole round failed. No `matchup_done` follows. |
 | `matchup_done` | `{ type }` | Every slot on this connection finished; stream closes. |
+
+Every response also repeats the round's metadata in an **`x-arena-matchup`**
+header — the same JSON as `matchup_started` minus its `type`, on every protocol.
+It exists because mainstream agentic runtimes drop the in-band metadata:
+assistant-ui's AG-UI aggregator discards `CUSTOM` events wholesale, so on the
+convenience path (`useAgUiRuntime({ url })`) the vote token reaches the browser
+and dies there. A header is readable by anything that can see the response — a
+fetch wrapper, a Next.js route handler, a proxy — with no cooperation from the
+runtime that owns the stream. It carries the token when the round has one and
+omits it (along with `conversationId` / `turnIndex`) when it does not, exactly
+like the event. Browser callers get it through
+`Access-Control-Expose-Headers`; a client that only kept a `matchupId` can read
+the round back from [`GET /api/arena/matchups/:matchupId`](#get-apiarenamatchupsmatchupid)
+instead.
 
 `slots` lists the slots **this connection** streams, and only events for those
 slots follow: `["A", "B"]` on a normal matchup, `["A"]` on a `single` round or
@@ -219,9 +238,12 @@ Per-protocol framing, at a conceptual level:
   surviving slot keeps streaming, plus the same text as marked
   `TEXT_MESSAGE_CONTENT` so a runtime that ignores `CUSTOM` still shows the
   failure); `slot_done` → `TEXT_MESSAGE_END`; `run_error` → `RUN_ERROR`
-  (`message`, `code`); `matchup_done` → `RUN_FINISHED`. `runId` is the matchup
-  ID and `threadId` the conversation ID, falling back to the matchup ID on a
-  round with no conversation.
+  (`message`, `code`); `matchup_done` → `RUN_FINISHED`. `threadId` and `runId`
+  are the client's own when its `RunAgentInput` carried them — AG-UI's contract
+  is that a server echoes them, and clients key run state off them — falling
+  back to the conversation id (then the matchup id) and the matchup id
+  respectively. The slot channel is unaffected: `messageId` is always
+  `<matchupId>:<slot>`, which is what a consumer parses the slot out of.
 - **A2UI**: schema-validated **NDJSON** (`application/x-ndjson`) — one flat,
   self-describing JSON object per line, versioned `a2ui/1`, painting two
   surfaces A/B. `surface_init` (`matchupId`, `matchupToken`, `conversationId`,
@@ -264,7 +286,10 @@ idiom, so no path needs a second channel to vote: native SSE on
 `surface_init`, AG-UI in a `CUSTOM` event named `arena_matchup`, and OpenAI SSE
 in an optional `omni_arena` object on the first chunk. All five also carry `mode`
 and `votable` and all five omit the token on a non-votable (`single`) round, so a
-client can hide the vote controls. See the [integration guide](integration.md).
+client can hide the vote controls. Every one of them additionally repeats the
+metadata in the `x-arena-matchup` header, which is the path of last resort for a
+runtime that discards the in-band copy. See the
+[integration guide](integration.md).
 
 ## GET /api/arena/control (WebSocket)
 
@@ -341,9 +366,18 @@ Success response:
   "models": {
     "A": { "id": "…", "displayName": "Gemini 3.5 Flash" },
     "B": { "id": "…", "displayName": "Gemini 3 Flash" }
-  }
+  },
+  "continuable": true,
+  "conversationId": "…"
 }
 ```
+
+`continuable` is the server's own answer to "may the next turn pass this
+`conversationId`?" — true for `left`/`right`, false for `both_good`,
+`both_bad`, and `skip`. It is stated rather than implied because every client
+otherwise re-encoded the rule by hand and paid for a wrong guess with a `409
+conversation_not_ready` on the following turn. `conversationId` is echoed so a
+client that only kept the matchup handles knows what to send back.
 
 Errors:
 
@@ -358,6 +392,102 @@ A `left`/`right` vote records the winning model; `both_good`, `both_bad`, and
 `skip` record no winner, which is also why only a decisive vote lets a
 conversation continue. The anonymous session credited with the vote comes from
 the token's claims, not the request body.
+
+## GET /api/arena/matchups/:matchupId
+
+Reads one round back out of band: its shape, whether it is still open, and —
+only against a recorded vote — the identities. This is what a client uses when
+its runtime dropped the stream's metadata (AG-UI `CUSTOM` events) or when a
+reload left it holding nothing but a `matchupId` parsed out of a `messageId`.
+
+```json
+{
+  "matchupId": "3f6e…",
+  "conversationId": "…",
+  "turnIndex": 0,
+  "mode": "matchup",
+  "votable": false,
+  "continuable": true,
+  "vote": "left",
+  "models": {
+    "A": { "id": "…", "displayName": "Gemini 3.5 Flash" },
+    "B": { "id": "…", "displayName": "Gemini 3 Flash" }
+  }
+}
+```
+
+- `votable` is `true` until a vote is recorded; `vote` is `null` for the same
+  span and `models` is `null` with it — the blindness rule, enforced on every
+  read path, is that identities travel only with a vote.
+- `continuable` follows the same `left`/`right` rule as the vote response.
+- `mode` is always `matchup`: a `single` round writes no row and is therefore
+  never readable here (`404`).
+- **No `matchupToken`.** The token is the capability that authorises a vote,
+  minted once onto the stream that served the round. An unauthenticated read
+  that returned it would let anyone holding a matchup id vote on a round they
+  never saw.
+
+Errors: `400` for a `matchupId` that is not a UUID, `404` for an unknown one.
+
+## GET /api/arena/conversations/:conversationId
+
+Rehydrates a whole thread after a reload — every turn, both blind answers per
+turn, the vote, and the reveal where one exists. Without it a host either lost
+the thread on refresh or rebuilt it from client-only state it had invented.
+
+Query: `sessionId` (optional, 1–200 characters).
+
+```json
+{
+  "conversationId": "…",
+  "continuable": false,
+  "nextTurnIndex": 2,
+  "turns": [
+    {
+      "turnIndex": 0,
+      "matchupId": "…",
+      "prompt": "Explain JWTs in simple terms",
+      "votable": false,
+      "vote": "left",
+      "answers": [
+        { "slot": "A", "content": "…", "error": null },
+        { "slot": "B", "content": "…", "error": null }
+      ],
+      "models": {
+        "A": { "id": "…", "displayName": "Gemini 3.5 Flash" },
+        "B": { "id": "…", "displayName": "Gemini 3 Flash" }
+      }
+    },
+    {
+      "turnIndex": 1,
+      "matchupId": "…",
+      "prompt": "Go deeper",
+      "votable": true,
+      "vote": null,
+      "answers": [
+        { "slot": "A", "content": "…", "error": null },
+        { "slot": "B", "content": "…", "error": null }
+      ],
+      "models": null
+    }
+  ]
+}
+```
+
+- The **last turn comes back even when it has no vote**: a pending pair
+  awaiting a decision is precisely the state a reload has to restore. Its
+  `models` is `null`, so restoring the thread cannot leak the round it is still
+  blind on.
+- `continuable` and `nextTurnIndex` describe the *next* turn: whether it may
+  pass this `conversationId` at all, and the index it will be given.
+- Unlike the leaderboard and the analytics aggregates, this read returns a
+  caller's own prompts and answers, so it is **scoped to the anonymous
+  session** that owns the conversation — the same check
+  [`POST /api/arena/chat`](#post-apiarenachat) makes before continuing one. A
+  conversation started without a `sessionId` is readable without one.
+
+Errors: `400` (malformed id or `sessionId`), `403` `Conversation session
+mismatch`, `404` `Conversation not found`.
 
 ## GET /models · GET /v1/models
 

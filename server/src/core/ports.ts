@@ -111,6 +111,40 @@ export interface PreferenceRecord {
   anonymousSessionId: string | null;
 }
 
+/** Minimal model reference: the pair a reveal and the analytics payloads name. */
+export interface ModelRef {
+  id: string;
+  displayName: string;
+}
+
+/**
+ * A persisted matchup read back after its stream is over — what a client that
+ * reloaded, or one whose runtime dropped the metadata event, needs to recover
+ * the round. `vote` is null while the round is still open; the identities are
+ * only ever disclosed against a recorded vote (see `routes/reveal.ts`).
+ */
+export interface MatchupView {
+  id: string;
+  matchupTokenHash: string;
+  conversationId: string;
+  turnIndex: number;
+  slotA: Model;
+  slotB: Model;
+  vote: ArenaVote | null;
+}
+
+/** One completed or in-flight turn of a conversation, both slots included. */
+export interface ConversationTurn {
+  turnIndex: number;
+  matchupId: string;
+  prompt: string;
+  /** The blind answers by slot. Absent for a slot whose response never landed. */
+  answers: Array<{ slot: ArenaSlot; content: string; error: string | null }>;
+  vote: ArenaVote | null;
+  slotA: Model;
+  slotB: Model;
+}
+
 export interface PreferenceRepositoryPort {
   listEnabledModels(): Promise<Model[]>;
   createMatchup(matchup: MatchupRecord): Promise<void>;
@@ -131,12 +165,21 @@ export interface PreferenceRepositoryPort {
     | { status: "forbidden" }
     | { status: "not_ready" }
   >;
-  getMatchup(matchupId: string): Promise<{
-    id: string;
-    matchupTokenHash: string;
-    slotA: Model;
-    slotB: Model;
-  } | null>;
+  getMatchup(matchupId: string): Promise<MatchupView | null>;
+  /**
+   * Every turn of one conversation, for a client rebuilding a thread after a
+   * reload. Scoped to the anonymous session that owns the conversation, since
+   * this is the one read that returns prompts and answers rather than
+   * model-level aggregates.
+   */
+  getConversationTurns(
+    conversationId: string,
+    anonymousSessionId: string | null,
+  ): Promise<
+    | { status: "ready"; conversationId: string; turns: ConversationTurn[] }
+    | { status: "not_found" }
+    | { status: "forbidden" }
+  >;
 }
 
 export interface RatingInterval {
@@ -247,10 +290,7 @@ export interface LeaderboardPort {
 }
 
 /** Minimal model reference shared by the analytics payloads. */
-export interface AnalyticsModelRef {
-  id: string;
-  displayName: string;
-}
+export type AnalyticsModelRef = ModelRef;
 
 /** Arena-wide aggregates for the insights dashboard's summary strip. */
 export interface ArenaSummary {

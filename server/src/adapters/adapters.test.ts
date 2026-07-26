@@ -530,6 +530,9 @@ describe("request envelopes (ingress)", () => {
     expect(parseFor("ag-ui", runAgentInput)).toEqual({
       ok: true,
       request: { prompt: "hello" },
+      // AG-UI's contract is that the server echoes the run ids the client
+      // minted, so they travel beside the arena request rather than into it.
+      correlation: { threadId: "t1", runId: "r1" },
     });
   });
 
@@ -543,7 +546,7 @@ describe("request envelopes (ingress)", () => {
           arena: true,
         },
       }),
-    ).toEqual({
+    ).toMatchObject({
       ok: true,
       request: {
         prompt: "hello",
@@ -561,7 +564,15 @@ describe("request envelopes (ingress)", () => {
       ...runAgentInput,
       threadId: "00000000-0000-4000-8000-0000000000aa",
     });
-    expect(parsed).toEqual({ ok: true, request: { prompt: "hello" } });
+    // It is echoed back as the run's thread and nowhere else.
+    expect(parsed).toEqual({
+      ok: true,
+      request: { prompt: "hello" },
+      correlation: {
+        threadId: "00000000-0000-4000-8000-0000000000aa",
+        runId: "r1",
+      },
+    });
   });
 
   it("takes the newest user message and joins its text parts", () => {

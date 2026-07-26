@@ -27,6 +27,14 @@ export interface ArenaReveal {
   models: Record<ArenaSlot, RevealedModel>;
   /** The vote the reveal was granted for; null when it was not carried. */
   vote: ArenaVote | null;
+  /**
+   * Whether the next turn may continue this conversation. The server states it
+   * on the vote response; against one that predates the field it is derived
+   * from the vote, which is the rule every host used to encode by hand.
+   */
+  continuable: boolean;
+  /** The conversation to continue with, when the response carried it. */
+  conversationId?: string;
 }
 
 export interface ArenaSlotError {
@@ -167,9 +175,17 @@ export function parseArenaReveal(value: unknown): ArenaReveal | null {
   if (!a || !b) {
     return null;
   }
+  const vote = isArenaVote(record?.vote) ? record.vote : null;
   return {
     models: { A: a, B: b },
-    vote: isArenaVote(record?.vote) ? record.vote : null,
+    vote,
+    continuable:
+      typeof record?.continuable === "boolean"
+        ? record.continuable
+        : vote !== null && isDecisiveVote(vote),
+    ...(typeof record?.conversationId === "string"
+      ? { conversationId: record.conversationId }
+      : {}),
   };
 }
 

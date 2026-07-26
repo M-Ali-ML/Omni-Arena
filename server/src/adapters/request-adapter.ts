@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { RunCorrelation } from "./event-adapter.js";
 
 /**
  * The ingress half of the adapter layer. Each wire protocol may also parse *its
@@ -33,7 +34,12 @@ export type ArenaChatRequest = z.infer<typeof arenaChatRequestSchema>;
 export type RequestFieldErrors = Record<string, string[] | undefined>;
 
 export type RequestParseResult =
-  | { ok: true; request: ArenaChatRequest }
+  | {
+      ok: true;
+      request: ArenaChatRequest;
+      /** Run ids to echo, for protocols whose envelope carries them. */
+      correlation?: RunCorrelation;
+    }
   | { ok: false; fieldErrors: RequestFieldErrors };
 
 export interface RequestAdapter {

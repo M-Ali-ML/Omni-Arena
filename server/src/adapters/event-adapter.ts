@@ -7,6 +7,17 @@ import type { PublicArenaEvent } from "../core/events.js";
  * envelope implements the `RequestAdapter` port in `request-adapter.ts`
  * alongside this one; the two are resolved together by `selectProtocol`.
  */
+/**
+ * Ids a client minted for the run it is starting. Protocols whose contract says
+ * a server echoes them (AG-UI's `threadId` / `runId`) use these to correlate
+ * the stream with the run the client believes it started; the arena's own ids
+ * are unaffected and keep identifying the matchup.
+ */
+export interface RunCorrelation {
+  threadId?: string;
+  runId?: string;
+}
+
 export interface EventAdapter {
   /** Response headers this protocol requires before the first chunk. */
   readonly headers: Record<string, string>;
@@ -22,4 +33,9 @@ export interface EventAdapter {
    * Everything else keeps the HTTP status codes documented in `api.md`.
    */
   readonly inBandErrors?: boolean;
+  /**
+   * Adopt the run ids the client sent, before any event is serialized.
+   * Implemented only by protocols whose contract requires the echo.
+   */
+  correlate?(correlation: RunCorrelation): void;
 }

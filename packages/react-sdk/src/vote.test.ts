@@ -25,7 +25,11 @@ describe("submitArenaVote", () => {
       baseUrl: "https://arena.example.com",
     });
 
-    expect(reveal).toEqual({ models: revealed, vote: "left" });
+    expect(reveal).toEqual({
+      models: revealed,
+      vote: "left",
+      continuable: true,
+    });
     const call = fetchMock.mock.calls[0];
     expect(String(call?.[0])).toBe("https://arena.example.com/api/arena/vote");
     expect(call?.[1]?.method).toBe("POST");

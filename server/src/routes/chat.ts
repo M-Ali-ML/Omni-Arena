@@ -83,6 +83,29 @@ function fail(
 }
 
 /**
+ * The round's metadata, repeated as a response header.
+ *
+ * Every protocol already carries this on the wire, but three of the runtimes
+ * the arena exists to serve never surface it: assistant-ui's AG-UI aggregator
+ * drops `CUSTOM` events wholesale, so on the convenience path
+ * (`useAgUiRuntime({ url })`) the vote token reaches the client and dies there.
+ * A header is readable by anything that can see the response — a fetch wrapper,
+ * a Next.js route handler, a proxy — with no cooperation from the runtime that
+ * owns the stream. The value is ids, enums, and booleans only, so it stays
+ * header-safe ASCII; the browser needs it in `Access-Control-Expose-Headers`
+ * (see `app.ts`).
+ */
+export const MATCHUP_HEADER = "x-arena-matchup";
+
+function matchupHeader(started: PublicArenaEvent): Record<string, string> {
+  if (started.type !== "matchup_started") {
+    return {};
+  }
+  const { type: _type, ...metadata } = started;
+  return { [MATCHUP_HEADER]: JSON.stringify(metadata) };
+}
+
+/**
  * Hijack the response and stream one round through the selected adapter. The
  * response is committed at 200 from the first write on, so a failure part-way
  * through can only be reported in-band: without the `run_error` below the
@@ -93,7 +116,7 @@ async function streamRound(options: StreamOptions): Promise<void> {
   const { reply, adapter, registry, streamId, started, open, onEvent, log } =
     options;
   reply.hijack();
-  reply.raw.writeHead(200, adapter.headers);
+  reply.raw.writeHead(200, { ...adapter.headers, ...matchupHeader(started) });
   reply.raw.write(adapter.serialize(started));
 
   const controller = registry.register(streamId);
@@ -172,6 +195,10 @@ export function registerChatRoute(
       return reply
         .code(400)
         .send({ error: "Invalid request", details: fieldErrors });
+    }
+
+    if (parsed.correlation) {
+      adapter.correlate?.(parsed.correlation);
     }
 
     const input = parsed.request;

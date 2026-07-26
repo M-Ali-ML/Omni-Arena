@@ -163,6 +163,47 @@ describe("Postgres-backed arena flow", () => {
         },
       ]);
 
+      // The out-of-band reads run against real SQL: both of them join turns
+      // and preferences onto the matchup, which the in-memory fake cannot
+      // vouch for.
+      const matchup = await app.inject({
+        method: "GET",
+        url: `/api/arena/matchups/${started.matchupId}`,
+      });
+      expect(matchup.json()).toMatchObject({
+        turnIndex: 0,
+        votable: false,
+        continuable: true,
+        vote: "left",
+        models: {
+          A: { displayName: "Alpha" },
+          B: { displayName: "Beta" },
+        },
+      });
+
+      const thread = await app.inject({
+        method: "GET",
+        url: `/api/arena/conversations/${matchup.json().conversationId}`,
+      });
+      expect(thread.json()).toMatchObject({
+        // The follow-up turn is still awaiting its vote.
+        continuable: false,
+        nextTurnIndex: 2,
+      });
+      expect(thread.json().turns).toMatchObject([
+        {
+          turnIndex: 0,
+          prompt: "Compare these",
+          vote: "left",
+          answers: [
+            { slot: "A", content: "Alpha answer", error: null },
+            { slot: "B", content: "Beta answer", error: null },
+          ],
+          models: { A: { displayName: "Alpha" } },
+        },
+        { turnIndex: 1, prompt: "Go deeper", vote: null, models: null },
+      ]);
+
       const leaderboard = await app.inject({
         method: "GET",
         url: "/api/arena/leaderboard",

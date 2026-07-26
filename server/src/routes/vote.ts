@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { isContinuable, revealOf } from "../arena/outcome.js";
 import type { PreferenceRepositoryPort } from "../core/ports.js";
 import { DuplicateVoteError } from "../repo/postgres.js";
 import type { MatchupTokenService } from "../token.js";
@@ -81,10 +82,13 @@ export function registerVoteRoute(
 
     return {
       accepted: true,
-      models: {
-        A: { id: matchup.slotA.id, displayName: matchup.slotA.displayName },
-        B: { id: matchup.slotB.id, displayName: matchup.slotB.displayName },
-      },
+      models: revealOf(matchup.slotA, matchup.slotB),
+      // Whether this vote left a winning response to continue from, and the id
+      // to continue with. Without them every client re-encoded the
+      // `left|right ⇒ decisive` rule itself and paid for a wrong guess with a
+      // `409` on the next turn.
+      continuable: isContinuable(parsed.data.vote),
+      conversationId: matchup.conversationId,
     };
   });
 }

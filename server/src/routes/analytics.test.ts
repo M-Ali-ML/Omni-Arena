@@ -76,6 +76,7 @@ function buildApp(analytics: AnalyticsPort | undefined) {
     recordPreference: async () => undefined,
     getConversationContext: async () => ({ status: "not_found" as const }),
     getMatchup: async () => null,
+    getConversationTurns: async () => ({ status: "not_found" as const }),
     getLeaderboard: async () => [],
     getRatingContext: async () => ({
       components: { count: null, groups: [] },
