@@ -20,8 +20,12 @@ const fingerprintOf = (providerModelId: string): RegExp =>
 /**
  * Drives the real upstream assistant-ui example (patched with the arena
  * overlay) against a real OmniArena running the deterministic mock provider:
- * prompt → two blind streams → vote → reveal → multi-turn follow-up, plus the
- * non-votable single-model round.
+ * prompt → two blind streams → vote → reveal → multi-turn follow-up → reload
+ * rehydration, plus the non-votable single-model round.
+ *
+ * Vote tokens are acquired from the `x-arena-matchup` response header (the
+ * stock AG-UI runtime drops `CUSTOM`), and continuation follows the vote
+ * response's `continuable` flag.
  */
 
 // The harness pins its matchmaking RNG, so slot A is always the roster's first
@@ -136,4 +140,54 @@ test("hides the vote UI when the round is not votable", async ({ page }) => {
   await expect(message.getByTestId("arena-slot-B")).toHaveCount(0);
   await expect(message.getByTestId("arena-not-votable")).toBeVisible();
   await expect(message.getByTestId("arena-vote-bar")).toHaveCount(0);
+});
+
+test("rehydrates the thread after a reload", async ({ page }) => {
+  await send(page, "Explain JSON Web Tokens in simple terms.");
+
+  const first = messages(page).first();
+  await expect(first.getByTestId("arena-slot-A")).toContainText(SLOT_A_ANSWER);
+  await first.getByTestId("arena-vote-left").click();
+  await expect(first.getByTestId("arena-reveal")).toContainText(
+    ROSTER.A.displayName,
+  );
+
+  const conversationId = await page
+    .getByTestId("arena-conversation")
+    .getAttribute("data-conversation");
+  expect(conversationId).toBeTruthy();
+
+  await send(page, "Now give me an example token.");
+  await expect(messages(page)).toHaveCount(2);
+  await expect(messages(page).nth(1)).toHaveAttribute("data-turn-index", "1");
+  await messages(page).nth(1).getByTestId("arena-vote-right").click();
+  await expect(messages(page).nth(1).getByTestId("arena-reveal")).toContainText(
+    ROSTER.B.displayName,
+  );
+
+  await page.reload();
+  await expect(page.getByTestId("arena-controls")).toBeVisible();
+
+  // Conversation GET rebuilds both turns, including reveals.
+  await expect(messages(page)).toHaveCount(2);
+  await expect(messages(page).first().getByTestId("arena-reveal")).toContainText(
+    ROSTER.A.displayName,
+  );
+  await expect(messages(page).nth(1).getByTestId("arena-reveal")).toContainText(
+    ROSTER.B.displayName,
+  );
+  await expect(messages(page).nth(1)).toHaveAttribute("data-turn-index", "1");
+  await expect(page.getByTestId("arena-conversation")).toHaveAttribute(
+    "data-conversation",
+    conversationId ?? "",
+  );
+
+  // A follow-up after reload still continues the same OmniArena conversation.
+  await send(page, "One more example, please.");
+  await expect(messages(page)).toHaveCount(3);
+  await expect(messages(page).nth(2)).toHaveAttribute("data-turn-index", "2");
+  await expect(page.getByTestId("arena-conversation")).toHaveAttribute(
+    "data-conversation",
+    conversationId ?? "",
+  );
 });

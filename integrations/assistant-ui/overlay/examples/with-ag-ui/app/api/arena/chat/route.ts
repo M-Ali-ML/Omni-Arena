@@ -1,13 +1,14 @@
 import { arenaUrl } from "@/lib/arena/server";
+import { MATCHUP_HEADER } from "@/lib/arena/protocol";
 
 /**
  * Same-origin reverse proxy onto OmniArena's AG-UI stream.
  *
- * It deliberately does no protocol translation: the browser's AG-UI client
- * posts OmniArena's own `{ prompt, sessionId, conversationId }` body (see
- * `lib/arena/agent.ts`) and this route pipes `?protocol=ag-ui` back
- * byte-for-byte. The only reason it exists is to keep the arena's URL server
- * side and the browser same-origin.
+ * The browser posts a stock AG-UI `RunAgentInput` (with arena fields in
+ * `forwardedProps`); this route pipes `?protocol=ag-ui` back byte-for-byte and
+ * forwards `x-arena-matchup` so the client can vote without a `CUSTOM`
+ * subscriber. It exists to keep the arena URL server-side and the browser
+ * same-origin.
  */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -67,7 +68,11 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  return new Response(upstream.body, { status: 200, headers: SSE_HEADERS });
+  const headers: Record<string, string> = { ...SSE_HEADERS };
+  const matchup = upstream.headers.get(MATCHUP_HEADER);
+  if (matchup) headers[MATCHUP_HEADER] = matchup;
+
+  return new Response(upstream.body, { status: 200, headers });
 }
 
 function safeJson(text: string): { error?: string } | null {

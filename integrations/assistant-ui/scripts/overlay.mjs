@@ -41,7 +41,10 @@ const PATCHES = [
   {
     file: `${APP}/app/MyRuntimeProvider.tsx`,
     find: `import { HttpAgent } from "@ag-ui/client";`,
-    replace: `import { useArenaAgent } from "@/lib/arena/agent";`,
+    replace: `import { useArenaAgent } from "@/lib/arena/agent";
+import { createArenaHistoryAdapter } from "@/lib/arena/history";
+import { clearPersistedArena } from "@/lib/arena/persistence";
+import { arenaStore } from "@/lib/arena/store";`,
   },
   {
     file: `${APP}/app/MyRuntimeProvider.tsx`,
@@ -65,7 +68,39 @@ const PATCHES = [
   }, [agentUrl, currentThreadId]);`,
     replace: `  // OmniArena instead of the example's Python echo agent: same AG-UI client,
   // pointed at /api/arena/chat, which proxies OmniArena's ?protocol=ag-ui stream.
-  const agent = useArenaAgent(currentThreadId);`,
+  const agent = useArenaAgent(currentThreadId);
+  const historyAdapter = useMemo(
+    () => createArenaHistoryAdapter(currentThreadId),
+    [currentThreadId],
+  );`,
+  },
+  {
+    file: `${APP}/app/MyRuntimeProvider.tsx`,
+    find: `      onSwitchToNewThread: async () => {
+        const newId = crypto.randomUUID();
+        threadsRef.current.set(newId, { id: newId, messages: [] });
+        setCurrentThreadId(newId);
+        console.debug("[agui] Switched to new thread:", newId);
+      },`,
+    replace: `      onSwitchToNewThread: async () => {
+        const newId = crypto.randomUUID();
+        threadsRef.current.set(newId, { id: newId, messages: [] });
+        arenaStore.resetThread(currentThreadId);
+        clearPersistedArena();
+        setCurrentThreadId(newId);
+        console.debug("[agui] Switched to new thread:", newId);
+      },`,
+  },
+  {
+    file: `${APP}/app/MyRuntimeProvider.tsx`,
+    find: `    adapters: {
+      threadList: threadListAdapter,
+    },`,
+    replace: `    adapters: {
+      threadList: threadListAdapter,
+      // Reloads rebuild the thread from GET /api/arena/conversations/:id.
+      history: historyAdapter,
+    },`,
   },
   {
     file: `${APP}/app/page.tsx`,

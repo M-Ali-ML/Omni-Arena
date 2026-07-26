@@ -4,9 +4,8 @@ import { HttpAgent, type RunAgentInput } from "@ag-ui/client";
 import { useEffect, useMemo } from "react";
 import {
   getSessionId,
-  parseArenaMatchup,
-  parseSlotError,
-  type ArenaSlot,
+  MATCHUP_HEADER,
+  parseMatchupHeader,
 } from "./protocol";
 import { arenaStore, useArenaThread } from "./store";
 
@@ -20,15 +19,16 @@ type ArenaRequestContext = {
 };
 
 /**
- * assistant-ui's AG-UI runtime drives a stock `@ag-ui/client` agent, and
- * OmniArena speaks AG-UI on the way *out* — but not on the way in: its chat
- * endpoint takes `{ prompt, sessionId, conversationId }`, not an AG-UI
- * `RunAgentInput`. Overriding `requestInit` is the whole adaptation; the
- * response stream is consumed byte-for-byte as the arena emits it.
+ * Thin wrapper around stock `HttpAgent`. OmniArena already accepts a canonical
+ * `RunAgentInput`; what `useAgUiRuntime` cannot do is put arena session /
+ * continuation / trigger into `forwardedProps` (it only fills those from its
+ * own model context) or attach `x-arena`. Overriding `requestInit` is the
+ * whole remaining adaptation — the body stays AG-UI-shaped.
  *
- * Client history is deliberately dropped: OmniArena rebuilds context
- * server-side from the *winning* response of each completed turn, keyed by
- * `conversationId`, and never trusts client-supplied history.
+ * The vote token is read from the `x-arena-matchup` response header via the
+ * custom `fetch` below, not from a `CUSTOM` subscriber: assistant-ui's
+ * aggregator drops `CUSTOM` events, so the header is the path that works with
+ * the stock runtime.
  */
 export class ArenaHttpAgent extends HttpAgent {
   context: ArenaRequestContext = {
@@ -38,49 +38,42 @@ export class ArenaHttpAgent extends HttpAgent {
   };
 
   protected override requestInit(input: RunAgentInput): RequestInit {
-    const prompt = lastUserText(input.messages);
     const { arenaEnabled, conversationId, sessionId } = this.context;
-    return {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "text/event-stream",
-        // Honoured when OmniArena runs with ARENA_TRIGGER=manual; ignored when
-        // it is configured to make every request a matchup.
-        "x-arena": arenaEnabled ? "on" : "off",
-      },
-      body: JSON.stringify({
-        prompt,
+    const init = super.requestInit({
+      ...input,
+      forwardedProps: {
+        ...(input.forwardedProps as Record<string, unknown> | undefined),
         sessionId,
         arena: arenaEnabled,
         ...(arenaEnabled && conversationId ? { conversationId } : {}),
-      }),
-    };
+      },
+    });
+    const headers = new Headers(init.headers);
+    headers.set("x-arena", arenaEnabled ? "on" : "off");
+    return { ...init, headers };
   }
-}
-
-function lastUserText(messages: RunAgentInput["messages"]): string {
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index];
-    if (message?.role === "user" && typeof message.content === "string") {
-      return message.content;
-    }
-  }
-  return "";
 }
 
 /**
- * One agent per thread, plus the subscription that lifts the arena payloads
- * (`CUSTOM arena_matchup`, `CUSTOM slot_error`, slot order) out of the stream —
- * assistant-ui's runtime forwards `CUSTOM` events to its aggregator, which
- * ignores them, so a client that wants the vote token has to listen itself.
+ * One agent per thread. Matchup metadata lands through the response header;
+ * run errors still need a tiny subscriber because the controls strip sits
+ * outside the message tree.
  */
 export function useArenaAgent(threadId: string): ArenaHttpAgent {
   const thread = useArenaThread(threadId);
-  const agent = useMemo(
-    () => new ArenaHttpAgent({ url: ARENA_CHAT_ROUTE, threadId }),
-    [threadId],
-  );
+  const agent = useMemo(() => {
+    const fetchWithMatchup: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const matchup = parseMatchupHeader(response.headers.get(MATCHUP_HEADER));
+      if (matchup) arenaStore.beginMatchup(threadId, matchup);
+      return response;
+    };
+    return new ArenaHttpAgent({
+      url: ARENA_CHAT_ROUTE,
+      threadId,
+      fetch: fetchWithMatchup,
+    });
+  }, [threadId]);
 
   // Read during render so the very next run picks up the current toggle and
   // conversation handle without waiting for an effect to flush.
@@ -95,29 +88,7 @@ export function useArenaAgent(threadId: string): ArenaHttpAgent {
   }, [threadId]);
 
   useEffect(() => {
-    let matchupId: string | null = null;
     const subscription = agent.subscribe({
-      onCustomEvent: ({ event }) => {
-        if (event.name === "arena_matchup") {
-          const matchup = parseArenaMatchup(event.value);
-          if (!matchup) return;
-          matchupId = matchup.matchupId;
-          arenaStore.beginMatchup(threadId, matchup);
-          return;
-        }
-        if (event.name === "slot_error" && matchupId) {
-          const failure = parseSlotError(event.value);
-          if (failure) {
-            arenaStore.noteSlotError(matchupId, failure.slot, failure.message);
-          }
-        }
-      },
-      onTextMessageStartEvent: ({ event }) => {
-        // `slot` rides along on the wire (AG-UI events are passthrough-parsed),
-        // but the message id is the tag that survives into assistant-ui.
-        const slot = slotOf(event as { slot?: unknown }, event.messageId);
-        if (matchupId && slot) arenaStore.noteSlotStart(matchupId, slot);
-      },
       onRunErrorEvent: ({ event }) => {
         arenaStore.noteRunError(threadId, event.message ?? "Arena run failed");
       },
@@ -126,10 +97,4 @@ export function useArenaAgent(threadId: string): ArenaHttpAgent {
   }, [agent, threadId]);
 
   return agent;
-}
-
-function slotOf(event: { slot?: unknown }, messageId: string): ArenaSlot | null {
-  const candidate =
-    typeof event.slot === "string" ? event.slot : messageId.slice(-1);
-  return candidate === "A" || candidate === "B" ? candidate : null;
 }

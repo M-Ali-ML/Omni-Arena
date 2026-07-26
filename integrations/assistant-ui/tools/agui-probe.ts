@@ -2,35 +2,43 @@
 // the same client assistant-ui's `useAgUiRuntime` runs on — outside of React.
 // It answers the questions the UI cannot: does the AG-UI client accept two
 // concurrent slot messages in one run, does the run reach RUN_FINISHED, does
-// the `slot` field survive schema validation, and does the CUSTOM
-// `arena_matchup` event (the vote token) reach a subscriber?
+// the `slot` field survive schema validation, and does the `x-arena-matchup`
+// header (the vote-token path the stock runtime can use) reach the client?
 //
 //   ARENA_URL=http://127.0.0.1:3011 npx tsx tools/agui-probe.ts
 import { HttpAgent, type RunAgentInput } from "@ag-ui/client";
 
 const arenaUrl = process.env.ARENA_URL ?? "http://127.0.0.1:3011";
+const MATCHUP_HEADER = "x-arena-matchup";
 
 class ArenaAgent extends HttpAgent {
   protected override requestInit(input: RunAgentInput): RequestInit {
-    const prompt = [...input.messages]
-      .reverse()
-      .find((message) => message.role === "user")?.content;
-    return {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "text/event-stream",
-        // Opt into a matchup: harmless under ARENA_TRIGGER=always, required
-        // under `manual` (what harness/arena.ts runs).
-        "x-arena": "on",
+    const init = super.requestInit({
+      ...input,
+      forwardedProps: {
+        ...(input.forwardedProps as Record<string, unknown> | undefined),
+        sessionId: "agui-probe",
+        arena: true,
       },
-      body: JSON.stringify({ prompt: prompt ?? "", sessionId: "agui-probe" }),
-    };
+    });
+    const headers = new Headers(init.headers);
+    // Opt into a matchup: harmless under ARENA_TRIGGER=always, required under
+    // `manual` (what harness/arena.ts runs).
+    headers.set("x-arena", "on");
+    return { ...init, headers };
   }
 }
 
+let headerMatchup: Record<string, unknown> | undefined;
+
 const agent = new ArenaAgent({
   url: `${arenaUrl}/api/arena/chat?protocol=ag-ui`,
+  fetch: async (input, init) => {
+    const response = await fetch(input, init);
+    const raw = response.headers.get(MATCHUP_HEADER);
+    if (raw) headerMatchup = JSON.parse(raw) as Record<string, unknown>;
+    return response;
+  },
 });
 
 const seen: string[] = [];
@@ -58,6 +66,7 @@ const result = await agent.runAgent({ runId: "probe-run" });
 console.log("events:", seen.join(" → "));
 console.log("TEXT_MESSAGE_START ids (order):", starts);
 console.log("`slot` field survived client-side schema validation:", [...slotsSeen]);
+console.log("x-arena-matchup header:", headerMatchup);
 console.log("arena_matchup CUSTOM payload:", custom);
 console.log(
   "messages after run:",
@@ -75,8 +84,8 @@ console.log(
   ),
 );
 
-if (!custom?.matchupToken) {
-  console.error("FAIL: no matchup token reached the client");
+if (!headerMatchup?.matchupToken) {
+  console.error("FAIL: no matchup token reached the client via x-arena-matchup");
   process.exit(1);
 }
 
@@ -84,8 +93,8 @@ const voteResponse = await fetch(`${arenaUrl}/api/arena/vote`, {
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify({
-    matchupId: custom.matchupId,
-    matchupToken: custom.matchupToken,
+    matchupId: headerMatchup.matchupId,
+    matchupToken: headerMatchup.matchupToken,
     vote: "left",
   }),
 });
