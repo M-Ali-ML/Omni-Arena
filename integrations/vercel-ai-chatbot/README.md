@@ -290,11 +290,13 @@ useChat (upstream)
 | File (under `overlay/`) | Role |
 |---|---|
 | `app/(chat)/api/arena/chat/route.ts` | The arena replacement for upstream's `/api/chat`: same auth and persistence, no provider call, no LLM title generation |
-| `app/(chat)/api/arena/vote/route.ts` | Proxies the vote, then appends the reveal to the stored assistant message so it survives a reload |
+| `app/(chat)/api/arena/vote/route.ts` | Proxies the vote, receives `continuable`/`conversationId`, then appends the reveal to the stored assistant message so it survives a reload |
 | `app/(chat)/api/arena/leaderboard/route.ts` | Server-side leaderboard proxy, so the arena never has to be exposed to the browser or CORS-configured |
+| `app/(chat)/api/arena/matchups/[id]/route.ts` | Server-side proxy for reading round details (`GET /api/arena/matchups/:id`) out-of-band |
+| `app/(chat)/api/arena/conversations/[id]/route.ts` | Server-side proxy for thread rehydration (`GET /api/arena/conversations/:id`) |
 | `lib/arena/stream.ts` | Tees the SSE stream: forwards every frame untouched, accumulates slot A/B text, and injects the message id into the `start` frame so the streamed and stored messages are the same entity |
 | `lib/arena/protocol.ts` | Shared types plus `readArenaMatchup`, which reconstructs a matchup from a message's parts (live or replayed from Postgres) |
-| `components/arena/arena-provider.tsx` | Client state: the toggle, the continuation `conversationId` (only set after a decisive vote), per-matchup vote state |
+| `components/arena/arena-provider.tsx` | Client state: the toggle, server-stated continuation (`continuable`/`conversationId`), per-matchup vote state, and out-of-band matchup hydration |
 | `components/arena/arena-matchup.tsx` | The two blind columns, mode/turn labels, reveal chips |
 | `components/arena/arena-vote-bar.tsx` | The five vote buttons; hidden when the round is not `votable` |
 | `components/arena/arena-controls.tsx` | Composer toolbar: `Compare` toggle, leaderboard popover, and the label that replaces upstream's model picker |

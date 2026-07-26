@@ -39,6 +39,8 @@ export type ArenaRevealedModel = { id?: string; displayName: string };
 export type ArenaReveal = {
   vote: ArenaVote;
   models: Record<ArenaSlot, ArenaRevealedModel>;
+  continuable?: boolean;
+  conversationId?: string;
 };
 
 export type ArenaMatchupView = {
@@ -113,6 +115,8 @@ function readReveal(data: unknown): ArenaReveal | null {
       B: { displayName: String(b.displayName ?? "Model B") },
     },
     vote: record.vote as ArenaVote,
+    ...(typeof record.continuable === "boolean" ? { continuable: record.continuable } : {}),
+    ...(typeof record.conversationId === "string" ? { conversationId: record.conversationId } : {}),
   };
 }
 

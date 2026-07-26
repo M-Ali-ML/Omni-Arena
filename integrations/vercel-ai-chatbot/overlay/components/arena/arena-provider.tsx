@@ -138,6 +138,8 @@ export function ArenaProvider({ children }: { children: ReactNode }) {
         });
         const payload = (await response.json()) as {
           models?: ArenaReveal["models"];
+          continuable?: boolean;
+          conversationId?: string;
           message?: string;
           cause?: string;
         };
@@ -147,20 +149,34 @@ export function ArenaProvider({ children }: { children: ReactNode }) {
           );
         }
 
+        const reveal: ArenaReveal = {
+          models: payload.models as ArenaReveal["models"],
+          vote,
+          ...(payload.continuable !== undefined
+            ? { continuable: payload.continuable }
+            : {}),
+          ...(payload.conversationId
+            ? { conversationId: payload.conversationId }
+            : {}),
+        };
+
         setVoteStates((current) => ({
           ...current,
           [meta.matchupId]: {
-            reveal: { models: payload.models as ArenaReveal["models"], vote },
+            reveal,
             status: "recorded",
             vote,
           },
         }));
 
-        // A round with no conversation id (a single-model one) has nothing for
-        // the next turn to continue from.
+        // Continuation is stated by the server (`continuable` + `conversationId`),
+        // falling back to isDecisiveVote(vote) & meta.conversationId.
+        const isContinuable = payload.continuable ?? isDecisiveVote(vote);
+        const targetConversationId =
+          payload.conversationId ?? meta.conversationId;
         setContinuation((current) =>
-          isDecisiveVote(vote) && meta.conversationId
-            ? { ...current, [chatId]: meta.conversationId }
+          isContinuable && targetConversationId
+            ? { ...current, [chatId]: targetConversationId }
             : current,
         );
       } catch (error) {
@@ -179,29 +195,79 @@ export function ArenaProvider({ children }: { children: ReactNode }) {
 
   const hydrate = useCallback(
     (chatId: string, meta: ArenaMeta, reveal: ArenaReveal | null) => {
-      if (!reveal) {
+      if (reveal) {
+        setVoteStates((current) =>
+          current[meta.matchupId]
+            ? current
+            : {
+                ...current,
+                [meta.matchupId]: {
+                  reveal,
+                  status: "recorded",
+                  vote: reveal.vote,
+                },
+              },
+        );
+        const isContinuable = reveal.continuable ?? isDecisiveVote(reveal.vote);
+        const continueFrom = reveal.conversationId ?? meta.conversationId;
+        if (isContinuable && continueFrom) {
+          setContinuation((current) =>
+            current[chatId] === continueFrom
+              ? current
+              : { ...current, [chatId]: continueFrom },
+          );
+        }
         return;
       }
-      setVoteStates((current) =>
-        current[meta.matchupId]
-          ? current
-          : {
-              ...current,
-              [meta.matchupId]: {
-                reveal,
-                status: "recorded",
-                vote: reveal.vote,
-              },
-            },
-      );
-      const continueFrom = meta.conversationId;
-      if (isDecisiveVote(reveal.vote) && continueFrom) {
-        setContinuation((current) =>
-          current[chatId] === continueFrom
-            ? current
-            : { ...current, [chatId]: continueFrom },
-        );
+
+      // If no stored reveal is present, check if the round was voted on server-side
+      if (!meta.matchupId || meta.votable === false) {
+        return;
       }
+
+      void fetch(`${basePath}/api/arena/matchups/${meta.matchupId}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!data || !data.models || !data.vote) {
+            return;
+          }
+          const fetchedReveal: ArenaReveal = {
+            models: data.models as ArenaReveal["models"],
+            vote: data.vote as ArenaVote,
+            ...(typeof data.continuable === "boolean"
+              ? { continuable: data.continuable }
+              : {}),
+            ...(data.conversationId
+              ? { conversationId: data.conversationId }
+              : {}),
+          };
+          setVoteStates((current) =>
+            current[meta.matchupId]?.status === "recorded"
+              ? current
+              : {
+                  ...current,
+                  [meta.matchupId]: {
+                    reveal: fetchedReveal,
+                    status: "recorded",
+                    vote: fetchedReveal.vote,
+                  },
+                },
+          );
+          const isContinuable =
+            fetchedReveal.continuable ?? isDecisiveVote(fetchedReveal.vote);
+          const continueFrom =
+            fetchedReveal.conversationId ?? meta.conversationId;
+          if (isContinuable && continueFrom) {
+            setContinuation((current) =>
+              current[chatId] === continueFrom
+                ? current
+                : { ...current, [chatId]: continueFrom },
+            );
+          }
+        })
+        .catch(() => {
+          // Ignore network errors on round lookup
+        });
     },
     [],
   );
