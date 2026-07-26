@@ -114,10 +114,12 @@ Open <http://127.0.0.1:3100>.
    `continuing conversation <id>` — send a follow-up and OmniArena continues
    turn 2 from the winning response, with a fresh blind matchup for the new turn.
    After a tie/skip there is no winner, so the next message starts fresh.
-6. Click **Arena mode: on** to toggle it off, then send a message: OmniArena
+6. Reload the page: the thread comes back from OmniArena's conversation GET
+   (same prompts, answers, and reveals).
+7. Click **Arena mode: on** to toggle it off, then send a message: OmniArena
    serves a single model, the stream carries `mode: "single"`, `votable: false`,
    and the UI renders one column with the vote bar replaced by an explanation.
-7. **New Thread** starts a new assistant-ui thread with its own arena state.
+8. **New Thread** starts a new assistant-ui thread with its own arena state.
 
 ## Test
 
@@ -129,9 +131,10 @@ npm test -- --dev   # same suite against `next dev` (skips the production build)
 Playwright starts both servers itself (OmniArena on 3011, the app on 3100) and
 covers: prompt → two concurrent streams → blind headers → vote → reveal →
 multi-turn continuation (asserting `turnIndex: 1` in the same conversation), the
-tie path (reveal but no continuation), the non-votable single-model round, and
-two protocol-level tests that assert the AG-UI event sequence the browser
-receives (`tests/protocol.spec.ts`).
+tie path (reveal but no continuation), the non-votable single-model round,
+reload rehydration from `GET /api/arena/conversations/:id`, and two
+protocol-level tests that assert the AG-UI event sequence plus the
+`x-arena-matchup` header the browser receives (`tests/protocol.spec.ts`).
 
 There is also a headless probe of the adapter that needs no browser:
 
@@ -157,43 +160,46 @@ integrations/assistant-ui/
   tests/                         Playwright specs
   screenshots/                   the documentation-screenshot spec
   overlay/examples/with-ag-ui/   the committed arena layer, copied into the clone
-    lib/arena/protocol.ts        wire types + CUSTOM-event parsers + vote POST
-    lib/arena/store.ts           external store: matchups, votes, reveal, continuation
-    lib/arena/agent.ts           ArenaHttpAgent + useArenaAgent (AG-UI client wiring)
+    lib/arena/protocol.ts        wire types + header/vote/conversation parsers
+    lib/arena/store.ts           external store: matchups, votes, reveal, hydrate
+    lib/arena/persistence.ts     conversationId + pending vote tokens across reload
+    lib/arena/history.ts         ThreadHistoryAdapter → conversation GET
+    lib/arena/agent.ts           thin ArenaHttpAgent + useArenaAgent
     lib/arena/server.ts          server-only OMNIARENA_URL resolution
     app/api/arena/chat/route.ts  same-origin proxy → OmniArena AG-UI stream
     app/api/arena/vote/route.ts  same-origin proxy → OmniArena vote
+    app/api/arena/conversations/ same-origin proxy → conversation rehydration
     components/arena/*.tsx       dual-column assistant message, vote bar, header controls
   .upstream/                     the clone (gitignored, never committed)
 ```
 
 ### How the wiring works
 
-- `useArenaAgent(threadId)` builds an `ArenaHttpAgent` — a subclass of
-  `@ag-ui/client`'s `HttpAgent` that rewrites the request body. It was written
-  because OmniArena's chat endpoint did not accept AG-UI's `RunAgentInput` at all
-  ([FINDINGS.md](./FINDINGS.md), finding 1); **that is fixed** —
-  `agUiRequestAdapter` in `server/src/adapters/ag-ui.ts` now parses
-  `RunAgentInput`, taking the prompt from the last user message and the arena's
-  own inputs (`sessionId`, `conversationId`, `arena`) from `forwardedProps`, so
-  the envelope no longer has to be translated client-side. What the subclass is
-  still for is getting those per-request inputs *into* the run: `useAgUiRuntime`
-  builds the `RunAgentInput` itself and fills `forwardedProps` only from its own
-  model context (`callSettings` / `config` / `runConfig.custom`,
-  `AgUiThreadRuntimeCore.buildRunInput`), and there is no hook at all for a
-  request header. Overriding `requestInit` is where this app attaches the thread's
-  session id, its continuation `conversationId`, the arena opt-in and the
-  `x-arena` header. Everything downstream is stock AG-UI.
+- `useArenaAgent(threadId)` builds a thin `ArenaHttpAgent` — a subclass of
+  `@ag-ui/client`'s `HttpAgent` that keeps a stock `RunAgentInput` body and only
+  injects arena fields into `forwardedProps` (`sessionId`, `conversationId`,
+  `arena`) plus the `x-arena` header. OmniArena's `agUiRequestAdapter` already
+  accepts that envelope ([FINDINGS.md](./FINDINGS.md), finding 1); what
+  `useAgUiRuntime` still cannot do is populate those props itself (it fills
+  `forwardedProps` only from its own model context) or set a request header.
+  That injection is the only reason the subclass remains.
+- Vote tokens arrive on the chat response's `x-arena-matchup` header. The Next
+  proxy forwards it; the agent's custom `fetch` parses it into
+  `lib/arena/store.ts`. assistant-ui's aggregator still drops `CUSTOM` events,
+  so the header is the path that works with the stock runtime — no raw
+  `CUSTOM` subscriber for voting.
+- After a vote, continuation follows the server's `continuable` flag on
+  `POST /api/arena/vote` (not a client-side left|right rule).
+- Reload rehydration: the active `conversationId` (and any still-needed vote
+  token) lives in `localStorage`; a `ThreadHistoryAdapter` calls
+  `GET /api/arena/conversations/:id` and rebuilds both the arena store and the
+  assistant-ui message list.
 - `MyRuntimeProvider.tsx` (upstream file, patched) hands that agent to
   upstream's `useAgUiRuntime`, so assistant-ui's own runtime parses the stream.
 - The two slots arrive as two concurrent AG-UI text messages in one run, so
   upstream's aggregator produces **one assistant message with two text parts**.
   `ArenaAssistantMessage` renders part 0 and part 1 as the A and B columns via
   `MessagePrimitive.PartByIndex`.
-- The vote token, `mode`, `votable`, `conversationId` and `turnIndex` ride a
-  `CUSTOM` event named `arena_matchup`. assistant-ui's runtime drops `CUSTOM`
-  events, so `useArenaAgent` also subscribes to the raw agent and mirrors that
-  metadata into `lib/arena/store.ts`.
 - Both API routes are thin same-origin proxies; the browser never learns where
   OmniArena lives, and `OMNIARENA_URL` stays server-side.
 
@@ -318,9 +324,10 @@ already in the clone, so no offline flag is needed.
 - Scrolling up puts assistant-ui's "scroll to bottom" button in the flow just
   above the composer, which pushes the composer down another ~37px and — with
   the overflow above — off the bottom edge. Visible in the multi-turn shot.
-- Reloading the page loses the thread: OmniArena exposes no conversation-history
-  endpoint and the AG-UI stream carries no `MESSAGES_SNAPSHOT`, so there is
-  nothing to rehydrate from. See [FINDINGS.md](./FINDINGS.md).
+- An unvoted last turn is only votable after a reload if the client kept the
+  `matchupToken` from the original `x-arena-matchup` header — the conversation
+  GET never returns tokens (by design). This host persists them in
+  `localStorage` for that span.
 
 ## Findings about OmniArena
 
