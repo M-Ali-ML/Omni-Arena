@@ -10,12 +10,13 @@ import { randomUUID } from "node:crypto";
  * `choices[1]` is discarded silently.
  */
 export class CompletionWriter {
-  constructor(response, model) {
+  constructor(response, model, { headers = {} } = {}) {
     this.id = `chatcmpl-${randomUUID()}`;
     this.created = Math.floor(Date.now() / 1000);
     this.model = model;
     this.response = response;
     this.closed = false;
+    this.extraHeaders = headers;
   }
 
   start() {
@@ -24,8 +25,14 @@ export class CompletionWriter {
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
       "x-accel-buffering": "no",
+      ...this.extraHeaders,
     });
     this.#frame({ role: "assistant" }, null);
+  }
+
+  /** Attach matchup metadata after `start` would be too late; merge before it. */
+  setHeaders(headers) {
+    Object.assign(this.extraHeaders, headers);
   }
 
   text(content) {

@@ -163,11 +163,27 @@ export async function* parseArenaStream(body) {
   }
 }
 
+/** Parse the `x-arena-matchup` header the server mirrors onto every chat response. */
+export function parseMatchupHeader(value) {
+  if (!value) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Starts a round and demultiplexes it into one channel per slot plus a promise
  * for the matchup metadata (id + vote token + mode), which the caller needs
- * before it can offer any vote UI. `failures` holds each slot's error message,
- * so a renderer can say a column is dead rather than leaving it silently empty.
+ * before it can offer any vote UI. Prefers the `x-arena-matchup` header when
+ * present — OpenAI has nowhere clean to put that metadata in-band — and falls
+ * back to the `omni_arena` extension on chunk one. `failures` holds each slot's
+ * error message, so a renderer can say a column is dead rather than leaving it
+ * silently empty.
  */
 export async function startRound(client, request) {
   const response = await client.chat(request);
@@ -176,12 +192,21 @@ export async function startRound(client, request) {
   let metaSettled = false;
   const failures = { A: null, B: null };
 
+  const fromHeader = parseMatchupHeader(response.headers.get("x-arena-matchup"));
+  if (fromHeader) {
+    metaSettled = true;
+    meta.resolve(fromHeader);
+  }
+
   const pump = (async () => {
     try {
       for await (const event of parseArenaStream(response.body)) {
         if (event.type === "meta") {
-          metaSettled = true;
-          meta.resolve(event.meta);
+          // Header already won when present; in-band meta fills the gap otherwise.
+          if (!metaSettled) {
+            metaSettled = true;
+            meta.resolve(event.meta);
+          }
         } else if (event.type === "token") {
           channels[event.slot].push(event.token);
         } else if (event.type === "slot_error") {

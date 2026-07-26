@@ -12,6 +12,11 @@ import { startRound } from "./arena.mjs";
  * `ENABLE_FORWARD_USER_INFO_HEADERS=true`. Without that header every browser
  * tab collapses onto one bucket and concurrent chats would steal each other's
  * vote tokens — see README, "What does not work".
+ *
+ * The same key holds the last *continuable* arena `conversationId`. Open WebUI
+ * never gives the bridge a stable id of its own beyond that header, so a
+ * missed mapping (TTL expiry, bridge restart, unknown chat) must degrade to a
+ * fresh matchup — never attach to someone else's thread.
  */
 export class ChatStore {
   #chats = new Map();
@@ -25,7 +30,13 @@ export class ChatStore {
     this.#sweep();
     let entry = this.#chats.get(key);
     if (!entry) {
-      entry = { key, matchup: null, touchedAt: Date.now() };
+      entry = {
+        key,
+        matchup: null,
+        /** Set only after a vote the server marked `continuable`. */
+        continueFrom: null,
+        touchedAt: Date.now(),
+      };
       this.#chats.set(key, entry);
     }
     entry.touchedAt = Date.now();
@@ -45,11 +56,34 @@ export class ChatStore {
     return this.#entry(key);
   }
 
-  /** Records the matchup a later `/a` or `/b` message will vote on. */
+  /** Records the matchup a later `!a` / `!b` message will vote on. */
   setMatchup(key, matchup) {
     const entry = this.#entry(key);
     entry.matchup = matchup;
     return entry;
+  }
+
+  /** The conversation a follow-up may continue, or `null` when none is ready. */
+  peekContinuation(key) {
+    return this.#entry(key).continueFrom;
+  }
+
+  /**
+   * Remembers a conversation only when the vote response said it is safe to
+   * continue — `continuable` is authoritative; the bridge does not re-derive
+   * left|right ⇒ decisive.
+   */
+  setContinuation(key, conversationId) {
+    const entry = this.#entry(key);
+    entry.continueFrom =
+      typeof conversationId === "string" && conversationId.length > 0
+        ? conversationId
+        : null;
+    return entry;
+  }
+
+  clearContinuation(key) {
+    this.#entry(key).continueFrom = null;
   }
 }
 

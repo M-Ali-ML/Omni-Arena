@@ -62,6 +62,9 @@ const VOTE_LABEL = {
 const VOTE_HINT =
   "Which is better? Send `!a`, `!b`, `!tie`, `!bad` or `!skip` — identities are revealed once you do. `!leaderboard` for standings, `!help` for everything.";
 
+const CONTINUE_HINT =
+  "Your next message continues this conversation from the winning answer.";
+
 const HELP = `### Omni-Arena in Open WebUI
 
 **Models**
@@ -80,8 +83,22 @@ const HELP = `### Omni-Arena in Open WebUI
 | \`!leaderboard\` | Bradley-Terry standings |
 | \`!help\` | This message |
 
-Votes are recorded against the last matchup **in this chat**.
+Votes are recorded against the last matchup **in this chat**. A decisive vote
+(\`!a\` / \`!b\`) lets the next message continue from the winner; \`!tie\` /
+\`!bad\` / \`!skip\` start a fresh matchup next turn.
 Commands start with \`!\` because Open WebUI reserves \`/\` for its own prompt menu and will not send a message beginning with it.`;
+
+/** Mirror arena matchup metadata so HTTP tests (and arena-aware clients) can read it. */
+const matchupHeaders = (meta) =>
+  meta
+    ? { "x-arena-matchup": JSON.stringify(meta) }
+    : {};
+
+/** True when the arena refused a continuation we thought was ready. */
+const isContinuationRefusal = (error) =>
+  /conversation_not_ready|conversation_not_found|Conversation not found|\b409\b/i.test(
+    String(error?.message ?? error),
+  );
 
 // ---------------------------------------------------------------- helpers
 
@@ -241,7 +258,13 @@ async function renderVote(writer, { chatKey, vote, slot }) {
           matchupToken: matchup.matchupToken,
           vote,
         })
-        .then((result) => ({ vote, models: result.models }))
+        .then((result) => ({
+          vote,
+          models: result.models,
+          // Server states continuability; do not re-derive from left|right.
+          continuable: result.continuable === true,
+          conversationId: result.conversationId ?? null,
+        }))
         .finally(() => setTimeout(() => votesInFlight.delete(dedupeKey), 30_000));
       votesInFlight.set(dedupeKey, pending);
     }
@@ -254,6 +277,11 @@ async function renderVote(writer, { chatKey, vote, slot }) {
       return;
     }
     entry.matchup = { ...matchup, recorded };
+    if (recorded.continuable && recorded.conversationId) {
+      chats.setContinuation(chatKey, recorded.conversationId);
+    } else {
+      chats.clearContinuation(chatKey);
+    }
   }
 
   if (recorded.vote !== vote) {
@@ -265,6 +293,9 @@ async function renderVote(writer, { chatKey, vote, slot }) {
   const nameA = recorded.models?.A?.displayName ?? "unknown";
   const nameB = recorded.models?.B?.displayName ?? "unknown";
   const pick = VOTE_LABEL[recorded.vote];
+  const nextStep = recorded.continuable
+    ? CONTINUE_HINT
+    : "Ask another question for a fresh matchup, or send `!leaderboard`.";
 
   // In side-by-side mode each column reveals its own slot, which reads far
   // better than repeating the whole reveal twice.
@@ -280,6 +311,8 @@ async function renderVote(writer, { chatKey, vote, slot }) {
         `This column was **${own}**${won ? " — your pick. 🏆" : "."}`,
         "",
         `_A: ${nameA} · B: ${nameB}_`,
+        "",
+        nextStep,
       ].join("\n"),
     );
   } else {
@@ -290,7 +323,7 @@ async function renderVote(writer, { chatKey, vote, slot }) {
         `- **A** was \`${nameA}\``,
         `- **B** was \`${nameB}\``,
         "",
-        "Ask another question for a fresh matchup, or send `!leaderboard`.",
+        nextStep,
       ].join("\n"),
     );
   }
@@ -307,7 +340,10 @@ async function renderDuel(writer, { chatKey, prompt }) {
       matchupToken: meta.matchupToken,
       votable: meta.votable,
       mode: meta.mode,
+      conversationId: meta.conversationId,
+      turnIndex: meta.turnIndex,
     });
+    writer.setHeaders(matchupHeaders(meta));
   }
 
   writer.start();
@@ -332,7 +368,7 @@ async function renderSlot(writer, { chatKey, prompt, slot }) {
     chatKey,
     prompt,
     slot,
-    roundStarter(client, { prompt, sessionId: chatKey, arena: true }),
+    () => startRoundFor({ chatKey, prompt, arena: true }),
   );
 
   const meta = await round.meta;
@@ -342,7 +378,10 @@ async function renderSlot(writer, { chatKey, prompt, slot }) {
       matchupToken: meta.matchupToken,
       votable: meta.votable,
       mode: meta.mode,
+      conversationId: meta.conversationId,
+      turnIndex: meta.turnIndex,
     });
+    writer.setHeaders(matchupHeaders(meta));
   }
 
   writer.start();
@@ -365,6 +404,8 @@ async function renderSlot(writer, { chatKey, prompt, slot }) {
 
 /** Omni-Arena's `single` plan: one model, no matchup, nothing to vote on. */
 async function renderSingle(writer, { chatKey, prompt }) {
+  // Single rounds are not continuable; leave any pending continuation intact
+  // so a later duel in this chat can still pick it up.
   const round = await startRoundFor({ chatKey, prompt, arena: false });
   const meta = await round.meta;
   chats.setMatchup(chatKey, {
@@ -374,6 +415,9 @@ async function renderSingle(writer, { chatKey, prompt }) {
     votable: false,
     mode: meta?.mode ?? "single",
   });
+  if (meta) {
+    writer.setHeaders(matchupHeaders(meta));
+  }
 
   writer.start();
   await drain(round.channels.A, writer);
@@ -408,8 +452,34 @@ async function renderRaw(response, { chatKey, prompt }) {
   response.end();
 }
 
-const startRoundFor = ({ chatKey, prompt, arena }) =>
-  roundStarter(client, { prompt, sessionId: chatKey, arena })();
+/**
+ * Starts a round, attaching a pending continuation when one exists for this
+ * chat. A refusal from the server (stale id, not yet voted) clears the mapping
+ * and retries as a fresh matchup — wrong-thread attachment is never acceptable.
+ */
+async function startRoundFor({ chatKey, prompt, arena }) {
+  const conversationId = arena ? chats.peekContinuation(chatKey) : undefined;
+  try {
+    const round = await roundStarter(client, {
+      prompt,
+      sessionId: chatKey,
+      conversationId,
+      arena,
+    })();
+    // Consumed once the server accepted the request; the next turn needs a
+    // fresh decisive vote before it may continue again.
+    if (conversationId) {
+      chats.clearContinuation(chatKey);
+    }
+    return round;
+  } catch (error) {
+    if (conversationId && isContinuationRefusal(error)) {
+      chats.clearContinuation(chatKey);
+      return roundStarter(client, { prompt, sessionId: chatKey, arena })();
+    }
+    throw error;
+  }
+}
 
 // ---------------------------------------------------------------- routing
 
