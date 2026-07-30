@@ -49,7 +49,7 @@ The catalog of comparable models. Seeded by `server/src/db/seed.ts`.
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | UUID PK | Minted with `randomUUID()` by the seed, so it differs per deployment |
+| `id` | UUID PK | Minted with `randomUUID()` by the seed, so it differs per deployment. `ARENA_DEFAULT_MODEL` still accepts this id, and also resolves human identifiers (`provider_model_id`, `display_name`, `provider:provider_model_id`) to it at boot |
 | `display_name` | TEXT | Shown only after a vote |
 | `provider` | TEXT | Registry key: `google`, `openai`, `ollama`, `vllm`, `host-proxy`, or `mock` (demos/e2e; see [Setup](setup.md)) |
 | `provider_model_id` | TEXT | e.g. `gemini-3.5-flash`; unique with `provider` |
