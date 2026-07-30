@@ -40,9 +40,19 @@ if (missing) {
 
 const steps = [
   [
+    "ChatStore unit (durable continuation map)",
+    "node",
+    [path.join(root, "test/state.test.mjs")],
+  ],
+  [
     "OpenAI-compatible surface (HTTP)",
     "docker",
     ["compose", "exec", "-T", "bridge", "node", "/app/test/openai-surface.test.mjs"],
+  ],
+  [
+    "Continuation survives bridge restart",
+    "node",
+    [path.join(root, "test/continuation-restart.test.mjs")],
   ],
   [
     "Open WebUI UI (Playwright)",

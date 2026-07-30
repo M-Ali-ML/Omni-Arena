@@ -57,6 +57,37 @@ export class ArenaClient {
     return payload;
   }
 
+  /**
+   * Rehydrate / verify a stored continuation id. Returns the conversation
+   * payload when it still exists for this session, or `null` on 404/403 so
+   * the bridge can degrade to a fresh matchup instead of attaching wrongly.
+   */
+  async getConversation(conversationId, sessionId) {
+    if (
+      typeof conversationId !== "string" ||
+      conversationId.length === 0
+    ) {
+      return null;
+    }
+    const url = new URL(
+      `${this.baseUrl}/api/arena/conversations/${encodeURIComponent(conversationId)}`,
+    );
+    if (sessionId) {
+      url.searchParams.set("sessionId", sessionId);
+    }
+    const response = await fetch(url);
+    if (response.status === 404 || response.status === 403) {
+      return null;
+    }
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(
+        `Omni-Arena conversation lookup failed: ${response.status} ${detail.slice(0, 200)}`,
+      );
+    }
+    return response.json();
+  }
+
   async leaderboard() {
     const response = await fetch(`${this.baseUrl}/api/arena/leaderboard`);
     if (!response.ok) {

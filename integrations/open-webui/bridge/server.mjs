@@ -22,9 +22,17 @@ import { ChatStore, SlotRendezvous, roundStarter } from "./lib/state.mjs";
 const PORT = Number(process.env.BRIDGE_PORT ?? 8080);
 const ARENA_BASE_URL = process.env.ARENA_BASE_URL ?? "http://127.0.0.1:3021";
 const PAIR_TIMEOUT_MS = Number(process.env.BRIDGE_PAIR_TIMEOUT_MS ?? 2000);
+const STATE_PATH =
+  process.env.BRIDGE_STATE_PATH ?? "/app/data/continuations.json";
+const STATE_TTL_MS = Number(
+  process.env.BRIDGE_STATE_TTL_MS ?? 60 * 60 * 1000,
+);
 
 const client = new ArenaClient(ARENA_BASE_URL);
-const chats = new ChatStore();
+const chats = new ChatStore({
+  ttlMs: STATE_TTL_MS,
+  persistPath: STATE_PATH,
+});
 const rendezvous = new SlotRendezvous({ timeoutMs: PAIR_TIMEOUT_MS });
 /** Dedupes the two identical vote messages a side-by-side turn produces. */
 const votesInFlight = new Map();
@@ -454,11 +462,39 @@ async function renderRaw(response, { chatKey, prompt }) {
 
 /**
  * Starts a round, attaching a pending continuation when one exists for this
- * chat. A refusal from the server (stale id, not yet voted) clears the mapping
- * and retries as a fresh matchup — wrong-thread attachment is never acceptable.
+ * chat. After a bridge restart the id is reloaded from the durable store; we
+ * still confirm via GET /api/arena/conversations/:id that it is continuable
+ * for this session. A miss (404/403), expired/non-continuable thread, or a
+ * refusal from the server clears the mapping and retries as a fresh matchup —
+ * wrong-thread attachment is never acceptable.
  */
+async function resolveContinuation(chatKey) {
+  const conversationId = chats.peekContinuation(chatKey);
+  if (!conversationId) {
+    return undefined;
+  }
+  try {
+    const thread = await client.getConversation(conversationId, chatKey);
+    if (!thread || thread.continuable !== true) {
+      chats.clearContinuation(chatKey);
+      return undefined;
+    }
+    return conversationId;
+  } catch (error) {
+    // Transient lookup failures should not invent a new thread while we still
+    // hold a durable id — fall through and let the chat request decide.
+    console.warn(
+      `[bridge] continuation lookup failed for ${conversationId}:`,
+      error.message ?? error,
+    );
+    return conversationId;
+  }
+}
+
 async function startRoundFor({ chatKey, prompt, arena }) {
-  const conversationId = arena ? chats.peekContinuation(chatKey) : undefined;
+  const conversationId = arena
+    ? await resolveContinuation(chatKey)
+    : undefined;
   try {
     const round = await roundStarter(client, {
       prompt,
@@ -599,4 +635,5 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(
     `[bridge] OpenAI-compatible surface on :${PORT} -> Omni-Arena at ${ARENA_BASE_URL}`,
   );
+  console.log(`[bridge] continuation store: ${STATE_PATH}`);
 });
