@@ -63,6 +63,10 @@ const uiMessagePartSchema = z.discriminatedUnion("type", [
     type: z.literal("data-arena-error"),
     data: z.object({ slot: z.enum(["A", "B"]), message: z.string() }),
   }),
+  z.object({
+    type: z.literal("data-arena-steered"),
+    data: z.object({ instruction: z.string() }),
+  }),
   /**
    * The protocol's own terminal error part (as opposed to the per-slot data
    * part above), so a stock `useChat` surfaces the failure and settles.
@@ -131,6 +135,13 @@ export function createVercelAiAdapter(): EventAdapter {
           return event.slot === "A"
             ? frame([{ type: "text-end", id: textId }])
             : frame([{ type: "data-arena-b-done", data: {} }]);
+        case "steered":
+          return frame([
+            {
+              type: "data-arena-steered",
+              data: { instruction: event.instruction },
+            },
+          ]);
         case "run_error":
           return frame([
             { type: "error", errorText: `${event.code}: ${event.message}` },

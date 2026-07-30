@@ -19,6 +19,7 @@ Each file is applied once, inside its own transaction, and recorded in
 | `004_style_ratings.sql` | `model_style_ratings`, `style_control_coefficients` |
 | `005_rating_history.sql` | `model_rating_history`, index `model_rating_history_computed_idx` |
 | `006_arena_mode.sql` | `matchups.mode` (`blind` \| `shadow`, default `blind`) |
+| `007_matchup_steers.sql` | `matchups.steers` JSONB array of mid-stream operator instructions |
 
 Migrations 002–004 were renamed after they had already shipped, so the runner
 first rewrites the legacy rows (`002_phase_one.sql`, `003_phase_two.sql`,
@@ -30,7 +31,7 @@ does not re-run them. Never edit an applied migration; add the next
 
 | Writer | Tables |
 |---|---|
-| Chat route (`POST /api/arena/chat`) | `conversations`, `matchups`, `turns`, `responses` |
+| Chat route (`POST /api/arena/chat`) | `conversations`, `matchups`, `turns`, `responses`; appends to `matchups.steers` on mid-stream `steer` |
 | Vote route (`POST /api/arena/vote`) | `preferences` |
 | Model seed (`db:seed`, `db:seed:mock`) | `models` |
 | Rating worker, default pass | `model_ratings` (upsert) + `model_rating_history` (append), one transaction |
@@ -114,6 +115,7 @@ One blind head-to-head instantiation per prompt (or a silent shadow comparison).
 | `matchup_token_hash` | TEXT | SHA-256 of the signed matchup token; the token itself is never stored |
 | `harness_version` | TEXT | Default `'v1'`; the configured `HARNESS_VERSION` of the run (`'demo'` for rows written by the demo-data seeder) |
 | `mode` | TEXT | `blind` (default, human-votable) or `shadow` (persisted, not votable). Migration `006_arena_mode.sql` |
+| `steers` | JSONB | Default `'[]'`; array of `{ instruction, at }` objects appended by mid-stream `steer` so later analysis can control for operator interventions. Migration `007_matchup_steers.sql` |
 | `created_at` | TIMESTAMPTZ | |
 
 Checks enforce that the pair and the slot assignment are distinct models.

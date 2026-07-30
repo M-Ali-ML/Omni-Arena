@@ -14,7 +14,7 @@ import { asJoinFailure, JoinedRound } from "../arena/join.js";
 import type { ArenaModeConfig } from "../arena/mode.js";
 import { resolveArenaPlan } from "../arena/mode.js";
 import type { MatchupRegistry } from "../control/registry.js";
-import type { ArenaCore } from "../core/arena.js";
+import type { ArenaCore, SteerFn } from "../core/arena.js";
 import type { ArenaEvent, PublicArenaEvent } from "../core/events.js";
 import { toPublicEvent } from "../core/events.js";
 import type {
@@ -50,7 +50,10 @@ interface StreamOptions {
   /** Control-plane handle for this stream; also the emitted `matchupId`. */
   streamId: string;
   started: PublicArenaEvent;
-  open: (signal: AbortSignal) => AsyncIterable<ArenaEvent>;
+  open: (
+    signal: AbortSignal,
+    attachSteer: (steer: SteerFn) => void,
+  ) => AsyncIterable<ArenaEvent>;
   /** Persistence hook, awaited before the event reaches the wire. */
   onEvent?: (event: ArenaEvent) => Promise<void>;
   log: FastifyBaseLogger;
@@ -121,7 +124,9 @@ async function streamRound(options: StreamOptions): Promise<void> {
 
   const controller = registry.register(streamId);
   try {
-    for await (const event of open(controller.signal)) {
+    for await (const event of open(controller.signal, (steer) => {
+      registry.bindSteer(streamId, steer);
+    })) {
       await onEvent?.(event);
       reply.raw.write(adapter.serialize(toPublicEvent(event)));
     }
@@ -245,11 +250,12 @@ export function registerChatRoute(
           mode: "single",
           votable: false,
         },
-        open: (signal) =>
+        open: (signal, attachSteer) =>
           dependencies.core.stream(
             [{ role: "user", content: input.prompt }],
             { A: model },
             signal,
+            attachSteer,
           ),
         log: request.log,
       });
@@ -517,7 +523,7 @@ export function registerChatRoute(
             mode: "matchup",
             votable: true,
           },
-          open: (signal) => joined.round.slot("B", signal),
+          open: (_signal, _attachSteer) => joined.round.slot("B", _signal),
           log: request.log,
         });
       }
@@ -628,6 +634,10 @@ export function registerChatRoute(
     };
 
     const persist = async (event: ArenaEvent): Promise<void> => {
+      if (event.type === "steered") {
+        await dependencies.repository.recordSteer(matchupId, event.instruction);
+        return;
+      }
       if (event.type !== "slot_done") {
         return;
       }
@@ -664,7 +674,17 @@ export function registerChatRoute(
       // channel per slot. The leader owns the pump and all persistence, so
       // slot B completes and is recorded even if the sibling disconnects.
       const round = new JoinedRound(
-        (signal) => dependencies.core.stream(messages, slotModel, signal),
+        (signal) =>
+          dependencies.core.stream(
+            messages,
+            slotModel,
+            signal,
+            (steer) => {
+              // Leader's streamId is the matchup id; bind here because the
+              // JoinedRound pump owns the core stream, not streamRound's open.
+              dependencies.registry.bindSteer(matchupId, steer);
+            },
+          ),
         persist,
         dependencies.joinBroker.maxQueuedEvents,
       );
@@ -683,7 +703,7 @@ export function registerChatRoute(
         registry: dependencies.registry,
         streamId: matchupId,
         started,
-        open: (signal) => {
+        open: (signal, _attachSteer) => {
           round.start(signal);
           return round.slot("A", signal);
         },
@@ -697,8 +717,8 @@ export function registerChatRoute(
       registry: dependencies.registry,
       streamId: matchupId,
       started,
-      open: (signal) =>
-        dependencies.core.stream(messages, slotModel, signal),
+      open: (signal, attachSteer) =>
+        dependencies.core.stream(messages, slotModel, signal, attachSteer),
       onEvent: persist,
       log: request.log,
     });

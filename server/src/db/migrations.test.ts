@@ -19,6 +19,7 @@ describe("runMigrations", () => {
       expect(first).toContain("004_style_ratings.sql");
       expect(first).toContain("005_rating_history.sql");
       expect(first).toContain("006_arena_mode.sql");
+      expect(first).toContain("007_matchup_steers.sql");
 
       const second = await runMigrations(pool);
       expect(second).toEqual([]);
@@ -60,6 +61,11 @@ describe("runMigrations", () => {
         `SELECT mode FROM matchups WHERE id = '33333333-3333-4333-8333-333333333333'`,
       );
       expect(shadowRow.rows[0]?.mode).toBe("shadow");
+
+      const steersRow = await pool.query<{ steers: unknown }>(
+        `SELECT steers FROM matchups WHERE id = '33333333-3333-4333-8333-333333333333'`,
+      );
+      expect(steersRow.rows[0]?.steers).toEqual([]);
     } finally {
       await pool.end();
     }
@@ -83,9 +89,11 @@ describe("runMigrations", () => {
           ('005_rating_history.sql'),
           ('006_arena_mode.sql')`,
       );
+      // Stub so the next unapplied migration (007) can ALTER TABLE matchups.
+      await pool.query(`CREATE TABLE matchups (id UUID PRIMARY KEY)`);
 
       const ran = await runMigrations(pool);
-      expect(ran).toEqual([]);
+      expect(ran).toEqual(["007_matchup_steers.sql"]);
 
       const { rows } = await pool.query(
         "SELECT name FROM schema_migrations ORDER BY name",
@@ -97,6 +105,7 @@ describe("runMigrations", () => {
         "004_style_ratings.sql",
         "005_rating_history.sql",
         "006_arena_mode.sql",
+        "007_matchup_steers.sql",
       ]);
     } finally {
       await pool.end();

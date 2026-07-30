@@ -57,6 +57,11 @@ const a2uiMessageSchema = z.discriminatedUnion("kind", [
     code: z.string(),
     message: z.string(),
   }),
+  z.object({
+    v: z.literal("a2ui/1"),
+    kind: z.literal("steered"),
+    instruction: z.string(),
+  }),
   z.object({ v: z.literal("a2ui/1"), kind: z.literal("session_done") }),
 ]);
 
@@ -108,6 +113,12 @@ export function createA2uiAdapter(): EventAdapter {
             v: "a2ui/1",
             kind: "surface_done",
             surface: event.slot,
+          });
+        case "steered":
+          return frame({
+            v: "a2ui/1",
+            kind: "steered",
+            instruction: event.instruction,
           });
         case "run_error":
           return frame({

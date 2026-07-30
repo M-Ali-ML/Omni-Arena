@@ -1,7 +1,11 @@
 import type { ArenaSlot } from "./events.js";
 
 export interface ChatMessage {
-  role: "user" | "assistant";
+  /**
+   * `system` carries mid-stream operator steer instructions (identical on both
+   * slots). Providers without a system role map it to `user`.
+   */
+  role: "user" | "assistant" | "system";
   content: string;
 }
 
@@ -156,6 +160,11 @@ export interface PreferenceRepositoryPort {
   listEnabledModels(): Promise<Model[]>;
   createMatchup(matchup: MatchupRecord): Promise<void>;
   saveResponse(response: ResponseRecord): Promise<void>;
+  /**
+   * Append a mid-stream steer instruction to the matchup so later analysis can
+   * control for operator interventions. No-op when the matchup is unknown.
+   */
+  recordSteer(matchupId: string, instruction: string): Promise<void>;
   recordPreference(preference: PreferenceRecord): Promise<void>;
   getConversationContext(
     conversationId: string,

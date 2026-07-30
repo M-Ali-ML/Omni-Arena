@@ -151,11 +151,11 @@
 ← { "type": "stopped", "matchupId": "&lt;uuid&gt;", "ok": true }
 
 → { "type": "steer", "matchupId": "&lt;uuid&gt;", "instruction": "be more concise" }
-← { "type": "steer_ack", "matchupId": "&lt;uuid&gt;", "accepted": false, "reason": "…" }</code></pre>
+← { "type": "steer_ack", "matchupId": "&lt;uuid&gt;", "accepted": true }</code></pre>
   <table>
     <tr><th>Message</th><th>Behavior</th></tr>
     <tr><td class="mono">stop</td><td>Aborts the matchup's stream via the matchup registry's <span class="mono">AbortController</span> (signal threaded through <span class="mono">ArenaCore.stream</span>). <span class="mono">ok:false</span> when the matchup is unknown — never started, already finished, or already stopped.</td></tr>
-    <tr><td class="mono">steer</td><td><strong>Stubbed extension point.</strong> Schema-validated (<span class="mono">instruction</span> non-empty) and documented, but not yet wired into the core — always a negative ack so the wire contract and seam exist ahead of the implementation.</td></tr>
+    <tr><td class="mono">steer</td><td><strong>Abort-and-restart.</strong> Delivers the instruction to the live matchup; both slots re-run with the identical <span class="mono">system</span> operator turn (blindness preserved). Emits a public <span class="mono">steered</span> event and appends to <span class="mono">matchups.steers</span>. <span class="mono">accepted:false</span> (with <span class="mono">reason</span>) for unknown/expired matchups or matchups that already completed a slot.</td></tr>
   </table>
   <div class="callout">Invalid JSON → <span class="mono">{ type: "error", message: "Invalid JSON control message" }</span>; an unknown/malformed message (including a non-UUID <span class="mono">matchupId</span>) → <span class="mono">{ type: "error", message: "Unknown or malformed control message" }</span>.</div>
   <div class="callout"><a href="sdk.html">@omni-arena/react</a> wraps this as <span class="mono">stop()</span> on <span class="mono">useArenaChat</span>: it derives the <span class="mono">ws://</span>/<span class="mono">wss://</span> URL from the hook's <span class="mono">baseUrl</span>, opens the socket on first use, and closes it on the <span class="mono">stopped</span> reply or on unmount.</div>

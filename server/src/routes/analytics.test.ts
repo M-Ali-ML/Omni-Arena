@@ -73,6 +73,7 @@ function buildApp(analytics: AnalyticsPort | undefined) {
     listEnabledModels: async () => [],
     createMatchup: async () => undefined,
     saveResponse: async () => undefined,
+    recordSteer: async () => undefined,
     recordPreference: async () => undefined,
     getConversationContext: async () => ({ status: "not_found" as const }),
     getMatchup: async () => null,

@@ -317,21 +317,29 @@ or already stopped.
 `ws://`/`wss://` URL from the hook's `baseUrl`, opens the socket on first use,
 and closes it on the `stopped` reply or on unmount.
 
-**`steer`** — mid-stream steering (**stubbed extension point**):
+**`steer`** — mid-stream steering (abort-and-restart):
 
 ```json
 { "type": "steer", "matchupId": "<uuid>", "instruction": "be more concise" }
 ```
 
-The message is schema-validated (`instruction` must be non-empty) and
-documented, but steering is **not yet wired into the core**. It always returns a
-negative acknowledgement so the wire contract and seam exist ahead of the
-implementation:
+Delivers the instruction to the running matchup via `MatchupRegistry.steer`.
+When accepted, `ArenaCore` cancels the current generation (without closing the
+HTTP stream), emits a public `steered` event, and re-runs **both** slots with
+the identical instruction appended as a `system` operator turn so the comparison
+stays blind. The instruction is also appended to `matchups.steers` for later
+analysis. Reply:
 
 ```json
-{ "type": "steer_ack", "matchupId": "<uuid>", "accepted": false, "reason": "…" }
+{ "type": "steer_ack", "matchupId": "<uuid>", "accepted": true }
 ```
 
+`accepted` is `false` (with a `reason`) when the matchup is unknown/expired, not
+yet accepting steer, or has already completed a slot — never when steering is
+merely "unimplemented".
+
+`stop` semantics are unchanged: a stop still aborts the whole stream via the
+registry's `AbortController`.
 Errors: invalid JSON returns `{ "type": "error", "message": "Invalid JSON control message" }`;
 an unknown or malformed message (including a `matchupId` that is not a UUID)
 returns `{ "type": "error", "message": "Unknown or malformed control message" }`.

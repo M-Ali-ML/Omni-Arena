@@ -127,7 +127,9 @@ Every one of these runs on each pull request and on every push to `main` — see
   Bradley-Terry `rating`, `confidenceInterval`, and `componentId` fields (null
   until the rating worker has run).
 - `GET /api/arena/control` is a WebSocket control plane for stopping an
-  in-flight matchup (mid-stream steering is a documented stub for now).
+  in-flight matchup or mid-stream steering: `steer` abort-and-restarts both
+  slots with the identical operator instruction, emits a `steered` event, and
+  persists the instruction on the matchup.
 - `GET /api/arena/analytics/*` serves read-only aggregates behind the demo's
   `/insights` dashboard: summary, head-to-head records, per-model latency and
   style metrics, vote activity, style-control coefficients, and rating history.
