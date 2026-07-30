@@ -33,8 +33,11 @@ const run = (command, args, extraEnv = {}) => {
 
 // Always re-apply the overlay so the suite tests the committed sources, never a
 // clone that drifted since the last setup run. Only the clone and its install —
-// the expensive parts — are conditional.
-if (existsSync(path.join(integrationDir, ".upstream", pin.app))) {
+// the expensive parts — are conditional. A half-finished install (clone present
+// but no workspace node_modules) must re-run the full setup.
+const upstreamApp = path.join(integrationDir, ".upstream", pin.app);
+const upstreamModules = path.join(integrationDir, ".upstream", "node_modules");
+if (existsSync(upstreamApp) && existsSync(upstreamModules)) {
   run("node", ["scripts/setup.mjs", "--skip-install"]);
 } else {
   run("node", ["scripts/setup.mjs"]);
