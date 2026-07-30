@@ -10,16 +10,34 @@ import {
 
 const always: ArenaModeConfig = {
   trigger: "always",
+  exposure: "blind",
   defaultModel: null,
   sampleRate: 0,
 };
+const alwaysShadow = (defaultModel: string): ArenaModeConfig => ({
+  trigger: "always",
+  exposure: "shadow",
+  defaultModel,
+  sampleRate: 0,
+});
 const manual: ArenaModeConfig = {
   trigger: "manual",
+  exposure: "blind",
   defaultModel: "gpt",
   sampleRate: 0,
 };
-const sampled = (rate: number): ArenaModeConfig => ({
+const manualShadow: ArenaModeConfig = {
+  trigger: "manual",
+  exposure: "shadow",
+  defaultModel: "gpt",
+  sampleRate: 0,
+};
+const sampled = (
+  rate: number,
+  exposure: "blind" | "shadow" = "blind",
+): ArenaModeConfig => ({
   trigger: "sampled",
+  exposure,
   defaultModel: "gpt",
   sampleRate: rate,
 });
@@ -58,9 +76,10 @@ function seededRng(seed: number): () => number {
 }
 
 describe("parseArenaModeConfig", () => {
-  it("defaults to the always trigger with no default model", () => {
+  it("defaults to always + blind with no default model", () => {
     expect(parseArenaModeConfig({})).toEqual({
       trigger: "always",
+      exposure: "blind",
       defaultModel: null,
       sampleRate: 0,
     });
@@ -74,6 +93,7 @@ describe("parseArenaModeConfig", () => {
       }),
     ).toEqual({
       trigger: "manual",
+      exposure: "blind",
       defaultModel: "gemini-flash",
       sampleRate: 0,
     });
@@ -88,8 +108,23 @@ describe("parseArenaModeConfig", () => {
       }),
     ).toEqual({
       trigger: "sampled",
+      exposure: "blind",
       defaultModel: "gemini-flash",
       sampleRate: 0.05,
+    });
+  });
+
+  it("reads exposure from env", () => {
+    expect(
+      parseArenaModeConfig({
+        ARENA_EXPOSURE: "shadow",
+        ARENA_DEFAULT_MODEL: "gemini-flash",
+      }),
+    ).toEqual({
+      trigger: "always",
+      exposure: "shadow",
+      defaultModel: "gemini-flash",
+      sampleRate: 0,
     });
   });
 
@@ -101,6 +136,10 @@ describe("parseArenaModeConfig", () => {
 
   it("rejects an unknown trigger", () => {
     expect(() => parseArenaModeConfig({ ARENA_TRIGGER: "targeted" })).toThrow();
+  });
+
+  it("rejects an unknown exposure", () => {
+    expect(() => parseArenaModeConfig({ ARENA_EXPOSURE: "partial" })).toThrow();
   });
 
   it("rejects a sample rate outside 0..1", () => {
@@ -126,10 +165,15 @@ describe("assertArenaModeConfig", () => {
     expect(() => assertArenaModeConfig(sampled(0.1))).not.toThrow();
   });
 
+  it("accepts shadow exposure with a default model", () => {
+    expect(() => assertArenaModeConfig(alwaysShadow("gpt"))).not.toThrow();
+  });
+
   it("fails fast when manual has no default model", () => {
     expect(() =>
       assertArenaModeConfig({
         trigger: "manual",
+        exposure: "blind",
         defaultModel: null,
         sampleRate: 0,
       }),
@@ -140,10 +184,22 @@ describe("assertArenaModeConfig", () => {
     expect(() =>
       assertArenaModeConfig({
         trigger: "sampled",
+        exposure: "blind",
         defaultModel: null,
         sampleRate: 0.1,
       }),
     ).toThrow(/ARENA_DEFAULT_MODEL is required when ARENA_TRIGGER=sampled/);
+  });
+
+  it("fails fast when shadow exposure has no default model", () => {
+    expect(() =>
+      assertArenaModeConfig({
+        trigger: "always",
+        exposure: "shadow",
+        defaultModel: null,
+        sampleRate: 0,
+      }),
+    ).toThrow(/ARENA_DEFAULT_MODEL is required when ARENA_EXPOSURE=shadow/);
   });
 });
 
@@ -151,11 +207,17 @@ describe("resolveArenaDefaultModel", () => {
   it("resolves a provider_model_id slug to the model UUID", () => {
     expect(
       resolveArenaDefaultModel(
-        { trigger: "manual", defaultModel: "mock-alpha", sampleRate: 0 },
+        {
+          trigger: "manual",
+          exposure: "blind",
+          defaultModel: "mock-alpha",
+          sampleRate: 0,
+        },
         enabledModels,
       ),
     ).toEqual({
       trigger: "manual",
+      exposure: "blind",
       defaultModel: alpha.id,
       sampleRate: 0,
     });
@@ -164,11 +226,17 @@ describe("resolveArenaDefaultModel", () => {
   it("resolves provider:provider_model_id to the model UUID", () => {
     expect(
       resolveArenaDefaultModel(
-        { trigger: "manual", defaultModel: "mock:mock-beta", sampleRate: 0 },
+        {
+          trigger: "manual",
+          exposure: "blind",
+          defaultModel: "mock:mock-beta",
+          sampleRate: 0,
+        },
         enabledModels,
       ),
     ).toEqual({
       trigger: "manual",
+      exposure: "blind",
       defaultModel: beta.id,
       sampleRate: 0,
     });
@@ -177,11 +245,17 @@ describe("resolveArenaDefaultModel", () => {
   it("keeps accepting a models.id UUID", () => {
     expect(
       resolveArenaDefaultModel(
-        { trigger: "manual", defaultModel: alpha.id, sampleRate: 0 },
+        {
+          trigger: "manual",
+          exposure: "blind",
+          defaultModel: alpha.id,
+          sampleRate: 0,
+        },
         enabledModels,
       ),
     ).toEqual({
       trigger: "manual",
+      exposure: "blind",
       defaultModel: alpha.id,
       sampleRate: 0,
     });
@@ -190,7 +264,12 @@ describe("resolveArenaDefaultModel", () => {
   it("fails at boot when the identifier matches no enabled model", () => {
     expect(() =>
       resolveArenaDefaultModel(
-        { trigger: "manual", defaultModel: "does-not-exist", sampleRate: 0 },
+        {
+          trigger: "manual",
+          exposure: "blind",
+          defaultModel: "does-not-exist",
+          sampleRate: 0,
+        },
         enabledModels,
       ),
     ).toThrow(
@@ -207,6 +286,7 @@ describe("resolveArenaDefaultModel", () => {
       resolveArenaDefaultModel(
         {
           trigger: "manual",
+          exposure: "blind",
           defaultModel: "Mock Model Alpha",
           sampleRate: 0,
         },
@@ -214,6 +294,7 @@ describe("resolveArenaDefaultModel", () => {
       ),
     ).toEqual({
       trigger: "manual",
+      exposure: "blind",
       defaultModel: alpha.id,
       sampleRate: 0,
     });
@@ -221,23 +302,38 @@ describe("resolveArenaDefaultModel", () => {
 });
 
 describe("resolveArenaPlan", () => {
-  it("always → matchup regardless of opt-in", () => {
+  it("always + blind → matchup regardless of opt-in", () => {
     expect(resolveArenaPlan(always, {}, unusedRng)).toEqual({ kind: "matchup" });
     expect(resolveArenaPlan(always, { arena: true }, unusedRng)).toEqual({
       kind: "matchup",
     });
   });
 
-  it("manual with no opt-in → single", () => {
+  it("always + shadow → shadow", () => {
+    expect(resolveArenaPlan(alwaysShadow("gpt"), {}, unusedRng)).toEqual({
+      kind: "shadow",
+    });
+  });
+
+  it("manual with no opt-in → single (blind or shadow)", () => {
     expect(resolveArenaPlan(manual, {}, unusedRng)).toEqual({ kind: "single" });
+    expect(resolveArenaPlan(manualShadow, {}, unusedRng)).toEqual({
+      kind: "single",
+    });
     expect(resolveArenaPlan(manual, { arena: false }, unusedRng)).toEqual({
       kind: "single",
     });
   });
 
-  it("manual + body arena:true → matchup", () => {
+  it("manual + body arena:true + blind → matchup", () => {
     expect(resolveArenaPlan(manual, { arena: true }, unusedRng)).toEqual({
       kind: "matchup",
+    });
+  });
+
+  it("manual + body arena:true + shadow → shadow", () => {
+    expect(resolveArenaPlan(manualShadow, { arena: true }, unusedRng)).toEqual({
+      kind: "shadow",
     });
   });
 
@@ -260,14 +356,26 @@ describe("resolveArenaPlan", () => {
     const rng = seededRng(1);
     for (let i = 0; i < 50; i++) {
       expect(resolveArenaPlan(sampled(0), {}, rng)).toEqual({ kind: "single" });
+      expect(resolveArenaPlan(sampled(0, "shadow"), {}, rng)).toEqual({
+        kind: "single",
+      });
     }
   });
 
-  it("sampled at rate 1 → always matchup", () => {
+  it("sampled at rate 1 + blind → always matchup", () => {
     const rng = seededRng(2);
     for (let i = 0; i < 50; i++) {
       expect(resolveArenaPlan(sampled(1), {}, rng)).toEqual({
         kind: "matchup",
+      });
+    }
+  });
+
+  it("sampled at rate 1 + shadow → always shadow", () => {
+    const rng = seededRng(3);
+    for (let i = 0; i < 50; i++) {
+      expect(resolveArenaPlan(sampled(1, "shadow"), {}, rng)).toEqual({
+        kind: "shadow",
       });
     }
   });

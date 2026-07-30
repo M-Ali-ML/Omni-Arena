@@ -255,6 +255,177 @@ export function registerChatRoute(
       });
     }
 
+    if (plan.kind === "shadow") {
+      const models = await dependencies.repository.listEnabledModels();
+      const incumbent = models.find(
+        (candidate) => candidate.id === dependencies.modeConfig.defaultModel,
+      );
+      if (!incumbent) {
+        return fail(
+          reply,
+          adapter,
+          500,
+          "default_model_missing",
+          `ARENA_DEFAULT_MODEL '${dependencies.modeConfig.defaultModel ?? ""}' is not in the enabled roster`,
+        );
+      }
+
+      let conversationId = input.conversationId ?? randomUUID();
+      let turnIndex = 0;
+      let parentResponseId: string | null = null;
+      let history: ChatMessage[] = [];
+
+      if (input.conversationId) {
+        const context = await dependencies.repository.getConversationContext(
+          input.conversationId,
+          sessionId,
+        );
+        if (context.status === "not_found") {
+          return fail(reply, adapter, 404, "conversation_not_found", "Conversation not found");
+        }
+        if (context.status === "forbidden") {
+          return fail(
+            reply,
+            adapter,
+            403,
+            "conversation_forbidden",
+            "Conversation session mismatch",
+          );
+        }
+        if (context.status === "not_ready") {
+          return fail(
+            reply,
+            adapter,
+            409,
+            "conversation_not_ready",
+            "Vote for a winning response before continuing this conversation",
+          );
+        }
+        conversationId = context.conversationId;
+        turnIndex = context.nextTurnIndex;
+        parentResponseId = context.parentResponseId;
+        history = context.messages;
+      }
+
+      const assignment = await dependencies.matchmaker.pick();
+      // Challenger is whichever model in the pair is not the incumbent; if the
+      // pair missed the incumbent entirely, take modelB (any ≠ incumbent works).
+      const challenger =
+        assignment.modelA.id !== incumbent.id
+          ? assignment.modelA
+          : assignment.modelB.id !== incumbent.id
+            ? assignment.modelB
+            : null;
+      if (!challenger) {
+        return fail(
+          reply,
+          adapter,
+          500,
+          "shadow_challenger_missing",
+          "Matchmaker could not pick a challenger distinct from ARENA_DEFAULT_MODEL",
+        );
+      }
+
+      const matchupId = randomUUID();
+      // Issue a token hash so the row is well-formed, but never put the token
+      // on the wire — shadow rounds are not votable.
+      const issuedToken = dependencies.tokens.issue({
+        matchupId,
+        slotAModelId: incumbent.id,
+        slotBModelId: challenger.id,
+        sessionId,
+      });
+
+      try {
+        await dependencies.repository.createMatchup({
+          id: matchupId,
+          prompt: input.prompt,
+          modelAId: incumbent.id,
+          modelBId: challenger.id,
+          slotAModelId: incumbent.id,
+          slotBModelId: challenger.id,
+          matchupTokenHash: issuedToken.hash,
+          harnessVersion: dependencies.harnessVersion,
+          mode: "shadow",
+          conversation: {
+            id: conversationId,
+            turnId: randomUUID(),
+            turnIndex,
+            parentResponseId,
+            anonymousSessionId: sessionId,
+          },
+        });
+      } catch (error) {
+        if (error instanceof ConversationConflictError) {
+          return fail(reply, adapter, 409, "conversation_conflict", error.message);
+        }
+        throw error;
+      }
+
+      const messages: ChatMessage[] = [
+        ...history,
+        { role: "user", content: input.prompt },
+      ];
+      const slotModel: Record<"A" | "B", Model> = {
+        A: incumbent,
+        B: challenger,
+      };
+
+      const persist = async (event: ArenaEvent): Promise<void> => {
+        if (event.type !== "slot_done") {
+          return;
+        }
+        await dependencies.repository.saveResponse({
+          matchupId,
+          slot: event.slot,
+          modelId: slotModel[event.slot].id,
+          content: event.content,
+          latencyMs: event.latencyMs,
+          ttftMs: event.ttftMs,
+          streamDurationMs: event.streamDurationMs,
+          outputTokenCount: event.outputTokenCount,
+          tokenCountSource: event.tokenCountSource,
+          markdownDensity: event.markdownDensity,
+          modelVersion: event.modelVersion,
+          error: event.error,
+        });
+      };
+
+      return streamRound({
+        reply,
+        adapter,
+        registry: dependencies.registry,
+        streamId: matchupId,
+        started: {
+          type: "matchup_started",
+          matchupId,
+          conversationId,
+          turnIndex,
+          slots: ["A"],
+          mode: "shadow",
+          votable: false,
+        },
+        // Run both models; persist both; stream only A-facing events.
+        open: async function* (signal) {
+          for await (const event of dependencies.core.stream(
+            messages,
+            slotModel,
+            signal,
+          )) {
+            await persist(event);
+            if (event.type === "matchup_done") {
+              yield event;
+              continue;
+            }
+            if ("slot" in event && event.slot === "A") {
+              yield event;
+            }
+          }
+        },
+        log: request.log,
+      });
+    }
+
     // Slot join. Resolved before any work the sibling must not repeat: the
     // follower never reads the conversation, calls the matchmaker, or writes a
     // matchup row — it mirrors the leader's slot B.
@@ -430,6 +601,7 @@ export function registerChatRoute(
         slotBModelId: assignment.slotB.id,
         matchupTokenHash: issuedToken.hash,
         harnessVersion: dependencies.harnessVersion,
+        mode: "blind",
         conversation: {
           id: conversationId,
           turnId: randomUUID(),

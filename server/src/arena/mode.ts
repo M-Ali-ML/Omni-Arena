@@ -13,11 +13,22 @@ export const arenaTriggerSchema = z
 
 export type ArenaTrigger = z.infer<typeof arenaTriggerSchema>;
 
+/**
+ * What the user sees when a request is engaged. `blind` streams both answers
+ * anonymously (votable); `shadow` streams only the incumbent and persists the
+ * challenger silently (not votable).
+ */
+export const arenaExposureSchema = z.enum(["blind", "shadow"]).default("blind");
+
+export type ArenaExposure = z.infer<typeof arenaExposureSchema>;
+
 const arenaModeConfigSchema = z.object({
   trigger: arenaTriggerSchema,
+  exposure: arenaExposureSchema,
   /**
-   * Model id streamed for `single` plans; required once trigger !== always.
-   * After boot resolution this is always a `models.id` UUID when set.
+   * Model id streamed for `single`/`shadow` plans; required once trigger !==
+   * always or exposure === shadow. After boot resolution this is always a
+   * `models.id` UUID when set.
    */
   defaultModel: z.string().trim().min(1).nullable().default(null),
   /**
@@ -30,9 +41,8 @@ const arenaModeConfigSchema = z.object({
 export type ArenaModeConfig = z.infer<typeof arenaModeConfigSchema>;
 
 /**
- * The resolved shape of a request. Only `matchup` and `single` are reachable
- * until Phase 3; `shadow` is declared so downstream consumers can be exhaustive
- * ahead of that phase without a type change.
+ * The resolved shape of a request: `matchup` (blind A/B, votable), `shadow`
+ * (A streamed, B silent+logged), or `single` (one model, nothing persisted).
  */
 export type ArenaPlan =
   | { kind: "matchup" }
@@ -52,6 +62,7 @@ export function parseArenaModeConfig(
 ): ArenaModeConfig {
   return arenaModeConfigSchema.parse({
     trigger: env.ARENA_TRIGGER,
+    exposure: env.ARENA_EXPOSURE,
     defaultModel: env.ARENA_DEFAULT_MODEL?.trim() ? env.ARENA_DEFAULT_MODEL : null,
     sampleRate: env.ARENA_SAMPLE_RATE,
   });
@@ -64,10 +75,21 @@ function isOptedIn(signals: ArenaRequestSignals): boolean {
   return signals.header?.trim().toLowerCase() === "on";
 }
 
+/** Map an engaged request onto the exposure axis. */
+function engagedPlan(exposure: ArenaExposure): ArenaPlan {
+  return exposure === "shadow" ? { kind: "shadow" } : { kind: "matchup" };
+}
+
 /**
  * Collapse config + request into a single plan. `rng` is injected so the
  * `sampled` trigger can branch deterministically in tests (default Math.random).
- * Shadow stays unreachable until Phase 3 (no exposure axis yet).
+ *
+ * Matrix (trigger × engaged × exposure):
+ *   always            → matchup | shadow
+ *   sampled hit       → matchup | shadow
+ *   sampled miss      → single
+ *   manual opted-in   → matchup | shadow
+ *   manual not        → single
  */
 export function resolveArenaPlan(
   config: ArenaModeConfig,
@@ -75,23 +97,31 @@ export function resolveArenaPlan(
   rng: () => number = Math.random,
 ): ArenaPlan {
   if (config.trigger === "manual") {
-    return isOptedIn(signals) ? { kind: "matchup" } : { kind: "single" };
+    return isOptedIn(signals) ? engagedPlan(config.exposure) : { kind: "single" };
   }
   if (config.trigger === "sampled") {
-    return rng() < config.sampleRate ? { kind: "matchup" } : { kind: "single" };
+    return rng() < config.sampleRate
+      ? engagedPlan(config.exposure)
+      : { kind: "single" };
   }
-  return { kind: "matchup" };
+  return engagedPlan(config.exposure);
 }
 
 /**
- * Fail fast at boot: any non-`always` trigger needs a designated model to serve
- * `single` plans. Roster membership / human-identifier resolution is handled
- * separately by {@link resolveArenaDefaultModel}.
+ * Fail fast at boot: any non-`always` trigger, or shadow exposure, needs a
+ * designated model (incumbent for shadow / single-model for non-engaged).
+ * Roster membership / human-identifier resolution is handled separately by
+ * {@link resolveArenaDefaultModel}.
  */
 export function assertArenaModeConfig(config: ArenaModeConfig): void {
   if (config.trigger !== "always" && !config.defaultModel) {
     throw new Error(
       `ARENA_DEFAULT_MODEL is required when ARENA_TRIGGER=${config.trigger}`,
+    );
+  }
+  if (config.exposure === "shadow" && !config.defaultModel) {
+    throw new Error(
+      "ARENA_DEFAULT_MODEL is required when ARENA_EXPOSURE=shadow",
     );
   }
 }

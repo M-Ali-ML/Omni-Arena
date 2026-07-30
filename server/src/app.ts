@@ -79,6 +79,7 @@ export async function createApp(
   const joinBroker = dependencies.joinBroker ?? new JoinBroker();
   const modeConfig = dependencies.modeConfig ?? {
     trigger: "always" as const,
+    exposure: "blind" as const,
     defaultModel: null,
     sampleRate: 0,
   };

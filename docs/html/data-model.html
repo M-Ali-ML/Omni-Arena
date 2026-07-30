@@ -45,6 +45,7 @@
     <tr><td class="mono">003_model_ratings.sql</td><td><span class="mono">model_ratings</span></td></tr>
     <tr><td class="mono">004_style_ratings.sql</td><td><span class="mono">model_style_ratings</span> · <span class="mono">style_control_coefficients</span></td></tr>
     <tr><td class="mono">005_rating_history.sql</td><td><span class="mono">model_rating_history</span> · index <span class="mono">model_rating_history_computed_idx</span></td></tr>
+    <tr><td class="mono">006_arena_mode.sql</td><td><span class="mono">matchups.mode</span> (<span class="mono">blind</span> | <span class="mono">shadow</span>, default <span class="mono">blind</span>)</td></tr>
   </table>
   <div class="callout"><strong>Renamed after shipping.</strong> Migrations 002–004 once had phase-era filenames, so the runner first rewrites the legacy rows (<span class="mono">002_phase_one.sql</span>, <span class="mono">003_phase_two.sql</span>, <span class="mono">004_phase_three.sql</span>) to the current names — an existing database does not re-run them. Never edit an applied migration; add the next <span class="mono">NNN_description.sql</span>.</div>
 
@@ -65,7 +66,7 @@
     <div class="card"><div class="t">models</div><div class="d">catalog of comparable models; only enabled ones enter matchmaking</div></div>
     <div class="card"><div class="t">conversations</div><div class="d">linear chat container + anonymous session ownership</div></div>
     <div class="card"><div class="t">turns</div><div class="d">ordered matchup; parent points only to the prior winning response</div></div>
-    <div class="card"><div class="t">matchups</div><div class="d">blind head-to-head; randomized slots, token hash, harness version</div></div>
+    <div class="card"><div class="t">matchups</div><div class="d">blind or shadow head-to-head; randomized slots, token hash, harness version, mode</div></div>
     <div class="card"><div class="t">responses</div><div class="d">content + TTFT, duration, tokens, Markdown density, model version</div></div>
     <div class="card"><div class="t">preferences</div><div class="d">one vote per matchup (unique constraint), winner nullable</div></div>
     <div class="card"><div class="t">model_ratings</div><div class="d">worker-written Bradley-Terry rating, CI, component id, games</div></div>
@@ -83,9 +84,10 @@
     <tr><td class="mono">conversations</td><td class="mono">anonymous_session_id</td><td>Nullable; when set, only that browser session may continue the conversation. Inserted only on turn 0, in the same transaction as the matchup and turn.</td></tr>
     <tr><td class="mono">turns</td><td class="mono">parent_response_id</td><td>Null only at turn 0; unique thereafter, preventing two follow-ups from branching from one winner. A table check enforces the pairing: <span class="mono">turn_index = 0 ⇔ parent IS NULL</span>.</td></tr>
     <tr><td class="mono">turns</td><td class="mono">conversation_id + turn_index</td><td>Unique ordered position (<span class="mono">turn_index &gt;= 0</span>); prompt persisted as received. A mismatch or unique violation surfaces as <span class="mono">conversation_conflict</span> 409.</td></tr>
-    <tr><td class="mono">matchups</td><td class="mono">slot_a/b_model_id</td><td>Randomized display assignment, distinct from the raw pair columns; checks forbid self-matches. A non-votable <span class="mono">single</span> round writes no row here at all.</td></tr>
+    <tr><td class="mono">matchups</td><td class="mono">slot_a/b_model_id</td><td>Randomized display assignment, distinct from the raw pair columns; checks forbid self-matches. A non-votable <span class="mono">single</span> round writes no row here at all. Shadow sets A = incumbent, B = challenger.</td></tr>
     <tr><td class="mono">matchups</td><td class="mono">matchup_token_hash</td><td>SHA-256 of the signed token — the token itself is never stored.</td></tr>
     <tr><td class="mono">matchups</td><td class="mono">harness_version</td><td>Prompt/orchestration version captured for temporal drift analysis. Defaults to <span class="mono">'v1'</span>; demo-seeded rows carry <span class="mono">'demo'</span>.</td></tr>
+    <tr><td class="mono">matchups</td><td class="mono">mode</td><td><span class="mono">blind</span> (default, human-votable) or <span class="mono">shadow</span> (persisted, not votable). Migration <span class="mono">006_arena_mode.sql</span>. Vote endpoint rejects shadow rows with 403.</td></tr>
     <tr><td class="mono">responses</td><td class="mono">ttft_ms + stream_duration_ms</td><td>First-token and total latency, both <span class="mono">&gt;= 0</span>; <span class="mono">latency_ms</span> remains the compatibility field. <span class="mono">ttft_ms</span>, <span class="mono">model_version</span>, and <span class="mono">error</span> are the only nullable columns.</td></tr>
     <tr><td class="mono">responses</td><td class="mono">output_token_count + token_count_source</td><td>Provider usage when available, deterministic lexical estimate otherwise (check-constrained to <span class="mono">provider</span> / <span class="mono">estimated</span>).</td></tr>
     <tr><td class="mono">responses</td><td class="mono">markdown_density + model_version</td><td>Marker density checked to 0–1, and provider-reported checkpoint identity. Written <span class="mono">ON CONFLICT (matchup_id, slot) DO NOTHING</span>, so a replayed <span class="mono">slot_done</span> cannot duplicate a row.</td></tr>

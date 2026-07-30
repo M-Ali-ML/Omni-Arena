@@ -214,8 +214,8 @@ export class PostgresRepository
       await client.query(
         `INSERT INTO matchups (
           id, prompt, model_a_id, model_b_id, slot_a_model_id,
-          slot_b_model_id, matchup_token_hash, harness_version
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          slot_b_model_id, matchup_token_hash, harness_version, mode
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           matchup.id,
           matchup.prompt,
@@ -225,6 +225,7 @@ export class PostgresRepository
           matchup.slotBModelId,
           matchup.matchupTokenHash,
           matchup.harnessVersion,
+          matchup.mode,
         ],
       );
       await client.query(
@@ -383,6 +384,7 @@ export class PostgresRepository
         conversation_id: string;
         turn_index: number;
         vote: ArenaVote | null;
+        mode: "blind" | "shadow";
         b_id: string;
         b_display_name: string;
         b_provider: string;
@@ -393,6 +395,7 @@ export class PostgresRepository
       `SELECT
         mt.id AS matchup_id,
         mt.matchup_token_hash,
+        mt.mode,
         t.conversation_id,
         t.turn_index,
         p.vote,
@@ -424,6 +427,7 @@ export class PostgresRepository
       conversationId: row.conversation_id,
       turnIndex: Number(row.turn_index),
       vote: row.vote,
+      mode: row.mode,
       slotA: mapModel(row),
       slotB: mapModel({
         id: row.b_id,

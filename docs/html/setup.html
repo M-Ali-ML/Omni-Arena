@@ -82,9 +82,10 @@ npm run dev                             # server :3001 · web :5173</code></pre>
     <tr><td class="mono">WEB_ORIGIN</td><td>no (:5173)</td><td>Allowed CORS origin (moot when the single container serves both same-origin)</td></tr>
     <tr><td class="mono">WEB_DIST_DIR</td><td>no</td><td>Override the built web bundle dir; default <span class="mono">../../web/dist</span> is correct for the repo and image</td></tr>
     <tr><td class="mono">ARENA_MOCK_PROVIDER</td><td>no</td><td>Set <span class="mono">1</span>/<span class="mono">true</span> to register the deterministic <span class="mono">mock</span> provider for demos/examples/e2e (no LLM key). Off by default.</td></tr>
-    <tr><td class="mono">ARENA_TRIGGER</td><td>no (always)</td><td>When the arena engages: <span class="mono">always</span> (blind matchup on every request), <span class="mono">manual</span> (one model unless the request opts in), or <span class="mono">sampled</span> (engage with probability <span class="mono">ARENA_SAMPLE_RATE</span>). Any other value fails at boot. See <a href="#trigger-modes">Trigger modes</a>.</td></tr>
-    <tr><td class="mono">ARENA_SAMPLE_RATE</td><td><span class="mono">ARENA_TRIGGER=sampled</span></td><td>Engagement probability in <span class="mono">[0, 1]</span> (default <span class="mono">0</span>). Ignored for <span class="mono">always</span>/<span class="mono">manual</span>. Out-of-range values fail at boot. See <a href="#trigger-modes">Trigger modes</a>.</td></tr>
-    <tr><td class="mono">ARENA_DEFAULT_MODEL</td><td><span class="mono">ARENA_TRIGGER</span> ≠ always</td><td>Enabled model for non-arena (<span class="mono">single</span>) rounds: UUID, <span class="mono">provider_model_id</span> slug, <span class="mono">display_name</span>, or <span class="mono">provider:provider_model_id</span>. Resolved at boot. See <a href="#trigger-modes">Trigger modes</a>.</td></tr>
+    <tr><td class="mono">ARENA_TRIGGER</td><td>no (always)</td><td>When the arena engages: <span class="mono">always</span>, <span class="mono">manual</span>, or <span class="mono">sampled</span>. Any other value fails at boot. See <a href="#trigger-and-exposure">Trigger and exposure</a>.</td></tr>
+    <tr><td class="mono">ARENA_SAMPLE_RATE</td><td><span class="mono">ARENA_TRIGGER=sampled</span></td><td>Engagement probability in <span class="mono">[0, 1]</span> (default <span class="mono">0</span>). Ignored for <span class="mono">always</span>/<span class="mono">manual</span>. Out-of-range values fail at boot. See <a href="#trigger-and-exposure">Trigger and exposure</a>.</td></tr>
+    <tr><td class="mono">ARENA_EXPOSURE</td><td>no (blind)</td><td>What the user sees when engaged: <span class="mono">blind</span> (both answers streamed, votable) or <span class="mono">shadow</span> (only incumbent streamed; challenger persisted silently; not votable). Requires <span class="mono">ARENA_DEFAULT_MODEL</span> when <span class="mono">shadow</span>. See <a href="#trigger-and-exposure">Trigger and exposure</a>.</td></tr>
+    <tr><td class="mono">ARENA_DEFAULT_MODEL</td><td><span class="mono">ARENA_TRIGGER</span> ≠ always, or <span class="mono">ARENA_EXPOSURE=shadow</span></td><td>Enabled model for <span class="mono">single</span> rounds and as the shadow incumbent: UUID, <span class="mono">provider_model_id</span> slug, <span class="mono">display_name</span>, or <span class="mono">provider:provider_model_id</span>. Resolved at boot. See <a href="#trigger-and-exposure">Trigger and exposure</a>.</td></tr>
     <tr><td class="mono">ARENA_JOIN_WINDOW_MS</td><td>no (2000)</td><td>Rendezvous window for <a href="architecture.html#slot-join">slot join</a>: how long the first of two sibling requests waits for its pair. <span class="mono">0</span> disables joining (a <span class="mono">joinKey</span> is then ignored); max 60000.</td></tr>
     <tr><td class="mono">ARENA_JOIN_MAX_PENDING</td><td>no (256)</td><td>Cap on unpaired join scopes held in memory; over it a join is refused with <span class="mono">join_unavailable</span> rather than queued. Min 1, max 100000.</td></tr>
     <tr><td class="mono">ARENA_JOIN_MAX_QUEUED_EVENTS</td><td>no (4096)</td><td>Per-connection event backlog on a joined matchup: events that may queue for one slot whose client reads slower than the model produces. Over it that one connection fails instead of growing without bound. Min 16, max 1000000.</td></tr>
@@ -95,58 +96,37 @@ npm run dev                             # server :3001 · web :5173</code></pre>
   <h2>Host-proxy contract</h2>
   <div class="callout">Expose OpenAI-compatible streaming chat completions at <span class="mono">&lt;HOST_PROXY_URL&gt;/chat/completions</span>. OmniArena sends <span class="mono">model</span>, the server-derived linear <span class="mono">messages</span>, <span class="mono">stream: true</span>, and <span class="mono">x-omni-arena-proxy: 1</span>. The host keeps the upstream provider credential.</div>
 
-  <h2 id="trigger-modes">Trigger modes</h2>
-  <p>By default <strong>every</strong> request to <span class="mono">POST /api/arena/chat</span> is a blind A/B matchup. <span class="mono">ARENA_TRIGGER</span> relaxes that, so the arena can sit behind an explicit per-request opt-in, or engage on a fraction of traffic, instead of being the only way to chat.</p>
+  <h2 id="trigger-and-exposure">Trigger and exposure</h2>
+  <p>By default <strong>every</strong> request to <span class="mono">POST /api/arena/chat</span> is a blind A/B matchup. Two orthogonal axes relax that: <strong>trigger</strong> (<span class="mono">ARENA_TRIGGER</span> — <em>when</em>) and <strong>exposure</strong> (<span class="mono">ARENA_EXPOSURE</span> — <em>what the user sees</em>).</p>
   <table>
     <tr><th><span class="mono">ARENA_TRIGGER</span></th><th>What a request gets</th><th>Votable</th></tr>
-    <tr><td class="mono">always <em>(default)</em></td><td>A blind matchup of two models chosen by the <span class="mono">MATCHMAKER</span> strategy — the historical behaviour</td><td>yes</td></tr>
-    <tr><td class="mono">manual</td><td>A <strong><span class="mono">single</span></strong> round served by <span class="mono">ARENA_DEFAULT_MODEL</span>, unless the request opts in; an opted-in request gets the usual matchup</td><td>only opted-in rounds</td></tr>
-    <tr><td class="mono">sampled</td><td>A matchup with probability <span class="mono">ARENA_SAMPLE_RATE</span>, otherwise a <strong><span class="mono">single</span></strong> round served by <span class="mono">ARENA_DEFAULT_MODEL</span></td><td>only engaged (hit) rounds</td></tr>
+    <tr><td class="mono">always <em>(default)</em></td><td>An engaged round of two models chosen by the <span class="mono">MATCHMAKER</span> strategy</td><td>only when <span class="mono">ARENA_EXPOSURE=blind</span></td></tr>
+    <tr><td class="mono">manual</td><td>A <strong><span class="mono">single</span></strong> round served by <span class="mono">ARENA_DEFAULT_MODEL</span>, unless the request opts in</td><td>only opted-in <span class="mono">blind</span> rounds</td></tr>
+    <tr><td class="mono">sampled</td><td>An engaged round with probability <span class="mono">ARENA_SAMPLE_RATE</span>, otherwise <strong><span class="mono">single</span></strong></td><td>only engaged <span class="mono">blind</span> rounds</td></tr>
   </table>
-  <div class="callout"><strong>Opting in, under <span class="mono">manual</span>.</strong> Either signal turns that one request into a matchup: body <span class="mono">arena: true</span>, or header <span class="mono">x-arena: on</span> (case-insensitive, and only <span class="mono">on</span> counts — <span class="mono">1</span>/<span class="mono">true</span>/<span class="mono">yes</span> do not). The header works on every protocol; the body field rides in each protocol's extension slot (AG-UI <span class="mono">forwardedProps</span>, OpenAI <span class="mono">omni_arena</span>, top level for Vercel AI SDK and native SSE — see <a href="integration.html#request-bodies">Integration</a>). The signals are OR-ed, so <span class="mono">x-arena: on</span> opts in even when the body says <span class="mono">arena: false</span>. Under <span class="mono">always</span> and <span class="mono">sampled</span> both are ignored. The trigger is a closed enum (<span class="mono">server/src/arena/mode.ts</span>), so a typo throws before the server listens instead of falling back to <span class="mono">always</span>. <span class="mono">ARENA_SAMPLE_RATE</span> must parse to <span class="mono">[0, 1]</span> (default <span class="mono">0</span>); out-of-range values also fail at boot.</div>
-  <div class="callout"><strong><span class="mono">ARENA_DEFAULT_MODEL</span> accepts a UUID or a human identifier.</strong> Resolved at boot against the enabled roster and stored as a <span class="mono">models.id</span> UUID. Accepted forms (preference order): <span class="mono">models.id</span> UUID, <span class="mono">provider:provider_model_id</span> (e.g. <span class="mono">google:gemini-3-flash-preview</span>), <span class="mono">provider_model_id</span> slug (must be unique among enabled models), or <span class="mono">display_name</span> (must be unique). A mistyped identifier throws before the server listens and lists the enabled roster. UUIDs still work unchanged.</div>
   <table>
-    <tr><th>When</th><th>Check</th><th>On failure</th></tr>
-    <tr><td>Boot (<span class="mono">server/src/server.ts</span>)</td><td>A non-<span class="mono">always</span> trigger has a non-blank <span class="mono">ARENA_DEFAULT_MODEL</span> (whitespace-only counts as unset)</td><td>Throws <span class="mono">ARENA_DEFAULT_MODEL is required when ARENA_TRIGGER=&lt;trigger&gt;</span>; the process never listens</td></tr>
-    <tr><td>Boot (<span class="mono">server/src/server.ts</span>)</td><td>The value matches exactly one enabled model (UUID, slug, display name, or <span class="mono">provider:provider_model_id</span>)</td><td>Throws with accepted forms and the enabled roster listed; the process never listens</td></tr>
-    <tr><td>Each <span class="mono">single</span> request</td><td>The resolved id is still in the <strong>enabled</strong> roster (<span class="mono">listEnabledModels()</span>)</td><td><span class="mono">default_model_missing</span>: <span class="mono">ARENA_DEFAULT_MODEL '&lt;uuid&gt;' is not in the enabled roster</span></td></tr>
+    <tr><th><span class="mono">ARENA_EXPOSURE</span></th><th>Engaged behaviour</th><th>Wire <span class="mono">mode</span></th></tr>
+    <tr><td class="mono">blind <em>(default)</em></td><td>Both answers streamed anonymously; user can vote</td><td class="mono">matchup</td></tr>
+    <tr><td class="mono">shadow</td><td>Only the incumbent (<span class="mono">ARENA_DEFAULT_MODEL</span>) is streamed; a challenger ≠ incumbent runs silently; both responses + <span class="mono">matchups.mode='shadow'</span> persisted; no vote token</td><td class="mono">shadow</td></tr>
   </table>
-  <p>Boot resolves the identifier against the current enabled set, so a mistyped slug fails before listen. Request-time membership is still re-checked because the enabled set can change under a running server (a model disabled after boot still surfaces as <span class="mono">default_model_missing</span> on the next <span class="mono">single</span> request).</p>
-  <div class="callout"><strong>What a <span class="mono">single</span> round is:</strong> one slot, one model, nothing recorded. <span class="mono">mode: "single"</span>, <span class="mono">slots: ["A"]</span>, <span class="mono">votable: false</span> on the opening metadata, so a client can hide its vote controls. <strong>No <span class="mono">matchupToken</span>, <span class="mono">conversationId</span>, or <span class="mono">turnIndex</span></strong> — omitted rather than emitted empty, because none exists for a round that persists nothing, so multi-turn continuation is unavailable too (<a href="integration.html">Integration → identifiers you cannot use are not sent</a>). And <strong>no rating signal at all</strong>, not a weaker one — see <a href="rating-methodology.html">Rating methodology → what the engine cannot rate</a>.</div>
-  <p><strong>Worked example — <span class="mono">manual</span> end to end.</strong> An app that normally streams one model, with the arena available on demand. Set a slug (or UUID), restart, then compare the two request shapes:</p>
-<pre><code># 1. Pick a model (slug / display_name / provider:id / UUID all work)
-ARENA_TRIGGER=manual
+  <table>
+    <tr><th>trigger</th><th>engaged?</th><th>exposure=<span class="mono">blind</span></th><th>exposure=<span class="mono">shadow</span></th></tr>
+    <tr><td class="mono">always</td><td>yes</td><td class="mono">matchup</td><td class="mono">shadow</td></tr>
+    <tr><td class="mono">sampled</td><td>hit</td><td class="mono">matchup</td><td class="mono">shadow</td></tr>
+    <tr><td class="mono">sampled</td><td>miss</td><td class="mono">single</td><td class="mono">single</td></tr>
+    <tr><td class="mono">manual</td><td>opted-in</td><td class="mono">matchup</td><td class="mono">shadow</td></tr>
+    <tr><td class="mono">manual</td><td>not</td><td class="mono">single</td><td class="mono">single</td></tr>
+  </table>
+  <div class="callout"><strong>Opting in, under <span class="mono">manual</span>.</strong> Either signal turns that one request into an engaged round: body <span class="mono">arena: true</span>, or header <span class="mono">x-arena: on</span> (case-insensitive, and only <span class="mono">on</span> counts — <span class="mono">1</span>/<span class="mono">true</span>/<span class="mono">yes</span> do not). The header works on every protocol; the body field rides in each protocol's extension slot. The signals are OR-ed. Under <span class="mono">always</span> and <span class="mono">sampled</span> both are ignored. Closed enums fail at boot on typo. <span class="mono">ARENA_DEFAULT_MODEL</span> is required when trigger ≠ <span class="mono">always</span>, or when exposure is <span class="mono">shadow</span>.</div>
+  <div class="callout"><strong><span class="mono">ARENA_DEFAULT_MODEL</span> accepts a UUID or a human identifier.</strong> Resolved at boot against the enabled roster and stored as a <span class="mono">models.id</span> UUID. Accepted forms (preference order): <span class="mono">models.id</span> UUID, <span class="mono">provider:provider_model_id</span>, <span class="mono">provider_model_id</span> slug, or <span class="mono">display_name</span>. A mistyped identifier throws before the server listens.</div>
+  <div class="callout"><strong>What a <span class="mono">single</span> round is:</strong> one slot, one model, nothing recorded. <span class="mono">mode: "single"</span>, <span class="mono">slots: ["A"]</span>, <span class="mono">votable: false</span>, no <span class="mono">matchupToken</span>/<span class="mono">conversationId</span>/<span class="mono">turnIndex</span>.</div>
+  <div class="callout"><strong>What a <span class="mono">shadow</span> round is:</strong> incumbent on A (streamed), challenger on B (silent). <span class="mono">mode: "shadow"</span>, <span class="mono">slots: ["A"]</span>, <span class="mono">votable: false</span>, no vote token. Both responses persisted with <span class="mono">matchups.mode='shadow'</span>. <span class="mono">POST /api/arena/vote</span> returns <span class="mono">403 Shadow matchups are not votable</span>. Auto-judge pickup is deferred.</div>
+<pre><code># Shadow canary against a fixed incumbent
+ARENA_TRIGGER=always
+ARENA_EXPOSURE=shadow
 ARENA_DEFAULT_MODEL=gemini-3-flash-preview
-
-# Or look up ids if you prefer UUIDs:
-curl -s http://localhost:3001/models | jq -r '.data[] | [.id, .name] | @tsv'
-# 3f8c9a1e-…  Gemini 3 Flash
-
-# 2. Repo-root .env (Docker Compose loads the same file), then restart the app
-ARENA_TRIGGER=manual
-ARENA_DEFAULT_MODEL=gemini-3-flash-preview
-
-# 3. Ordinary request -> single, non-votable round
-curl -N http://localhost:3001/api/arena/chat \
-  -H 'content-type: application/json' \
-  -d '{"prompt":"Explain HMAC in two sentences."}'
-# matchup_started: {"mode":"single","votable":false,"slots":["A"], …}
-#   no matchupToken, no conversationId, no turnIndex
-
-# 4. Opted-in request -> the usual blind matchup (header, or body arena:true —
-#    on the Vercel AI SDK path that is useChat({ body: { arena: true } }))
-curl -N http://localhost:3001/api/arena/chat \
-  -H 'content-type: application/json' -H 'x-arena: on' \
-  -d '{"prompt":"Explain HMAC in two sentences."}'
-# matchup_started: {"mode":"matchup","votable":true,"slots":["A","B"],"matchupToken":"…", …}</code></pre>
-  <p>Only step 4's rounds are votable, and only they reach the rating worker.</p>
-  <p><strong>Worked example — <span class="mono">sampled</span>.</strong> Engage on 5% of traffic; the rest get a single-model round:</p>
-<pre><code>ARENA_TRIGGER=sampled
-ARENA_SAMPLE_RATE=0.05
-ARENA_DEFAULT_MODEL=gemini-3-flash-preview
-# rng &lt; 0.05 → blind matchup; else single from ARENA_DEFAULT_MODEL
-# arena:true / x-arena:on are ignored under sampled</code></pre>
-  <div class="callout"><strong>Not built yet.</strong> A <span class="mono">shadow</span> exposure (run the second model without showing it) is <strong>designed but not implemented</strong>. There is no <span class="mono">ARENA_EXPOSURE</span> variable. The <span class="mono">shadow</span> plan variant is already named on the resolver's return type so consumers can be exhaustive ahead of time, but nothing reaches it yet — <span class="mono">always</span>, <span class="mono">manual</span>, and <span class="mono">sampled</span> (blind) are the whole of today's behaviour.</div>
+# Client sees mode:shadow, votable:false, slots:["A"], no token
+# Both answers land in Postgres with matchups.mode='shadow'</code></pre>
 
   <h2>Database</h2>
   <table>

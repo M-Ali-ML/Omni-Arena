@@ -39,6 +39,11 @@ export function registerVoteRoute(
     if (!matchup) {
       return reply.code(404).send({ error: "Matchup not found" });
     }
+    if (matchup.mode === "shadow") {
+      return reply.code(403).send({
+        error: "Shadow matchups are not votable",
+      });
+    }
     if (
       claims.matchupId !== matchup.id ||
       claims.slotAModelId !== matchup.slotA.id ||

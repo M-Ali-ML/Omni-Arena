@@ -126,8 +126,9 @@ class MemoryRepository implements PreferenceRepositoryPort {
           conversationId: matchup.conversation.id,
           turnIndex: matchup.conversation.turnIndex,
           vote: this.preferences.get(matchup.id)?.vote ?? null,
-          slotA,
-          slotB,
+          mode: matchup.mode,
+          slotA: matchup.slotAModelId === slotA.id ? slotA : slotB,
+          slotB: matchup.slotBModelId === slotB.id ? slotB : slotA,
         }
       : null;
   }
@@ -227,6 +228,7 @@ function parseEvents(body: string): Array<Record<string, unknown>> {
 async function setup(
   modeConfig: ArenaModeConfig = {
     trigger: "always",
+    exposure: "blind",
     defaultModel: null,
     sampleRate: 0,
   },
@@ -416,6 +418,7 @@ describe("arena routes", () => {
   it("manual trigger without opt-in streams a single, non-votable slot", async () => {
     const { app, repository } = await setup({
       trigger: "manual",
+      exposure: "blind",
       defaultModel: slotA.id,
       sampleRate: 0,
     });
@@ -458,6 +461,7 @@ describe("arena routes", () => {
   it("manual trigger with arena:true runs a full matchup", async () => {
     const { app } = await setup({
       trigger: "manual",
+      exposure: "blind",
       defaultModel: slotA.id,
       sampleRate: 0,
     });
@@ -484,6 +488,7 @@ describe("arena routes", () => {
   it("manual trigger opts in via the x-arena header", async () => {
     const { app } = await setup({
       trigger: "manual",
+      exposure: "blind",
       defaultModel: slotA.id,
       sampleRate: 0,
     });
@@ -507,7 +512,12 @@ describe("arena routes", () => {
 
   it("sampled trigger miss (rng >= rate) streams a single, non-votable slot", async () => {
     const { app, repository } = await setup(
-      { trigger: "sampled", defaultModel: slotA.id, sampleRate: 0.5 },
+      {
+        trigger: "sampled",
+        exposure: "blind",
+        defaultModel: slotA.id,
+        sampleRate: 0.5,
+      },
       { rng: () => 0.9 },
     );
     try {
@@ -531,7 +541,12 @@ describe("arena routes", () => {
 
   it("sampled trigger hit (rng < rate) runs a full matchup", async () => {
     const { app } = await setup(
-      { trigger: "sampled", defaultModel: slotA.id, sampleRate: 0.5 },
+      {
+        trigger: "sampled",
+        exposure: "blind",
+        defaultModel: slotA.id,
+        sampleRate: 0.5,
+      },
       { rng: () => 0.1 },
     );
     try {
@@ -569,6 +584,103 @@ describe("arena routes", () => {
         votable: true,
         slots: ["A", "B"],
       });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("shadow exposure streams only A, persists both responses, and issues no token", async () => {
+    const { app, repository } = await setup({
+      trigger: "always",
+      exposure: "shadow",
+      defaultModel: slotA.id,
+      sampleRate: 0,
+    });
+    try {
+      const chat = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat",
+        payload: { prompt: "Hello", sessionId: "anon_shadow" },
+      });
+      expect(chat.statusCode).toBe(200);
+
+      const events = parseEvents(chat.body);
+      const started = events[0];
+      expect(started).toMatchObject({
+        type: "matchup_started",
+        mode: "shadow",
+        votable: false,
+        slots: ["A"],
+      });
+      expect(started).not.toHaveProperty("matchupToken");
+      expect(started?.matchupId).toBeTruthy();
+      expect(started?.conversationId).toBeTruthy();
+
+      // Only A tokens reach the wire; B still runs and is persisted.
+      expect(events.some((event) => event.slot === "B")).toBe(false);
+      const slotDone = events.filter((event) => event.type === "slot_done");
+      expect(slotDone).toHaveLength(1);
+      expect(slotDone[0]).toMatchObject({ slot: "A" });
+      expect(events.at(-1)).toMatchObject({ type: "matchup_done" });
+
+      const matchupId = started?.matchupId as string;
+      expect(repository.matchups.get(matchupId)).toMatchObject({
+        mode: "shadow",
+        modelAId: slotA.id,
+        modelBId: slotB.id,
+        slotAModelId: slotA.id,
+        slotBModelId: slotB.id,
+      });
+      expect(repository.responses).toHaveLength(2);
+      expect(repository.responses.map((response) => response.slot).sort()).toEqual([
+        "A",
+        "B",
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("vote endpoint rejects votes on shadow matchups", async () => {
+    const tokens = new MatchupTokenService("test-secret-long-enough");
+    const { app, repository } = await setup({
+      trigger: "always",
+      exposure: "shadow",
+      defaultModel: slotA.id,
+      sampleRate: 0,
+    });
+    try {
+      const chat = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat",
+        payload: { prompt: "Hello", sessionId: "anon_shadow_vote" },
+      });
+      const matchupId = parseEvents(chat.body)[0]?.matchupId as string;
+      const record = repository.matchups.get(matchupId);
+      expect(record?.mode).toBe("shadow");
+
+      // Mint a token that matches the stored hash so the rejection is for mode,
+      // not for a missing/invalid token (shadow never puts a token on the wire).
+      const issued = tokens.issue({
+        matchupId,
+        slotAModelId: record!.slotAModelId,
+        slotBModelId: record!.slotBModelId,
+        sessionId: "anon_shadow_vote",
+      });
+      record!.matchupTokenHash = issued.hash;
+
+      const vote = await app.inject({
+        method: "POST",
+        url: "/api/arena/vote",
+        payload: {
+          matchupId,
+          matchupToken: issued.token,
+          vote: "left",
+        },
+      });
+      expect(vote.statusCode).toBe(403);
+      expect(vote.json().error).toMatch(/shadow/i);
+      expect(repository.preferences.size).toBe(0);
     } finally {
       await app.close();
     }
@@ -995,6 +1107,7 @@ describe("out-of-band reads", () => {
   it("omits the token from the header of a non-votable round", async () => {
     const { app } = await setup({
       trigger: "manual",
+      exposure: "blind",
       defaultModel: slotA.id,
       sampleRate: 0,
     });

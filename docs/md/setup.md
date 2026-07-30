@@ -104,9 +104,10 @@ this table expands on them with bounds and semantics.
 | `WEB_ORIGIN` | no | `http://localhost:5173` | Allowed CORS origin (only relevant when the UI is served from a different origin; the single container serves both same-origin) |
 | `WEB_DIST_DIR` | no | `../../web/dist` (relative to the compiled server) | Override the built web bundle directory; correct by default for the repo and the Docker image |
 | `ARENA_MOCK_PROVIDER` | no | off | Set to `1`/`true` to register the deterministic `mock` provider for demos, examples, and CI/e2e (no LLM key needed). See [Mock provider](#mock-provider). |
-| `ARENA_TRIGGER` | no | `always` | When the arena engages: `always` (blind A/B matchup on every request), `manual` (one model unless the request opts in), or `sampled` (engage with probability `ARENA_SAMPLE_RATE`). Any other value fails at boot. See [Trigger modes](#trigger-modes). |
-| `ARENA_SAMPLE_RATE` | when `ARENA_TRIGGER=sampled` | `0` | Engagement probability in `[0, 1]`. Ignored for `always`/`manual`. Out-of-range values fail at boot. See [Trigger modes](#trigger-modes). |
-| `ARENA_DEFAULT_MODEL` | when `ARENA_TRIGGER` is not `always` | — | Enabled model served on non-arena (`single`) rounds: `models.id` UUID, `provider_model_id` slug, `display_name`, or `provider:provider_model_id`. Resolved at boot. See [Trigger modes](#trigger-modes). |
+| `ARENA_TRIGGER` | no | `always` | When the arena engages: `always` (blind A/B matchup on every request), `manual` (one model unless the request opts in), or `sampled` (engage with probability `ARENA_SAMPLE_RATE`). Any other value fails at boot. See [Trigger and exposure](#trigger-and-exposure). |
+| `ARENA_SAMPLE_RATE` | when `ARENA_TRIGGER=sampled` | `0` | Engagement probability in `[0, 1]`. Ignored for `always`/`manual`. Out-of-range values fail at boot. See [Trigger and exposure](#trigger-and-exposure). |
+| `ARENA_EXPOSURE` | no | `blind` | What the user sees when engaged: `blind` (both answers streamed, votable) or `shadow` (only the incumbent streamed; challenger persisted silently; not votable). Requires `ARENA_DEFAULT_MODEL` when `shadow`. See [Trigger and exposure](#trigger-and-exposure). |
+| `ARENA_DEFAULT_MODEL` | when `ARENA_TRIGGER` is not `always`, or `ARENA_EXPOSURE=shadow` | — | Enabled model served on non-arena (`single`) rounds and as the shadow incumbent: `models.id` UUID, `provider_model_id` slug, `display_name`, or `provider:provider_model_id`. Resolved at boot. See [Trigger and exposure](#trigger-and-exposure). |
 | `ARENA_JOIN_WINDOW_MS` | no | `2000` | Rendezvous window for [slot join](architecture.md#slot-join-one-matchup-across-two-requests): how long the first of two sibling requests waits for its pair. `0` disables joining entirely (a `joinKey` is then ignored); max `60000`. |
 | `ARENA_JOIN_MAX_PENDING` | no | `256` | Cap on unpaired join scopes held in memory; over the cap a join is refused with `join_unavailable` rather than queued. Min `1`, max `100000`. |
 | `ARENA_JOIN_MAX_QUEUED_EVENTS` | no | `4096` | Per-connection event backlog on a joined matchup: how many events may queue for one slot whose client reads slower than the model produces. Over the cap that one connection fails instead of growing without bound. Min `16`, max `1000000`. |
@@ -128,27 +129,44 @@ before the server listens. The Docker Compose `app` service loads the repo-root
 forwards each variable the rating worker reads explicitly (see
 [Rating worker](#rating-worker)).
 
-## Trigger modes
+## Trigger and exposure
 
 By default **every** request to `POST /api/arena/chat` is a blind A/B matchup.
-`ARENA_TRIGGER` relaxes that, so an adopter can put the arena behind an explicit
-per-request opt-in, or engage it on a fraction of traffic, instead of making it
-the only way to chat:
+Two orthogonal axes relax that:
+
+1. **Trigger** (`ARENA_TRIGGER`) — *when* the arena engages.
+2. **Exposure** (`ARENA_EXPOSURE`) — *what the user sees* when it does.
 
 | `ARENA_TRIGGER` | What a request gets | Votable |
 |---|---|---|
-| `always` (default) | a blind matchup of two models chosen by the `MATCHMAKER` strategy — the historical behaviour | yes |
-| `manual` | a **`single`** round served by `ARENA_DEFAULT_MODEL`, unless the request opts in; an opted-in request gets the usual matchup | only the opted-in rounds |
-| `sampled` | a matchup with probability `ARENA_SAMPLE_RATE`, otherwise a **`single`** round served by `ARENA_DEFAULT_MODEL` | only the engaged (hit) rounds |
+| `always` (default) | an engaged round of two models chosen by the `MATCHMAKER` strategy — the historical behaviour under `blind` | only when `ARENA_EXPOSURE=blind` |
+| `manual` | a **`single`** round served by `ARENA_DEFAULT_MODEL`, unless the request opts in; an opted-in request gets an engaged round | only opted-in `blind` rounds |
+| `sampled` | an engaged round with probability `ARENA_SAMPLE_RATE`, otherwise a **`single`** round served by `ARENA_DEFAULT_MODEL` | only engaged `blind` rounds |
 
-The value is a closed enum (`server/src/arena/mode.ts`), so a typo throws before
-the server listens rather than silently falling back to `always`.
-`ARENA_SAMPLE_RATE` must parse to a number in `[0, 1]` (default `0` when unset);
-out-of-range values also fail at boot.
+| `ARENA_EXPOSURE` | Engaged behaviour | Wire `mode` |
+|---|---|---|
+| `blind` (default) | both answers streamed anonymously; user can vote | `matchup` |
+| `shadow` | only the incumbent (`ARENA_DEFAULT_MODEL`) is streamed; a challenger ≠ incumbent runs silently; both responses + a `matchups.mode='shadow'` row are persisted; no vote token | `shadow` |
+
+Resolved plan matrix (`server/src/arena/mode.ts`):
+
+| trigger | engaged? | exposure=`blind` | exposure=`shadow` |
+|---|---|---|---|
+| `always` | yes | `matchup` | `shadow` |
+| `sampled` | hit (`rng < rate`) | `matchup` | `shadow` |
+| `sampled` | miss | `single` | `single` |
+| `manual` | opted-in | `matchup` | `shadow` |
+| `manual` | not | `single` | `single` |
+
+The values are closed enums, so a typo throws before the server listens rather
+than silently falling back. `ARENA_SAMPLE_RATE` must parse to a number in
+`[0, 1]` (default `0` when unset); out-of-range values also fail at boot.
+`ARENA_DEFAULT_MODEL` is required when `ARENA_TRIGGER` is not `always`, or when
+`ARENA_EXPOSURE=shadow`.
 
 ### How a request opts in
 
-Under `manual`, either signal turns that one request into a matchup:
+Under `manual`, either signal turns that one request into an engaged round:
 
 - request body `arena: true`
 - request header `x-arena: on` — compared case-insensitively, and only `on`
@@ -159,8 +177,8 @@ extension slot (AG-UI `forwardedProps`, OpenAI `omni_arena`, top level for
 Vercel AI SDK and native SSE) — see [Integration → which protocols accept their
 own request body](integration.md#which-protocols-accept-their-own-request-body).
 The two signals are OR-ed, so `x-arena: on` opts in even when the body says
-`arena: false`. Under `always` both signals are ignored: every request is a
-matchup regardless.
+`arena: false`. Under `always` both signals are ignored: every request is
+engaged regardless.
 
 ### `ARENA_DEFAULT_MODEL` accepts a UUID or a human identifier
 
@@ -187,15 +205,15 @@ Validation happens in two places, at two different times:
 
 | When | Check | On failure |
 |---|---|---|
-| Boot (`server/src/server.ts`) | a non-`always` trigger has a non-blank `ARENA_DEFAULT_MODEL` (a whitespace-only value counts as unset) | the process throws `ARENA_DEFAULT_MODEL is required when ARENA_TRIGGER=<trigger>` and never listens |
+| Boot (`server/src/server.ts`) | a non-`always` trigger, or `shadow` exposure, has a non-blank `ARENA_DEFAULT_MODEL` (a whitespace-only value counts as unset) | the process throws (`ARENA_DEFAULT_MODEL is required when ARENA_TRIGGER=<trigger>` or `… when ARENA_EXPOSURE=shadow`) and never listens |
 | Boot (`server/src/server.ts`) | the value matches exactly one enabled model (UUID, slug, display name, or `provider:provider_model_id`) | the process throws with the accepted forms and the enabled roster listed, and never listens |
-| Each `single` request | the resolved id is still in the **enabled** roster (`listEnabledModels()`) | `default_model_missing`: `ARENA_DEFAULT_MODEL '<uuid>' is not in the enabled roster` |
+| Each `single` / `shadow` request | the resolved id is still in the **enabled** roster (`listEnabledModels()`) | `default_model_missing`: `ARENA_DEFAULT_MODEL '<uuid>' is not in the enabled roster` |
 
 Boot now resolves and validates the identifier against the current enabled set,
 so a mistyped slug or unknown name fails before the server listens. Request-time
 membership is still re-checked because the enabled set can change under a
 running server (a model disabled after boot still surfaces as
-`default_model_missing` on the next `single` request).
+`default_model_missing` on the next `single`/`shadow` request).
 
 ### What a `single` round is
 
@@ -210,6 +228,19 @@ One slot, one model, and nothing recorded:
   sent](integration.md#identifiers-you-cannot-use-are-not-sent).
 - **No rating signal at all**, not a weaker one. See [Rating methodology → what
   the engine cannot rate](rating-methodology.md#what-the-engine-cannot-rate).
+
+### What a `shadow` round is
+
+Incumbent on slot A, challenger on slot B, only A on the wire:
+
+- `mode: "shadow"`, `slots: ["A"]`, **`votable: false`**, and **no
+  `matchupToken`**. The React SDK already hides vote UI from `votable`.
+- Both models run; both responses are persisted on a normal matchup /
+  conversation / turn row with `matchups.mode = 'shadow'`.
+- `POST /api/arena/vote` rejects shadow matchups with `403 Shadow matchups are
+  not votable` — even if a token were somehow presented.
+- The challenger is chosen by the existing matchmaker, constrained to differ
+  from `ARENA_DEFAULT_MODEL`. Auto-judge pickup of shadow rows is deferred.
 
 ### Worked example: `manual` end to end
 
@@ -281,13 +312,21 @@ non-votable `single` round from `ARENA_DEFAULT_MODEL`. Opt-in signals
 (`arena: true` / `x-arena: on`) are ignored under `sampled` — engagement is
 purely probabilistic.
 
-### Not built yet
+### Worked example: `shadow` end to end
 
-A `shadow` exposure (run the second model without showing it) is **designed but
-not implemented**. There is no `ARENA_EXPOSURE` variable; the server does not
-read it. The `shadow` plan variant is already named on the resolver's return
-type so consumers can be exhaustive ahead of time, but nothing reaches it yet —
-`always`, `manual`, and `sampled` (blind) are the whole of today's behaviour.
+Canary a challenger against a fixed incumbent without showing the user a second
+answer:
+
+```bash
+ARENA_TRIGGER=always
+ARENA_EXPOSURE=shadow
+ARENA_DEFAULT_MODEL=gemini-3-flash-preview
+```
+
+Every request runs the incumbent as slot A (streamed) and a matchmaker-picked
+challenger as slot B (silent). The client sees `mode: "shadow"`, `votable:
+false`, `slots: ["A"]`, and no vote token. Both answers land in Postgres with
+`matchups.mode = 'shadow'`.
 
 ## Database
 
