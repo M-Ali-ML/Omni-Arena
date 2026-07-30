@@ -282,6 +282,20 @@ export class PostgresRepository
     );
   }
 
+  async recordSteer(matchupId: string, instruction: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE matchups
+       SET steers = steers || $2::jsonb
+       WHERE id = $1`,
+      [
+        matchupId,
+        JSON.stringify([
+          { instruction, at: new Date().toISOString() },
+        ]),
+      ],
+    );
+  }
+
   async recordPreference(preference: PreferenceRecord): Promise<void> {
     try {
       await this.pool.query(

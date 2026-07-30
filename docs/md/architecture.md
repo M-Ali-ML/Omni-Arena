@@ -26,7 +26,7 @@ non-workspace consumer code (`examples/`, `integrations/`) and the `e2e/` harnes
    ├─ routes/chat        POST /api/arena/chat   → EventAdapter (5 wire protocols)
    │                     also POST /chat/completions and /v1/chat/completions
    ├─ routes/models      GET  /models and /v1/models (OpenAI-compatible roster)
-   ├─ routes/control     GET  /api/arena/control (WebSocket: stop / steer-stub)
+   ├─ routes/control     GET  /api/arena/control (WebSocket: stop / steer)
    ├─ routes/vote        POST /api/arena/vote   → reveal identities
    ├─ routes/leaderboard GET  /api/arena/leaderboard  (win-rate + ratings + context)
    ├─ routes/analytics   GET  /api/arena/analytics/*  (summary / head-to-head /
@@ -35,7 +35,7 @@ non-workspace consumer code (`examples/`, `integrations/`) and the `e2e/` harnes
    ├─ adapters/          selectProtocol → SSE (default) / AG-UI / A2UI / Vercel / OpenAI
    │                     egress EventAdapter + ingress RequestAdapter
    ├─ JoinBroker         pairs two sibling requests into one matchup (opt-in joinKey)
-   ├─ MatchupRegistry    AbortController per in-flight matchup (control plane)
+   ├─ MatchupRegistry    AbortController + steer handler per in-flight matchup
    ├─ SmartMatchmaker    prioritizes under-sampled / high-variance pairs
    │                     (RandomMatchmaker still available; MATCHMAKER=random)
    ├─ MatchupTokenService HMAC-signed matchup tokens
@@ -206,17 +206,25 @@ identical across protocols**; only the framing differs.
 acts on an in-flight matchup out-of-band from the token stream.
 
 - **`MatchupRegistry`** (`server/src/control/registry.ts`) hands out one
-  `AbortController` per matchup. The chat route `register`s the controller when
-  it starts streaming and `release`s it in a `finally` when the stream ends.
+  `AbortController` per matchup and optionally a steer handler. The chat route
+  `register`s the controller when it starts streaming, `bindSteer`s once the
+  core attaches its abort-and-restart callback, and `release`s both in a
+  `finally` when the stream ends.
 - The controller's `AbortSignal` is threaded through
-  `ArenaCore.stream(messages, assignment, signal?)`: aborting closes the internal
-  queue so the route stops emitting immediately, and in-flight producers observe
-  `signal.aborted` and break out of their provider stream on the next chunk.
-- **`stop`** works today: the control plane looks a matchup up by id and aborts
-  it, replying `{ ok: true }` (or `ok: false` for an unknown/finished matchup).
-- **`steer`** is a **schema-validated, documented stub**: it returns a negative
-  ack (`accepted: false`) so the wire contract and seam exist, but the
-  instruction is not yet wired into the running producers.
+  `ArenaCore.stream(messages, assignment, signal?, attachSteer?)`: aborting
+  closes the internal queue so the route stops emitting immediately, and
+  in-flight producers race their next chunk against the signal so a blocked
+  provider read cannot hang the tear-down.
+- **`stop`** looks a matchup up by id and aborts it, replying `{ ok: true }`
+  (or `ok: false` for an unknown/finished matchup).
+- **`steer`** is abort-and-restart: the registry delivers the instruction to
+  the live matchup's handler; the core cancels the current generation (without
+  closing the outer stream), emits a public `steered` event, and re-runs **both**
+  slots with the identical instruction appended as a `system` operator turn so
+  blindness is preserved. `steer_ack.accepted` is `true` only when a running
+  matchup actually accepted it; unknown/expired matchups (and matchups that
+  have already emitted a `slot_done`) get a negative ack with a reason. Each
+  accepted steer is persisted on `matchups.steers` for later analysis.
 
 ## Slot join: one matchup across two requests
 
@@ -522,9 +530,6 @@ ships as a container image. All three run key-free against the mock provider.
 
 ## What is intentionally not built yet
 
-- **Mid-stream steering execution** — the control plane's `steer` message is a
-  schema-validated, documented stub returning a negative ack; the instruction is
-  not yet threaded into the running producers in `ArenaCore`. `stop` is real.
 - **Auto-judge for shadow matchups** — `ARENA_EXPOSURE=shadow` persists both
   responses with `matchups.mode='shadow'` and rejects human votes; feeding those
   rows into an LLM-as-judge → `recordPreference` path is a separate workstream.

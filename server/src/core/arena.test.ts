@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { ArenaCore } from "./arena.js";
+import type { ArenaEvent } from "./events.js";
 import type {
+  ChatMessage,
   Model,
   ModelProviderPort,
   ProviderResolverPort,
@@ -219,5 +221,80 @@ describe("ArenaCore", () => {
     }
 
     expect(events).toEqual([]);
+  });
+
+  it("aborts and restarts both slots with the identical steer instruction", async () => {
+    const callsA: ChatMessage[][] = [];
+    const callsB: ChatMessage[][] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    const core = new ArenaCore(
+      new Resolver({
+        a: {
+          async *stream(_model, messages) {
+            callsA.push(messages);
+            yield { type: "token" as const, token: `A${callsA.length}` };
+            if (callsA.length === 1) {
+              await firstGate;
+            }
+            yield { type: "token" as const, token: `A${callsA.length}-end` };
+          },
+        },
+        b: {
+          async *stream(_model, messages) {
+            callsB.push(messages);
+            yield { type: "token" as const, token: `B${callsB.length}` };
+            if (callsB.length === 1) {
+              await firstGate;
+            }
+            yield { type: "token" as const, token: `B${callsB.length}-end` };
+          },
+        },
+      }),
+    );
+
+    let steer!: (instruction: string) => boolean;
+    const events: ArenaEvent[] = [];
+    const running = (async () => {
+      for await (const event of core.stream(
+        [{ role: "user", content: "prompt" }],
+        duel,
+        undefined,
+        (accept) => {
+          steer = accept;
+        },
+      )) {
+        events.push(event);
+        if (
+          event.type === "token" &&
+          event.slot === "A" &&
+          event.token === "A1"
+        ) {
+          expect(steer("shorten this")).toBe(true);
+          releaseFirst();
+        }
+      }
+    })();
+
+    await running;
+
+    expect(events).toContainEqual({
+      type: "steered",
+      instruction: "shorten this",
+    });
+    expect(callsA).toHaveLength(2);
+    expect(callsB).toHaveLength(2);
+    expect(callsA[1]).toEqual(callsB[1]);
+    expect(callsA[1]).toEqual([
+      { role: "user", content: "prompt" },
+      { role: "system", content: "shorten this" },
+    ]);
+    expect(events.at(-1)).toEqual({ type: "matchup_done" });
+    expect(
+      events.filter((event) => event.type === "slot_done"),
+    ).toHaveLength(2);
   });
 });

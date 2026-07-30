@@ -60,6 +60,12 @@ class MemoryRepository implements PreferenceRepositoryPort {
     this.responses.push(response);
   }
 
+  readonly steers: Array<{ matchupId: string; instruction: string }> = [];
+
+  async recordSteer(matchupId: string, instruction: string): Promise<void> {
+    this.steers.push({ matchupId, instruction });
+  }
+
   async recordPreference(preference: PreferenceRecord): Promise<void> {
     if (this.preferences.has(preference.matchupId)) {
       throw new DuplicateVoteError();

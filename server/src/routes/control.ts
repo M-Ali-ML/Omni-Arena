@@ -6,14 +6,9 @@ import type { MatchupRegistry } from "../control/registry.js";
  * WebSocket control plane (decision record #7, vision §2.1). A bidirectional
  * channel that acts on an in-flight matchup out-of-band from the token stream.
  *
- * Implemented now: `stop` — aborts the `core.stream` for a matchup via the
- * `MatchupRegistry`'s `AbortController`.
- *
- * Extension point (deferred): `steer` — mid-stream user steering. Full steering
- * requires threading a new-instruction channel into the running producers
- * (re-prompting or injecting a system turn), which is heavier than a stop
- * signal. It is stubbed here with a documented negative ack so the wire contract
- * and seam exist; wiring the instruction into `ArenaCore` is the follow-up.
+ * - `stop` — aborts the matchup via the registry's `AbortController`.
+ * - `steer` — abort-and-restart with an operator instruction appended
+ *   identically to both slots (see `ArenaCore.stream` + `MatchupRegistry.steer`).
  */
 const controlMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("stop"), matchupId: z.string().uuid() }),
@@ -23,10 +18,6 @@ const controlMessageSchema = z.discriminatedUnion("type", [
     instruction: z.string().min(1),
   }),
 ]);
-
-const STEER_DEFERRED_REASON =
-  "mid-stream steering is not yet implemented (decision record #7); " +
-  "see the extension point in routes/control.ts";
 
 export function registerControlRoute(
   app: FastifyInstance,
@@ -57,11 +48,23 @@ export function registerControlRoute(
         return;
       }
 
+      const result = dependencies.registry.steer(
+        parsed.data.matchupId,
+        parsed.data.instruction,
+      );
+      if (result.accepted) {
+        send({
+          type: "steer_ack",
+          matchupId: parsed.data.matchupId,
+          accepted: true,
+        });
+        return;
+      }
       send({
         type: "steer_ack",
         matchupId: parsed.data.matchupId,
         accepted: false,
-        reason: STEER_DEFERRED_REASON,
+        reason: result.reason,
       });
     });
   });

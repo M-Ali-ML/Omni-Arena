@@ -87,6 +87,7 @@ const chunkSchema = z.object({
   omni_arena_error: z
     .object({ slot: z.enum(["A", "B"]), message: z.string() })
     .optional(),
+  omni_arena_steer: z.object({ instruction: z.string() }).optional(),
 });
 
 /**
@@ -104,7 +105,10 @@ const errorFrameSchema = z.object({
 
 type Chunk = z.infer<typeof chunkSchema>;
 type Delta = z.infer<typeof choiceSchema>["delta"];
-type ChunkExtensions = Pick<Chunk, "omni_arena" | "omni_arena_error">;
+type ChunkExtensions = Pick<
+  Chunk,
+  "omni_arena" | "omni_arena_error" | "omni_arena_steer"
+>;
 
 const slotIndex = (slot: ArenaSlot): number => (slot === "A" ? 0 : 1);
 
@@ -174,6 +178,11 @@ export function createOpenAiSseAdapter(): EventAdapter {
         case "slot_done":
           finished[event.slot] = true;
           return frame({});
+        case "steered":
+          return frame(
+            {},
+            { omni_arena_steer: { instruction: event.instruction } },
+          );
         case "run_error":
           return `data: ${JSON.stringify(
             errorFrameSchema.parse({

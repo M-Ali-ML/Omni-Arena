@@ -55,6 +55,15 @@ export const publicArenaEventSchema = z.discriminatedUnion("type", [
     message: z.string(),
   }),
   z.object({ type: z.literal("matchup_done") }),
+  /**
+   * Mid-stream steer took effect: both slots are about to re-run with the
+   * identical operator instruction. Clients should reset slot buffers; the
+   * instruction itself carries no model identity (blindness).
+   */
+  z.object({
+    type: z.literal("steered"),
+    instruction: z.string(),
+  }),
 ]);
 
 export type ArenaEvent =
@@ -73,7 +82,8 @@ export type ArenaEvent =
       modelVersion: string | null;
       error: string | null;
     }
-  | { type: "matchup_done" };
+  | { type: "matchup_done" }
+  | { type: "steered"; instruction: string };
 
 export type PublicArenaEvent = z.infer<typeof publicArenaEventSchema>;
 

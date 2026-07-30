@@ -46,13 +46,14 @@
     <tr><td class="mono">004_style_ratings.sql</td><td><span class="mono">model_style_ratings</span> · <span class="mono">style_control_coefficients</span></td></tr>
     <tr><td class="mono">005_rating_history.sql</td><td><span class="mono">model_rating_history</span> · index <span class="mono">model_rating_history_computed_idx</span></td></tr>
     <tr><td class="mono">006_arena_mode.sql</td><td><span class="mono">matchups.mode</span> (<span class="mono">blind</span> | <span class="mono">shadow</span>, default <span class="mono">blind</span>)</td></tr>
+    <tr><td class="mono">007_matchup_steers.sql</td><td><span class="mono">matchups.steers</span> JSONB array of mid-stream operator instructions</td></tr>
   </table>
   <div class="callout"><strong>Renamed after shipping.</strong> Migrations 002–004 once had phase-era filenames, so the runner first rewrites the legacy rows (<span class="mono">002_phase_one.sql</span>, <span class="mono">003_phase_two.sql</span>, <span class="mono">004_phase_three.sql</span>) to the current names — an existing database does not re-run them. Never edit an applied migration; add the next <span class="mono">NNN_description.sql</span>.</div>
 
   <h2>Who writes what</h2>
   <table>
     <tr><th>Writer</th><th>Tables</th></tr>
-    <tr><td>Chat route <span class="mono">POST /api/arena/chat</span></td><td class="mono">conversations · matchups · turns · responses</td></tr>
+    <tr><td>Chat route <span class="mono">POST /api/arena/chat</span></td><td><span class="mono">conversations · matchups · turns · responses</span>; appends to <span class="mono">matchups.steers</span> on mid-stream <span class="mono">steer</span></td></tr>
     <tr><td>Vote route <span class="mono">POST /api/arena/vote</span></td><td class="mono">preferences</td></tr>
     <tr><td>Model seed <span class="mono">db:seed</span> / <span class="mono">db:seed:mock</span></td><td class="mono">models</td></tr>
     <tr><td>Rating worker, default pass</td><td class="mono">model_ratings</td></tr>
@@ -88,6 +89,7 @@
     <tr><td class="mono">matchups</td><td class="mono">matchup_token_hash</td><td>SHA-256 of the signed token — the token itself is never stored.</td></tr>
     <tr><td class="mono">matchups</td><td class="mono">harness_version</td><td>Prompt/orchestration version captured for temporal drift analysis. Defaults to <span class="mono">'v1'</span>; demo-seeded rows carry <span class="mono">'demo'</span>.</td></tr>
     <tr><td class="mono">matchups</td><td class="mono">mode</td><td><span class="mono">blind</span> (default, human-votable) or <span class="mono">shadow</span> (persisted, not votable). Migration <span class="mono">006_arena_mode.sql</span>. Vote endpoint rejects shadow rows with 403.</td></tr>
+    <tr><td class="mono">matchups</td><td class="mono">steers</td><td>JSONB array (default <span class="mono">[]</span>) of <span class="mono">{instruction, at}</span> objects appended by mid-stream <span class="mono">steer</span> so later analysis can control for operator interventions. Migration <span class="mono">007_matchup_steers.sql</span>.</td></tr>
     <tr><td class="mono">responses</td><td class="mono">ttft_ms + stream_duration_ms</td><td>First-token and total latency, both <span class="mono">&gt;= 0</span>; <span class="mono">latency_ms</span> remains the compatibility field. <span class="mono">ttft_ms</span>, <span class="mono">model_version</span>, and <span class="mono">error</span> are the only nullable columns.</td></tr>
     <tr><td class="mono">responses</td><td class="mono">output_token_count + token_count_source</td><td>Provider usage when available, deterministic lexical estimate otherwise (check-constrained to <span class="mono">provider</span> / <span class="mono">estimated</span>).</td></tr>
     <tr><td class="mono">responses</td><td class="mono">markdown_density + model_version</td><td>Marker density checked to 0–1, and provider-reported checkpoint identity. Written <span class="mono">ON CONFLICT (matchup_id, slot) DO NOTHING</span>, so a replayed <span class="mono">slot_done</span> cannot duplicate a row.</td></tr>

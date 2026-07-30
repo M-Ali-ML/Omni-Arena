@@ -66,6 +66,11 @@ const agUiCustomEventSchema = z.discriminatedUnion("name", [
     name: z.literal("slot_error"),
     value: z.object({ slot: z.enum(["A", "B"]), message: z.string() }),
   }),
+  z.object({
+    type: z.literal("CUSTOM"),
+    name: z.literal("arena_steered"),
+    value: z.object({ instruction: z.string() }),
+  }),
 ]);
 
 const agUiEventSchema = z.discriminatedUnion("type", [
@@ -213,6 +218,14 @@ export function createAgUiAdapter(): EventAdapter {
               type: "TEXT_MESSAGE_END",
               messageId: messageId(matchupId, event.slot),
               slot: event.slot,
+            },
+          ]);
+        case "steered":
+          return frame([
+            {
+              type: "CUSTOM",
+              name: "arena_steered",
+              value: { instruction: event.instruction },
             },
           ]);
         case "run_error":

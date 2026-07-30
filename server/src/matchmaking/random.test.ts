@@ -17,6 +17,7 @@ function repoWith(models: Model[]): PreferenceRepositoryPort {
     listEnabledModels: async () => models,
     createMatchup: async () => {},
     saveResponse: async () => {},
+    recordSteer: async () => {},
     recordPreference: async () => {},
     getConversationContext: async () => ({ status: "not_found" }),
     getMatchup: async () => null,

@@ -274,6 +274,13 @@ export class JoinedRound {
         if (event.type === "matchup_done") {
           continue;
         }
+        // Fan the steer to both channels: both slots restart with the same
+        // instruction, and each connection needs to reset its own buffer.
+        if (event.type === "steered") {
+          this.channels.A.push(event);
+          this.channels.B.push(event);
+          continue;
+        }
         const channel = this.channels[event.slot];
         channel.push(event);
         if (event.type === "slot_done") {

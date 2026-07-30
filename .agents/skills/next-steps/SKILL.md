@@ -37,7 +37,7 @@ Pair with **agent-log**: log what happened this run; rewrite next-steps so the *
 ## Doc rules
 
 - **Living queue, not a log.** Drop or demote finished P0–P2 items; move them to a one-line “Resolved recently” note only if someone might re-open them by mistake. Do not append dated sections forever.
-- **Priority by impact.** P0 = blocks drop-in / core product claims. P1 = host polish / operator pain. P2 = planned seams (`sampled`, `shadow`, steer). P3 = launch/optional.
+- **Priority by impact.** P0 = blocks drop-in / core product claims. P1 = host polish / operator pain. P2 = remaining planned seams (e.g. shadow auto-judge). P3 = launch/optional.
 - **Every open item needs a pointer** (path, FINDINGS §, or plan doc) so the next agent does not rediscover it.
 - **Honest “Where we stand”** — 5–10 lines on what is actually shipped on `main` (or the branch you are on). Mention dirty tree / unpushed work if relevant.
 - **One “Suggested next session”** with 2–4 concrete picks (not a laundry list).

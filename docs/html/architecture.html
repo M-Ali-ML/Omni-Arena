@@ -76,7 +76,7 @@
       <div class="node"><div class="t">ArenaCore</div><div class="d">parallel fan-out, one event stream, fault isolation, AbortSignal</div></div>
       <div class="node"><div class="t">Adapter layer</div><div class="d">selectProtocol → SSE · AG-UI · A2UI · Vercel AI · OpenAI SSE (egress + ingress)</div></div>
       <div class="node"><div class="t">JoinBroker</div><div class="d">pairs two sibling requests into one matchup (opt-in joinKey)</div></div>
-      <div class="node"><div class="t">MatchupRegistry</div><div class="d">AbortController per matchup (control plane)</div></div>
+      <div class="node"><div class="t">MatchupRegistry</div><div class="d">AbortController + steer handler per matchup</div></div>
       <div class="node"><div class="t">SmartMatchmaker</div><div class="d">under-sampled / high-variance pairs (RandomMatchmaker fallback)</div></div>
       <div class="node"><div class="t">MatchupTokenService</div><div class="d">HMAC token, 15 min TTL, hash stored</div></div>
     </div>
@@ -164,14 +164,14 @@
   <p><span class="mono">GET /api/arena/control</span> (registered via <span class="mono">@fastify/websocket</span> in <span class="mono">app.ts</span>) acts on an in-flight matchup out-of-band from the token stream.</p>
   <div class="flow">
     <div class="row">
-      <div class="node"><div class="t">MatchupRegistry</div><div class="d">one AbortController per matchup; chat route register()s on start, release()s in finally</div></div>
-      <div class="node"><div class="t">ArenaCore.stream(…, signal?)</div><div class="d">abort closes the queue; producers break on signal.aborted</div></div>
+      <div class="node"><div class="t">MatchupRegistry</div><div class="d">AbortController + steer handler per matchup; register / bindSteer / release</div></div>
+      <div class="node"><div class="t">ArenaCore.stream(…, signal?, attachSteer?)</div><div class="d">stop closes the queue; steer aborts the generation and restarts both slots</div></div>
     </div>
   </div>
   <table>
     <tr><th>Message</th><th>Status</th></tr>
     <tr><td class="mono">stop</td><td>Works: aborts the matchup's stream via its AbortController; <span class="mono">ok:false</span> for an unknown/finished matchup.</td></tr>
-    <tr><td class="mono">steer</td><td>Schema-validated, documented <strong>stub</strong>: returns a negative ack so the seam exists; not yet wired into the core.</td></tr>
+    <tr><td class="mono">steer</td><td><strong>Abort-and-restart</strong>: cancels the current generation, emits <span class="mono">steered</span>, re-runs both slots with the identical <span class="mono">system</span> instruction; persists on <span class="mono">matchups.steers</span>. Negative ack for unknown/expired or already-completing matchups.</td></tr>
   </table>
 
   <h2 id="slot-join">Slot join: one matchup across two requests</h2>
@@ -314,7 +314,7 @@
 
   <details>
     <summary>Intentionally not built yet</summary>
-    <p><strong>Mid-stream steering execution</strong> — the control plane's <span class="mono">steer</span> message is a schema-validated, documented stub returning a negative ack; the instruction is not yet threaded into <span class="mono">ArenaCore</span> (<span class="mono">stop</span> is real). <strong>Auto-judge for shadow matchups</strong> — <span class="mono">ARENA_EXPOSURE=shadow</span> persists both responses with <span class="mono">matchups.mode='shadow'</span> and rejects human votes; feeding those rows into an LLM-as-judge → <span class="mono">recordPreference</span> path is a separate workstream (see <a href="setup.html#trigger-and-exposure">Setup → Trigger and exposure</a>). <strong>Multimodal input</strong> — deferred. OmniArena does not scrub or redact stored prompts/responses — content is persisted as received.</p>
+    <p><strong>Auto-judge for shadow matchups</strong> — <span class="mono">ARENA_EXPOSURE=shadow</span> persists both responses with <span class="mono">matchups.mode='shadow'</span> and rejects human votes; feeding those rows into an LLM-as-judge → <span class="mono">recordPreference</span> path is a separate workstream (see <a href="setup.html#trigger-and-exposure">Setup → Trigger and exposure</a>). <strong>Multimodal input</strong> — deferred. OmniArena does not scrub or redact stored prompts/responses — content is persisted as received.</p>
   </details>
 </main>
 </body>
