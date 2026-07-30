@@ -18,15 +18,16 @@ import { slotErrorText } from "./slot-error.js";
 
 /**
  * AG-UI adapter (differentiator, vision §2/§5.3): the two arena slots become two
- * concurrent AG-UI text messages inside one run, tagged with `slot` so an
- * agentic frontend (CopilotKit / LangGraph / CrewAI) can route each side to its
- * own column. We emit the subset of the AG-UI event taxonomy the arena needs —
- * lifecycle (`RUN_STARTED`/`RUN_FINISHED`/`RUN_ERROR`), text streaming
- * (`TEXT_MESSAGE_START`/`_CONTENT`/`_END`), and `CUSTOM` for out-of-taxonomy
- * payloads: the arena matchup metadata (including the signed vote token, so
- * this path is votable without a second channel) and a single-slot error (the
- * surviving slot keeps streaming). Transport is SSE: one `data:` line per typed
- * event.
+ * concurrent AG-UI text messages inside one run. Slot identity is carried in
+ * `messageId` as `<matchupId>:<slot>` — the normative channel clients must parse
+ * to route each side to its own column — because conformant AG-UI parsers strip
+ * the advisory top-level `slot` field. We emit the subset of the AG-UI event
+ * taxonomy the arena needs — lifecycle (`RUN_STARTED`/`RUN_FINISHED`/
+ * `RUN_ERROR`), text streaming (`TEXT_MESSAGE_START`/`_CONTENT`/`_END`), and
+ * `CUSTOM` for out-of-taxonomy payloads: the arena matchup metadata (including
+ * the signed vote token, so this path is votable without a second channel) and
+ * a single-slot error (the surviving slot keeps streaming). Transport is SSE:
+ * one `data:` line per typed event.
  *
  * `RUN_ERROR` is the taxonomy's terminal failure event and the only in-band
  * signal a conformant runtime can settle a pending run on, so arena failures
@@ -106,11 +107,11 @@ const agUiEventSchema = z.discriminatedUnion("type", [
 type AgUiEvent = z.infer<typeof agUiEventSchema>;
 
 /**
- * Slot identity survives only here in practice: assistant-ui's parser
- * whitelists known fields and strips the top-level `slot`, so the id
- * convention is the load-bearing channel (finding 3). It is keyed on the
- * matchup, never on the echoed `runId`, so a client that minted its own run id
- * can still recover the round from a message.
+ * Normative slot identity: `messageId` is `<matchupId>:<slot>`. Conformant
+ * AG-UI parsers whitelist known fields and strip the advisory top-level
+ * `slot`, so clients must parse the id (docs/md/integration.md § AG-UI). Keyed
+ * on the matchup, never on the echoed `runId`, so a client that minted its own
+ * run id can still recover the round from a message.
  */
 const messageId = (matchupId: string, slot: "A" | "B"): string =>
   `${matchupId}:${slot}`;

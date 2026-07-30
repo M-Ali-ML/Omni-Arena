@@ -317,10 +317,16 @@ data: {"type":"RUN_FINISHED","threadId":"c1","runId":"m1"}
   `slot_error` **plus** a marked `TEXT_MESSAGE_CONTENT` (below), so the surviving
   slot keeps streaming; `slot_done` → `TEXT_MESSAGE_END`; `run_error` →
   `RUN_ERROR`; `matchup_done` → `RUN_FINISHED`.
-- **Model A vs B:** each message is tagged `slot` (`"A"`/`"B"`) and has a stable
-  `messageId` of `"<runId>:<slot>"`; `runId` is the matchup id and `threadId`
-  the conversation id — or, on a round with no conversation, the matchup id
-  again, since AG-UI requires a thread on every run.
+- **Slot identity (normative):** clients **MUST** attribute each
+  `TEXT_MESSAGE_*` stream to a column by parsing `messageId`, which is always
+  `"<matchupId>:<slot>"` (e.g. `m1:A`). The adapter also emits a top-level
+  `slot` field (`"A"`/`"B"`) on those events, but that field is advisory only:
+  conformant AG-UI parsers (assistant-ui's event parser among them) whitelist
+  known fields and strip it before the runtime sees the event. Do not rely on
+  `slot`. `threadId` on the run is the conversation id — or the matchup id on a
+  round with no conversation, since AG-UI requires a thread on every run.
+  Echoed client `runId` values never change the `messageId` shape (see **Run
+  ids are echoed** below).
 - **A dead slot is visible:** mainstream runtimes drop `CUSTOM` events
   (assistant-ui's aggregator has no case for one), which left a failed slot as a
   permanently blank column. The message therefore also receives the failure as
