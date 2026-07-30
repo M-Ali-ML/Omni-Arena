@@ -80,6 +80,7 @@ export async function createApp(
   const modeConfig = dependencies.modeConfig ?? {
     trigger: "always" as const,
     defaultModel: null,
+    sampleRate: 0,
   };
 
   app.get("/health", async () => ({ status: "ok" }));

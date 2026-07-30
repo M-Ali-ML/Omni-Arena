@@ -4,11 +4,11 @@ import type { Model } from "../core/ports.js";
 /**
  * How the arena decides whether to engage a request. `always` reproduces the
  * historic behavior (every request is a matchup); `manual` serves a single
- * model unless the request explicitly opts in. `sampled` is reserved for a
- * later phase and intentionally not accepted yet.
+ * model unless the request explicitly opts in; `sampled` engages with
+ * probability `ARENA_SAMPLE_RATE`.
  */
 export const arenaTriggerSchema = z
-  .enum(["always", "manual"])
+  .enum(["always", "manual", "sampled"])
   .default("always");
 
 export type ArenaTrigger = z.infer<typeof arenaTriggerSchema>;
@@ -20,14 +20,19 @@ const arenaModeConfigSchema = z.object({
    * After boot resolution this is always a `models.id` UUID when set.
    */
   defaultModel: z.string().trim().min(1).nullable().default(null),
+  /**
+   * Engagement probability when `trigger === "sampled"`. Ignored otherwise.
+   * Parsed from `ARENA_SAMPLE_RATE` (0..1 inclusive).
+   */
+  sampleRate: z.coerce.number().min(0).max(1).default(0),
 });
 
 export type ArenaModeConfig = z.infer<typeof arenaModeConfigSchema>;
 
 /**
- * The resolved shape of a request. Only `matchup` and `single` are reachable in
- * Phase 1; `shadow` is declared so downstream consumers can be exhaustive ahead
- * of Phase 3 without a type change.
+ * The resolved shape of a request. Only `matchup` and `single` are reachable
+ * until Phase 3; `shadow` is declared so downstream consumers can be exhaustive
+ * ahead of that phase without a type change.
  */
 export type ArenaPlan =
   | { kind: "matchup" }
@@ -48,6 +53,7 @@ export function parseArenaModeConfig(
   return arenaModeConfigSchema.parse({
     trigger: env.ARENA_TRIGGER,
     defaultModel: env.ARENA_DEFAULT_MODEL?.trim() ? env.ARENA_DEFAULT_MODEL : null,
+    sampleRate: env.ARENA_SAMPLE_RATE,
   });
 }
 
@@ -59,17 +65,20 @@ function isOptedIn(signals: ArenaRequestSignals): boolean {
 }
 
 /**
- * Collapse config + request into a single plan. `rng` is injected now (unused in
- * Phase 1) so the `sampled` trigger can branch on it in Phase 2 without changing
- * the signature or any call site.
+ * Collapse config + request into a single plan. `rng` is injected so the
+ * `sampled` trigger can branch deterministically in tests (default Math.random).
+ * Shadow stays unreachable until Phase 3 (no exposure axis yet).
  */
 export function resolveArenaPlan(
   config: ArenaModeConfig,
   signals: ArenaRequestSignals,
-  _rng: () => number = Math.random,
+  rng: () => number = Math.random,
 ): ArenaPlan {
   if (config.trigger === "manual") {
     return isOptedIn(signals) ? { kind: "matchup" } : { kind: "single" };
+  }
+  if (config.trigger === "sampled") {
+    return rng() < config.sampleRate ? { kind: "matchup" } : { kind: "single" };
   }
   return { kind: "matchup" };
 }
