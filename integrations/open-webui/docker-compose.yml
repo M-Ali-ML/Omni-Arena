@@ -39,11 +39,15 @@ services:
       BRIDGE_PORT: "8080"
       ARENA_BASE_URL: ${ARENA_BASE_URL:-http://host.docker.internal:3021}
       BRIDGE_PAIR_TIMEOUT_MS: "2000"
+      # Durable continueFrom map — survives `docker compose restart bridge`.
+      BRIDGE_STATE_PATH: /app/data/continuations.json
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./bridge:/app/bridge:ro
       - ./test:/app/test:ro
+      # Writable state volume so multi-turn continuation outlives a restart.
+      - ./.data/bridge:/app/data
     healthcheck:
       test:
         [

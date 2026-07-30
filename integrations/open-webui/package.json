@@ -10,7 +10,9 @@
     "arena": "node scripts/arena.mjs",
     "logs": "docker compose logs -f bridge open-webui",
     "test": "node scripts/test.mjs",
+    "test:unit": "node test/state.test.mjs",
     "test:http": "docker compose exec -T bridge node /app/test/openai-surface.test.mjs",
+    "test:restart": "node test/continuation-restart.test.mjs",
     "test:e2e": "playwright test -c e2e/playwright.config.js",
     "clone-upstream": "node scripts/clone-upstream.mjs"
   },

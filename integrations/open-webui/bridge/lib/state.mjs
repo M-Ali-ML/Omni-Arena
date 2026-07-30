@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { deferred } from "./channel.mjs";
 import { startRound } from "./arena.mjs";
 
@@ -15,15 +17,23 @@ import { startRound } from "./arena.mjs";
  *
  * The same key holds the last *continuable* arena `conversationId`. Open WebUI
  * never gives the bridge a stable id of its own beyond that header, so a
- * missed mapping (TTL expiry, bridge restart, unknown chat) must degrade to a
- * fresh matchup — never attach to someone else's thread.
+ * missed mapping (TTL expiry, unknown chat, or a server 404) must degrade to a
+ * fresh matchup — never attach to someone else's thread. Continuations are
+ * also written to an optional JSON file on the bridge's data volume so a
+ * container restart does not drop them.
  */
 export class ChatStore {
   #chats = new Map();
   #ttlMs;
+  #persistPath;
 
-  constructor({ ttlMs = 60 * 60 * 1000 } = {}) {
+  constructor({ ttlMs = 60 * 60 * 1000, persistPath = null } = {}) {
     this.#ttlMs = ttlMs;
+    this.#persistPath =
+      typeof persistPath === "string" && persistPath.length > 0
+        ? persistPath
+        : null;
+    this.#load();
   }
 
   #entry(key) {
@@ -45,10 +55,110 @@ export class ChatStore {
 
   #sweep() {
     const cutoff = Date.now() - this.#ttlMs;
+    let removed = false;
     for (const [key, entry] of this.#chats) {
       if (entry.touchedAt < cutoff) {
         this.#chats.delete(key);
+        removed = true;
       }
+    }
+    if (removed) {
+      this.#save();
+    }
+  }
+
+  #load() {
+    if (!this.#persistPath) {
+      return;
+    }
+    let raw;
+    try {
+      raw = readFileSync(this.#persistPath, "utf8");
+    } catch (error) {
+      if (error && error.code === "ENOENT") {
+        return;
+      }
+      console.warn(
+        `[bridge] could not read continuation store ${this.#persistPath}:`,
+        error.message ?? error,
+      );
+      return;
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      console.warn(
+        `[bridge] ignoring corrupt continuation store ${this.#persistPath}:`,
+        error.message ?? error,
+      );
+      return;
+    }
+
+    const entries =
+      parsed && typeof parsed === "object" && parsed.continuations
+        ? parsed.continuations
+        : parsed;
+    if (!entries || typeof entries !== "object") {
+      return;
+    }
+
+    const cutoff = Date.now() - this.#ttlMs;
+    for (const [key, value] of Object.entries(entries)) {
+      if (!value || typeof value !== "object") {
+        continue;
+      }
+      const conversationId = value.continueFrom ?? value.conversationId ?? null;
+      const touchedAt =
+        typeof value.touchedAt === "number" ? value.touchedAt : Date.now();
+      if (
+        typeof conversationId !== "string" ||
+        conversationId.length === 0 ||
+        touchedAt < cutoff
+      ) {
+        continue;
+      }
+      this.#chats.set(key, {
+        key,
+        matchup: null,
+        continueFrom: conversationId,
+        touchedAt,
+      });
+    }
+  }
+
+  #save() {
+    if (!this.#persistPath) {
+      return;
+    }
+    const continuations = {};
+    for (const [key, entry] of this.#chats) {
+      if (
+        typeof entry.continueFrom === "string" &&
+        entry.continueFrom.length > 0
+      ) {
+        continuations[key] = {
+          continueFrom: entry.continueFrom,
+          touchedAt: entry.touchedAt,
+        };
+      }
+    }
+
+    try {
+      mkdirSync(path.dirname(this.#persistPath), { recursive: true });
+      const tmp = `${this.#persistPath}.${process.pid}.tmp`;
+      writeFileSync(
+        tmp,
+        `${JSON.stringify({ version: 1, continuations }, null, 2)}\n`,
+        "utf8",
+      );
+      renameSync(tmp, this.#persistPath);
+    } catch (error) {
+      console.warn(
+        `[bridge] could not write continuation store ${this.#persistPath}:`,
+        error.message ?? error,
+      );
     }
   }
 
@@ -79,11 +189,13 @@ export class ChatStore {
       typeof conversationId === "string" && conversationId.length > 0
         ? conversationId
         : null;
+    this.#save();
     return entry;
   }
 
   clearContinuation(key) {
     this.#entry(key).continueFrom = null;
+    this.#save();
   }
 }
 

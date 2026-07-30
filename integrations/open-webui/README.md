@@ -42,7 +42,7 @@ With the bridge in place, arena mode works better in Open WebUI than expected:
 | Reveal after voting | ✅ works |
 | Leaderboard with Bradley-Terry ratings | ✅ works — `!leaderboard` |
 | Single (non-votable) mode | ✅ works |
-| Multi-turn continuation from the winner | ✅ works — bridge keeps the last continuable `conversationId` per Open WebUI chat |
+| Multi-turn continuation from the winner | ✅ works — bridge persists the last continuable `conversationId` per Open WebUI chat (survives bridge restart) |
 | One-click vote buttons | ❌ no UI extension point; votes are typed messages |
 | Live streaming of slot B in duel mode | ⚠️ buffered until slot A finishes |
 
@@ -203,11 +203,15 @@ Both suites run against a stack that is already up (`docker compose up -d` plus
 `npm run arena`):
 
 ```bash
-npm test           # both suites, with a preflight check
+npm test           # unit + HTTP + restart + Playwright, with a preflight check
+npm run test:unit  # ChatStore durable-continuation unit tests (no stack needed)
 npm run test:http  # just the OpenAI-surface contract suite
+npm run test:restart  # duel → vote → restart bridge → continue (stack must be up)
 npm run test:e2e   # just the Playwright UI suite
 ```
 
+- **`test/state.test.mjs`** covers the durable `continueFrom` JSON store: reload
+  after a simulated restart, clear, TTL expiry, and corrupt/missing files.
 - **`test/openai-surface.test.mjs`** asserts the contract Open WebUI
   actually depends on: `GET /v1/models`, streaming `POST /v1/chat/completions`
   with well-formed `chat.completion.chunk` frames on `choices[0]` and a trailing
@@ -216,6 +220,10 @@ npm run test:e2e   # just the Playwright UI suite
   reveal, multi-turn continuation on the same conversation after a decisive
   vote, single mode, the leaderboard, and the non-streaming task path. It runs
   inside the bridge container because the bridge has no host port.
+- **`test/continuation-restart.test.mjs`** is the regression for this durable
+  map: it runs a duel + decisive vote inside the bridge, restarts the bridge
+  container, waits for health, and asserts the follow-up stays on the same
+  `conversationId` at `turnIndex: 1`.
 - **`test:e2e`** (6 tests) drives the real Open WebUI UI in
   headless Chromium: the duel, multi-turn continuation after a decisive vote,
   the side-by-side compare view, the vote and reveal, single mode, the
@@ -530,11 +538,15 @@ Two smaller notes on the mode work as it stands:
 - **Multi-turn continuation from the winner.** After a decisive `!a` / `!b`, the
   bridge keeps the server's `conversationId` (only when the vote response says
   `continuable: true`) keyed by Open WebUI's `X-OpenWebUI-Chat-Id`, and sends it
-  on the next prompt. A missed mapping — TTL expiry, bridge restart, or a chat
-  with no forwarded id — degrades to a **new** matchup, never a wrong one.
-  Non-decisive votes (`!tie` / `!bad` / `!skip`) clear the slot so the next turn
-  starts fresh. Open WebUI's own transcript is still ignored by the arena; only
-  the winning responses the server persisted become shared context.
+  on the next prompt. The mapping is written to
+  `BRIDGE_STATE_PATH` (default `/app/data/continuations.json` on the bind-mounted
+  `./.data/bridge` volume) so a bridge restart does not drop it; on use the bridge
+  also confirms via `GET /api/arena/conversations/:id` that the thread is still
+  continuable for this session. A missed mapping — TTL expiry, a server 404/403,
+  or a chat with no forwarded id — degrades to a **new** matchup, never a wrong
+  one. Non-decisive votes (`!tie` / `!bad` / `!skip`) clear the slot so the next
+  turn starts fresh. Open WebUI's own transcript is still ignored by the arena;
+  only the winning responses the server persisted become shared context.
 - `single` mode, correctly non-votable.
 - Leaderboard in chat, including Bradley-Terry ratings when the worker runs.
 - The stack is key-free with `ARENA_MOCK_PROVIDER`, and switches to real
@@ -557,12 +569,6 @@ Two smaller notes on the mode work as it stands:
   has no place to render it as anything richer.
 - **Editing/regenerating a message.** Regeneration issues a fresh request, so it
   starts a new matchup; the previous one is left unvoted. Harmless but untidy.
-- **Reload restoring arena continuation.** Open WebUI keeps the chat transcript,
-  but the bridge's `continueFrom` map is in-process memory. A page reload in the
-  same live bridge still continues (same `X-OpenWebUI-Chat-Id`); a bridge
-  restart drops the mapping and the next prompt is a new matchup. The server's
-  `GET /api/arena/conversations/:id` could rehydrate, but the bridge has nowhere
-  durable to keep the id across restarts.
 - **Blindness with the mock provider.** `MockModelProvider` writes its own
   display name into its output, so the demo is only blind in the UI-chrome
   sense. Real providers do not do this.
@@ -619,13 +625,15 @@ integrations/open-webui/
 │       ├── arena.mjs               Omni-Arena client + openai-sse stream parser
 │       ├── openai.mjs              single-choice chunk writer
 │       ├── models.mjs              the pseudo-model roster
-│       ├── state.mjs               per-chat matchup + continuation state + slot rendezvous
+│       ├── state.mjs               per-chat matchup + durable continuation store + slot rendezvous
 │       └── channel.mjs             async queue used to demultiplex the two slots
 ├── scripts/
 │   ├── arena.mjs                   boots Omni-Arena from repo source on :3021
-│   ├── test.mjs                    preflight + both suites
+│   ├── test.mjs                    preflight + unit + HTTP + restart + e2e
 │   └── clone-upstream.mjs          pinned Open WebUI checkout
 ├── test/openai-surface.test.mjs    HTTP contract suite (runs in the bridge container)
+├── test/state.test.mjs             ChatStore persistence unit tests
+├── test/continuation-restart.test.mjs  duel → vote → restart bridge → continue
 ├── e2e/tests/arena.spec.js         Playwright suite against the real Open WebUI UI
 └── docs/                           screenshots referenced above
 ```
