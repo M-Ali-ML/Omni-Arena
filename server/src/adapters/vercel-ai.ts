@@ -40,7 +40,10 @@ const uiMessagePartSchema = z.discriminatedUnion("type", [
       conversationId: z.string().optional(),
       turnIndex: z.number().optional(),
       mainSlot: z.literal("A"),
-      dataSlot: z.literal("B"),
+      // Only present when the round actually streams a B column. A `single`
+      // round has nothing for a sidecar to paint, so advertising `dataSlot: "B"`
+      // would be a lie — omit it the same way matchupToken is omitted.
+      dataSlot: z.literal("B").optional(),
       // Trigger/exposure fields from matchup_started. A `single` round streams
       // slot A only and carries no vote token, so a client needs these to
       // decide whether to render the B column and the vote controls.
@@ -104,7 +107,7 @@ export function createVercelAiAdapter(): EventAdapter {
                 conversationId: event.conversationId,
                 turnIndex: event.turnIndex,
                 mainSlot: "A",
-                dataSlot: "B",
+                dataSlot: event.slots.includes("B") ? "B" : undefined,
                 mode: event.mode,
                 votable: event.votable,
               },

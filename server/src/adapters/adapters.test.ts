@@ -287,6 +287,8 @@ describe("Vercel AI SDK adapter", () => {
     expect(meta?.data).toMatchObject({
       matchupId: "m1",
       matchupToken: "tok-secret",
+      mainSlot: "A",
+      dataSlot: "B",
       mode: "matchup",
       votable: true,
     });
@@ -321,7 +323,6 @@ describe("Vercel AI SDK adapter", () => {
     ).toEqual({
       matchupId: "m2",
       mainSlot: "A",
-      dataSlot: "B",
       mode: "single",
       votable: false,
     });

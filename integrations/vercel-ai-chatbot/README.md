@@ -358,9 +358,11 @@ in the template.
 - **`ARENA_DEFAULT_MODEL` is a database uuid.** An operator has to query
   Postgres to configure it, and a wrong value fails at request time with a 500
   rather than at boot. A slug or `provider:provider_model_id` would be kinder.
-- **The `vercel-ai` adapter always advertises `dataSlot: "B"`**, even on a
-  `single` round where nothing will ever arrive on it; `mode`/`votable` are what
-  actually tell you.
+- **The `vercel-ai` adapter always advertised `dataSlot: "B"`**, even on a
+  `single` round where nothing will ever arrive on it. **Fixed:** `dataSlot` is
+  optional and omitted when the round's `slots` do not include B, matching how
+  `matchupToken` / `conversationId` / `turnIndex` are already omitted on
+  non-votable rounds; duel rounds still carry `dataSlot: "B"`.
 - **Nothing in the wire protocol identifies the app's message.** The adapter's
   `start` frame carries no `messageId`, so a persisting host must rewrite it
   (`lib/arena/stream.ts`) or store a message the live UI cannot reach. An
