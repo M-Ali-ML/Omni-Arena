@@ -89,7 +89,7 @@ AG-UI path requires a custom transport and show the ~25 lines it takes.
 > trigger still need a thin agent (or equivalent) to populate `forwardedProps`
 > and headers.
 
-## 2. `RUN_ERROR` is never emitted; failures leave AG-UI clients hanging
+## 2. `RUN_ERROR` is never emitted; failures leave AG-UI clients hanging (resolved)
 
 `server/src/adapters/ag-ui.ts` has no `RUN_ERROR` in its event union, and the
 route's error paths all return JSON with a non-200 status *before* hijacking the
@@ -115,6 +115,13 @@ into a synthetic `RUN_ERROR` frame so the runtime settles.
 terminal error event when the run cannot start or dies mid-flight, and add
 `RUN_ERROR` to the adapter's taxonomy. `PublicArenaEvent` has no `run_error`
 member today, so this is a core-events change, not just an adapter one.
+
+> **Resolved in `server/`.** `PublicArenaEvent` gained a `run_error` member
+> (`1be830f`); AG-UI maps it to a conformant `RUN_ERROR` (`8f06d51`); and
+> `chat.ts` delivers pre-stream failures in-band at 200 via `fail()` plus
+> mid-stream failures as a terminal `run_error` (`83bb3d8`), so a conformant
+> client settles instead of hanging. This host's proxy still synthesises a
+> `RUN_ERROR` for any residual non-200 as defence in depth.
 
 ## 3. Slot identity survives only by convention in `messageId`
 
@@ -148,7 +155,7 @@ the way `docs/md/integration.md` implied.
 > `fetch` wrapper parses it into `arenaStore`. Voting no longer needs a raw
 > `CUSTOM` subscriber — that path remains valid but is no longer load-bearing.
 
-## 5. A dead slot is invisible
+## 5. A dead slot is invisible (resolved)
 
 `slot_error` is also a `CUSTOM` event (same drop path as #4) and is *not*
 accompanied by anything in the text-message taxonomy. A conformant client
@@ -158,13 +165,25 @@ the error text as `TEXT_MESSAGE_CONTENT` on the failed slot (or ending that
 message and surfacing the failure in the final `RUN_FINISHED` payload) would
 degrade far better.
 
-## 6. Non-votable rounds still ship an empty token
+> **Resolved in `server/`.** `8f06d51` added `adapters/slot-error.ts`
+> (`[omni-arena:slot-error]` marker) and dual-emits every `slot_error`: the
+> structured `CUSTOM` (or protocol equivalent) plus marked
+> `TEXT_MESSAGE_CONTENT` on the failed slot, so a stock runtime that drops
+> `CUSTOM` still shows a non-blank column.
+
+## 6. Non-votable rounds still ship an empty token (resolved)
 
 A `single` round emits `arena_matchup` with `matchupToken: ""`, `slots: ["A"]`,
 `votable: false`. Clients must special-case the empty string rather than a missing
 field, and the surviving slot is still labelled `A`, which reads oddly in a
 non-comparison context (we relabel it "SINGLE MODEL"). Omitting `matchupToken`
 when there is no token would be cleaner and type-safe (`matchupToken?: string`).
+
+> **Resolved in `server/` + `packages/react-sdk`.** `83bb3d8` stopped emitting
+> the empty-string sentinel on `single` rounds (and also omits unusable
+> `conversationId` / `turnIndex`); `matchupToken` is optional on
+> `PublicArenaEvent` (`1be830f`) and in `@omni-arena/react`'s protocol types
+> (`429f53b`), with the parser normalising a legacy `""` to `null`.
 
 ## 7. `threadId` / `runId` are server-minted and ignore the client's (resolved)
 
