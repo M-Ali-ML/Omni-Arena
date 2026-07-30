@@ -1,18 +1,27 @@
 /**
  * The OmniArena side of the wire, expressed in this app's types.
  *
- * OmniArena's `?protocol=vercel-ai` adapter frames one blind matchup as an AI
- * SDK UI Message Stream: slot A rides the normal assistant text channel and
- * slot B is multiplexed through `data-arena-*` parts. Everything the UI needs
- * about a round therefore lives on the assistant message itself, which also
- * means a reloaded chat can be rehydrated from the database with no extra
- * bookkeeping.
+ * Parsing and vote/matchup normalisation come from `@omni-arena/react`. This
+ * module only adapts those primitives to the AI SDK UI Message Stream shape
+ * this host persists and renders: slot A on `text`, slot B on `data-arena-*`.
  */
+import {
+  isDecisiveVote,
+  parseArenaMatchup,
+  parseArenaReveal,
+  parseArenaSlotError,
+  type ArenaMode,
+  type ArenaSlot,
+  type ArenaSlotError,
+  type ArenaVote,
+} from "@omni-arena/react";
 import type { ChatMessage } from "@/lib/types";
 
-export type ArenaSlot = "A" | "B";
-export type ArenaMode = "matchup" | "single" | "shadow";
-export type ArenaVote = "left" | "right" | "both_good" | "both_bad" | "skip";
+export type { ArenaMode, ArenaSlot, ArenaSlotError, ArenaVote };
+export { isDecisiveVote };
+
+/** Response header the arena mirrors onto every chat response. */
+export const MATCHUP_HEADER = "x-arena-matchup";
 
 export type ArenaMeta = {
   matchupId: string;
@@ -31,8 +40,6 @@ export type ArenaMeta = {
   mode?: ArenaMode;
   votable?: boolean;
 };
-
-export type ArenaSlotError = { slot: ArenaSlot; message: string };
 
 export type ArenaRevealedModel = { id?: string; displayName: string };
 
@@ -62,11 +69,6 @@ export const ARENA_VOTE_OPTIONS: { value: ArenaVote; label: string }[] = [
   { label: "Skip", value: "skip" },
 ];
 
-/** Votes that leave a single winning response for OmniArena to continue from. */
-export function isDecisiveVote(vote: ArenaVote): boolean {
-  return vote === "left" || vote === "right";
-}
-
 type UnknownPart = { type: string; data?: unknown; text?: string };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -75,48 +77,61 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function readMeta(data: unknown): ArenaMeta | null {
-  const record = asRecord(data);
-  if (!record || typeof record.matchupId !== "string") {
+/**
+ * Map an SDK matchup (native event, `data-arena-meta`, or `x-arena-matchup`)
+ * onto the meta shape this host stores on assistant messages.
+ */
+export function arenaMetaFromUnknown(value: unknown): ArenaMeta | null {
+  const parsed = parseArenaMatchup(value);
+  if (!parsed) {
     return null;
   }
+  const record = asRecord(value);
   return {
-    ...(typeof record.conversationId === "string"
-      ? { conversationId: record.conversationId }
-      : {}),
+    ...(parsed.conversationId ? { conversationId: parsed.conversationId } : {}),
     dataSlot: "B",
     mainSlot: "A",
-    matchupId: record.matchupId,
-    ...(typeof record.matchupToken === "string" && record.matchupToken !== ""
-      ? { matchupToken: record.matchupToken }
-      : {}),
-    mode:
-      record.mode === "single" || record.mode === "shadow"
-        ? record.mode
-        : "matchup",
-    ...(typeof record.turnIndex === "number"
-      ? { turnIndex: record.turnIndex }
-      : {}),
-    votable: typeof record.votable === "boolean" ? record.votable : undefined,
+    matchupId: parsed.matchupId,
+    ...(parsed.matchupToken ? { matchupToken: parsed.matchupToken } : {}),
+    mode: parsed.mode,
+    ...(typeof parsed.turnIndex === "number" ? { turnIndex: parsed.turnIndex } : {}),
+    // Keep absent-vs-boolean so callers can apply the host votable rule below;
+    // the SDK defaults missing `votable` to true for older servers.
+    votable: typeof record?.votable === "boolean" ? record.votable : undefined,
   };
 }
 
-function readReveal(data: unknown): ArenaReveal | null {
-  const record = asRecord(data);
-  const models = asRecord(record?.models);
-  const a = asRecord(models?.A);
-  const b = asRecord(models?.B);
-  if (!(record && a && b) || typeof record.vote !== "string") {
+/** Parse the `x-arena-matchup` response header. */
+export function parseMatchupHeader(raw: string | null): ArenaMeta | null {
+  if (!raw) {
+    return null;
+  }
+  try {
+    return arenaMetaFromUnknown(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+export function arenaRevealFromUnknown(value: unknown): ArenaReveal | null {
+  const parsed = parseArenaReveal(value);
+  if (!parsed?.vote) {
     return null;
   }
   return {
     models: {
-      A: { displayName: String(a.displayName ?? "Model A") },
-      B: { displayName: String(b.displayName ?? "Model B") },
+      A: {
+        displayName: parsed.models.A.displayName,
+        ...(parsed.models.A.id ? { id: parsed.models.A.id } : {}),
+      },
+      B: {
+        displayName: parsed.models.B.displayName,
+        ...(parsed.models.B.id ? { id: parsed.models.B.id } : {}),
+      },
     },
-    vote: record.vote as ArenaVote,
-    ...(typeof record.continuable === "boolean" ? { continuable: record.continuable } : {}),
-    ...(typeof record.conversationId === "string" ? { conversationId: record.conversationId } : {}),
+    vote: parsed.vote,
+    continuable: parsed.continuable,
+    ...(parsed.conversationId ? { conversationId: parsed.conversationId } : {}),
   };
 }
 
@@ -146,7 +161,7 @@ export function readArenaMatchup(
         slotA += part.text ?? "";
         break;
       case "data-arena-meta":
-        meta = readMeta(part.data) ?? meta;
+        meta = arenaMetaFromUnknown(part.data) ?? meta;
         break;
       case "data-arena-b-delta": {
         const record = asRecord(part.data);
@@ -157,17 +172,14 @@ export function readArenaMatchup(
         slotBDone = true;
         break;
       case "data-arena-error": {
-        const record = asRecord(part.data);
-        if (record && typeof record.message === "string") {
-          errors.push({
-            message: record.message,
-            slot: record.slot === "B" ? "B" : "A",
-          });
+        const error = parseArenaSlotError(part.data);
+        if (error) {
+          errors.push(error);
         }
         break;
       }
       case "data-arena-reveal":
-        reveal = readReveal(part.data) ?? reveal;
+        reveal = arenaRevealFromUnknown(part.data) ?? reveal;
         break;
       default:
         break;

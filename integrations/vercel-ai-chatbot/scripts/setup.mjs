@@ -4,8 +4,9 @@
 //   1. clone (or update) the pinned upstream commit into .upstream/ (gitignored)
 //   2. reset tracked files, so re-running is idempotent
 //   3. copy the arena overlay in and apply the anchored patches
-//   4. write .env.local if it is missing (random AUTH_SECRET, no cloud services)
-//   5. install dependencies with the upstream's pinned pnpm
+//   4. point `@omni-arena/react` at the monorepo SDK (file: dep) and build it
+//   5. write .env.local if it is missing (random AUTH_SECRET, no cloud services)
+//   6. install dependencies with the upstream's pinned pnpm
 //
 // Usage: node scripts/setup.mjs [--skip-install] [--postgres-url=<url>]
 import { spawnSync } from "node:child_process";
@@ -18,6 +19,8 @@ import { applyPatches, copyOverlay } from "./overlay.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const integrationDir = path.resolve(scriptDir, "..");
+const repoRoot = path.resolve(integrationDir, "../..");
+const reactSdkDir = path.join(repoRoot, "packages/react-sdk");
 const upstreamDir = path.join(integrationDir, ".upstream");
 const overlayDir = path.join(integrationDir, "overlay");
 
@@ -86,6 +89,30 @@ for (const file of patched) {
   console.log(`  ~ ${file}`);
 }
 
+/**
+ * Overlay sources import `@omni-arena/react`. The upstream clone is outside the
+ * monorepo workspace, so point it at `packages/react-sdk` via a `file:` dep and
+ * make sure `dist/` exists before Next resolves the package.
+ */
+async function linkReactSdk() {
+  if (!existsSync(path.join(reactSdkDir, "package.json"))) {
+    console.error(`Expected @omni-arena/react at ${reactSdkDir}`);
+    process.exit(1);
+  }
+  run("npm", ["run", "build", "--workspace", "@omni-arena/react"], repoRoot);
+
+  const pkgPath = path.join(upstreamDir, "package.json");
+  const pkg = JSON.parse(await readFile(pkgPath, "utf8"));
+  const rel = path.relative(upstreamDir, reactSdkDir).split(path.sep).join("/");
+  const spec = `file:${rel}`;
+  pkg.dependencies = { ...pkg.dependencies, "@omni-arena/react": spec };
+  await writeFile(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  console.log(`\nLinked @omni-arena/react -> ${spec}`);
+  return spec;
+}
+
+const reactSdkSpec = await linkReactSdk();
+
 const envPath = path.join(upstreamDir, ".env.local");
 if (existsSync(envPath)) {
   console.log("\nKeeping existing .env.local");
@@ -103,9 +130,21 @@ OMNIARENA_URL=http://localhost:3001
 }
 
 if (skipInstall) {
-  console.log("\nSkipping install (--skip-install)");
+  // e2e re-runs setup with --skip-install; still ensure the local SDK is linked
+  // into node_modules after package.json was rewritten above.
+  if (existsSync(path.join(upstreamDir, "node_modules"))) {
+    run(
+      "npx",
+      ["--yes", pin.packageManager, "add", `@omni-arena/react@${reactSdkSpec}`],
+      upstreamDir,
+    );
+  } else {
+    console.log("\nSkipping install (--skip-install); no node_modules yet");
+  }
 } else {
-  run("npx", ["--yes", pin.packageManager, "install", "--frozen-lockfile"], upstreamDir);
+  // Mutating package.json invalidates the upstream lockfile pin for this one
+  // local dep, so install without --frozen-lockfile.
+  run("npx", ["--yes", pin.packageManager, "install"], upstreamDir);
 }
 
 console.log(`

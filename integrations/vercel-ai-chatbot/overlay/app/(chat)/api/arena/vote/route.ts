@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { auth } from "@/app/(auth)/auth";
-import type { ArenaReveal } from "@/lib/arena/protocol";
+import { arenaRevealFromUnknown } from "@/lib/arena/protocol";
 import { arenaFetch } from "@/lib/arena/server";
 import { getChatById, getMessageById, updateMessage } from "@/lib/db/queries";
 import { ChatbotError } from "@/lib/errors";
@@ -13,13 +13,6 @@ const arenaVoteRequest = z.object({
   messageId: z.string().uuid(),
   vote: z.enum(["left", "right", "both_good", "both_bad", "skip"]),
 });
-
-type VoteResponse = {
-  accepted: boolean;
-  models: ArenaReveal["models"];
-  continuable?: boolean;
-  conversationId?: string;
-};
 
 /**
  * Records one arena vote and reveals the two model identities. The reveal is
@@ -54,13 +47,17 @@ export async function POST(request: Request) {
       headers: { "content-type": "application/json" },
       method: "POST",
     });
-    const payload = (await response.json()) as VoteResponse;
+    const payload = (await response.json()) as Record<string, unknown>;
+    const reveal = arenaRevealFromUnknown({ ...payload, vote: body.vote });
+    if (!reveal) {
+      throw new ChatbotError("bad_request:api", "OmniArena returned no reveal");
+    }
 
     const revealData = {
-      models: payload.models,
-      vote: body.vote,
-      ...(payload.continuable !== undefined ? { continuable: payload.continuable } : {}),
-      ...(payload.conversationId ? { conversationId: payload.conversationId } : {}),
+      models: reveal.models,
+      vote: reveal.vote,
+      continuable: reveal.continuable,
+      ...(reveal.conversationId ? { conversationId: reveal.conversationId } : {}),
     };
 
     const [stored] = await getMessageById({ id: body.messageId });

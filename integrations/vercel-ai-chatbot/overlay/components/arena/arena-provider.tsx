@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import {
+  arenaRevealFromUnknown,
   type ArenaMeta,
   type ArenaReveal,
   type ArenaVote,
@@ -136,29 +137,16 @@ export function ArenaProvider({ children }: { children: ReactNode }) {
           headers: { "content-type": "application/json" },
           method: "POST",
         });
-        const payload = (await response.json()) as {
-          models?: ArenaReveal["models"];
-          continuable?: boolean;
-          conversationId?: string;
+        const payload = (await response.json()) as Record<string, unknown> & {
           message?: string;
           cause?: string;
         };
-        if (!response.ok || !payload.models) {
+        const reveal = arenaRevealFromUnknown({ ...payload, vote });
+        if (!response.ok || !reveal) {
           throw new Error(
             payload.cause ?? payload.message ?? "Vote was not accepted",
           );
         }
-
-        const reveal: ArenaReveal = {
-          models: payload.models as ArenaReveal["models"],
-          vote,
-          ...(payload.continuable !== undefined
-            ? { continuable: payload.continuable }
-            : {}),
-          ...(payload.conversationId
-            ? { conversationId: payload.conversationId }
-            : {}),
-        };
 
         setVoteStates((current) => ({
           ...current,
@@ -171,9 +159,9 @@ export function ArenaProvider({ children }: { children: ReactNode }) {
 
         // Continuation is stated by the server (`continuable` + `conversationId`),
         // falling back to isDecisiveVote(vote) & meta.conversationId.
-        const isContinuable = payload.continuable ?? isDecisiveVote(vote);
+        const isContinuable = reveal.continuable ?? isDecisiveVote(vote);
         const targetConversationId =
-          payload.conversationId ?? meta.conversationId;
+          reveal.conversationId ?? meta.conversationId;
         setContinuation((current) =>
           isContinuable && targetConversationId
             ? { ...current, [chatId]: targetConversationId }
@@ -228,19 +216,10 @@ export function ArenaProvider({ children }: { children: ReactNode }) {
       void fetch(`${basePath}/api/arena/matchups/${meta.matchupId}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
-          if (!data || !data.models || !data.vote) {
+          const fetchedReveal = arenaRevealFromUnknown(data);
+          if (!fetchedReveal) {
             return;
           }
-          const fetchedReveal: ArenaReveal = {
-            models: data.models as ArenaReveal["models"],
-            vote: data.vote as ArenaVote,
-            ...(typeof data.continuable === "boolean"
-              ? { continuable: data.continuable }
-              : {}),
-            ...(data.conversationId
-              ? { conversationId: data.conversationId }
-              : {}),
-          };
           setVoteStates((current) =>
             current[meta.matchupId]?.status === "recorded"
               ? current
