@@ -7,6 +7,7 @@ import {
   persistMatchupToken,
   readPersistedArena,
 } from "./persistence";
+import { isDecisiveVote } from "@omni-arena/react";
 import {
   type ArenaMatchup,
   type ArenaReveal,
@@ -264,9 +265,7 @@ export const arenaStore = {
         errors,
         vote: turn.vote,
         reveal: turn.models,
-        continuable: turn.vote
-          ? turn.vote === "left" || turn.vote === "right"
-          : null,
+        continuable: turn.vote ? isDecisiveVote(turn.vote) : null,
         voting: false,
         voteError: null,
       };

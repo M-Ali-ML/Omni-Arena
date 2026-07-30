@@ -1,17 +1,39 @@
 /**
  * OmniArena wire helpers used beside the stock AG-UI runtime.
  *
+ * Protocol / session / vote parsing and POSTs come from `@omni-arena/react`.
+ * What remains here is host-specific: the matchup response header, conversation
+ * rehydration (not in the SDK), message-id → matchup mapping, and vote labels.
+ *
  * Matchup metadata for voting no longer depends on `CUSTOM arena_matchup` —
  * mainstream runtimes drop that event. The same payload rides
  * `x-arena-matchup` on the chat response (and can be re-read from
  * `GET /api/arena/matchups/:id` without the token).
  */
-export type ArenaSlot = "A" | "B";
-export type ArenaMode = "matchup" | "single" | "shadow";
-export type VoteChoice = "left" | "right" | "both_good" | "both_bad" | "skip";
+import {
+  getSessionId as sdkGetSessionId,
+  isArenaSlot,
+  isArenaVote,
+  parseArenaMatchup as sdkParseArenaMatchup,
+  parseArenaReveal,
+  parseArenaSlotError,
+  submitArenaVote,
+  type ArenaMatchupInfo,
+  type ArenaMode,
+  type ArenaSlot,
+  type ArenaVote,
+  type RevealedModel,
+} from "@omni-arena/react";
+
+export type { ArenaSlot, ArenaMode, ArenaVote };
+export type VoteChoice = ArenaVote;
 
 export const MATCHUP_HEADER = "x-arena-matchup";
 
+/**
+ * Host-shaped matchup: optional token (absent when not votable) rather than the
+ * SDK's `string | null`, so spreads into the store stay sparse.
+ */
 export type ArenaMatchup = {
   matchupId: string;
   /** Absent on a non-votable (`single`) round — the arena mints no token there. */
@@ -29,7 +51,8 @@ export type ArenaMatchup = {
 
 export type ArenaSlotError = { slot: ArenaSlot; message: string };
 
-export type ArenaReveal = Record<ArenaSlot, { id: string; displayName: string }>;
+/** Flat per-slot reveal used by the dual-column UI. */
+export type ArenaReveal = Record<ArenaSlot, RevealedModel>;
 
 export type VoteResult = {
   models: ArenaReveal;
@@ -62,52 +85,24 @@ export const VOTE_OPTIONS: { choice: VoteChoice; label: string }[] = [
   { choice: "skip", label: "Skip" },
 ];
 
-/** Only a decisive vote leaves a winning response the next turn can continue from. */
-export const isDecisive = (vote: VoteChoice): boolean =>
-  vote === "left" || vote === "right";
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
-const isSlot = (value: unknown): value is ArenaSlot =>
-  value === "A" || value === "B";
-
-const isVote = (value: unknown): value is VoteChoice =>
-  value === "left" ||
-  value === "right" ||
-  value === "both_good" ||
-  value === "both_bad" ||
-  value === "skip";
+function toHostMatchup(info: ArenaMatchupInfo): ArenaMatchup {
+  return {
+    matchupId: info.matchupId,
+    ...(info.matchupToken ? { matchupToken: info.matchupToken } : {}),
+    slots: info.slots,
+    mode: info.mode,
+    votable: info.votable,
+    ...(info.conversationId ? { conversationId: info.conversationId } : {}),
+    ...(typeof info.turnIndex === "number" ? { turnIndex: info.turnIndex } : {}),
+  };
+}
 
 export function parseArenaMatchup(value: unknown): ArenaMatchup | null {
-  if (!isRecord(value)) return null;
-  const {
-    matchupId,
-    matchupToken,
-    slots,
-    mode,
-    votable,
-    conversationId,
-    turnIndex,
-  } = value;
-  if (typeof matchupId !== "string") {
-    return null;
-  }
-  return {
-    matchupId,
-    // An older arena sent `""` for "no token"; both spellings mean the same.
-    ...(typeof matchupToken === "string" && matchupToken.length > 0
-      ? { matchupToken }
-      : {}),
-    slots: Array.isArray(slots) ? slots.filter(isSlot) : ["A", "B"],
-    mode:
-      mode === "single" || mode === "shadow" || mode === "matchup"
-        ? mode
-        : "matchup",
-    votable: votable === true,
-    ...(typeof conversationId === "string" ? { conversationId } : {}),
-    ...(typeof turnIndex === "number" ? { turnIndex } : {}),
-  };
+  const info = sdkParseArenaMatchup(value);
+  return info ? toHostMatchup(info) : null;
 }
 
 export function parseMatchupHeader(raw: string | null): ArenaMatchup | null {
@@ -120,10 +115,7 @@ export function parseMatchupHeader(raw: string | null): ArenaMatchup | null {
 }
 
 export function parseSlotError(value: unknown): ArenaSlotError | null {
-  if (!isRecord(value)) return null;
-  const { slot, message } = value;
-  if (!isSlot(slot)) return null;
-  return { slot, message: typeof message === "string" ? message : "Slot failed" };
+  return parseArenaSlotError(value);
 }
 
 /** `<matchupId>:<slot>` is the only place the slot identity survives into assistant-ui. */
@@ -131,46 +123,28 @@ export function matchupIdFromMessageId(messageId: string): string | null {
   const separator = messageId.lastIndexOf(":");
   if (separator <= 0) return null;
   const slot = messageId.slice(separator + 1);
-  return isSlot(slot) ? messageId.slice(0, separator) : null;
+  return isArenaSlot(slot) ? messageId.slice(0, separator) : null;
 }
-
-const SESSION_STORAGE_KEY = "omni-arena.sessionId";
 
 /**
  * A stable anonymous session id. OmniArena ties conversation ownership to it,
  * so a follow-up turn must present the same one that started the conversation.
+ *
+ * Delegates to `@omni-arena/react`'s `getSessionId`; the SSR sentinel keeps the
+ * Next.js first paint from minting a throwaway id per request.
  */
 export function getSessionId(): string {
   if (typeof window === "undefined") return "assistant-ui-ssr";
-  const existing = window.localStorage.getItem(SESSION_STORAGE_KEY);
-  if (existing) return existing;
-  const created = `assistant-ui-${crypto.randomUUID()}`;
-  window.localStorage.setItem(SESSION_STORAGE_KEY, created);
-  return created;
+  // Keep the host's storage key + prefix so existing browser sessions continue.
+  return sdkGetSessionId({
+    key: "omni-arena.sessionId",
+    prefix: "assistant-ui-",
+  });
 }
 
 function parseRevealModels(value: unknown): ArenaReveal | null {
-  if (!isRecord(value)) return null;
-  const a = isRecord(value.A) ? value.A : null;
-  const b = isRecord(value.B) ? value.B : null;
-  if (
-    !a ||
-    !b ||
-    typeof a.displayName !== "string" ||
-    typeof b.displayName !== "string"
-  ) {
-    return null;
-  }
-  return {
-    A: {
-      id: typeof a.id === "string" ? a.id : a.displayName,
-      displayName: a.displayName,
-    },
-    B: {
-      id: typeof b.id === "string" ? b.id : b.displayName,
-      displayName: b.displayName,
-    },
-  };
+  const reveal = parseArenaReveal({ models: value });
+  return reveal ? reveal.models : null;
 }
 
 export async function postVote(body: {
@@ -178,40 +152,24 @@ export async function postVote(body: {
   matchupToken: string;
   vote: VoteChoice;
 }): Promise<{ ok: true; result: VoteResult } | { ok: false; error: string }> {
-  const response = await fetch("/api/arena/vote", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const payload = (await response.json().catch(() => ({}))) as Record<
-    string,
-    unknown
-  >;
-  const models = parseRevealModels(payload.models);
-  if (!response.ok || !models) {
+  try {
+    const reveal = await submitArenaVote(body);
+    return {
+      ok: true,
+      result: {
+        models: reveal.models,
+        continuable: reveal.continuable,
+        ...(reveal.conversationId
+          ? { conversationId: reveal.conversationId }
+          : {}),
+      },
+    };
+  } catch (caught) {
     return {
       ok: false,
-      error:
-        typeof payload.error === "string"
-          ? payload.error
-          : `Vote failed (${response.status})`,
+      error: caught instanceof Error ? caught.message : "Vote failed",
     };
   }
-  return {
-    ok: true,
-    result: {
-      models,
-      // Prefer the server's own flag; fall back to the decisive-vote rule for
-      // older responses that predate `continuable`.
-      continuable:
-        typeof payload.continuable === "boolean"
-          ? payload.continuable
-          : isDecisive(body.vote),
-      ...(typeof payload.conversationId === "string"
-        ? { conversationId: payload.conversationId }
-        : {}),
-    },
-  };
 }
 
 function parseTurn(value: unknown): ConversationTurn | null {
@@ -221,7 +179,7 @@ function parseTurn(value: unknown): ConversationTurn | null {
   }
   const answers = Array.isArray(value.answers)
     ? value.answers.flatMap((entry) => {
-        if (!isRecord(entry) || !isSlot(entry.slot)) return [];
+        if (!isRecord(entry) || !isArenaSlot(entry.slot)) return [];
         return [
           {
             slot: entry.slot,
@@ -236,7 +194,7 @@ function parseTurn(value: unknown): ConversationTurn | null {
     matchupId: value.matchupId,
     prompt: value.prompt,
     votable: value.votable === true,
-    vote: isVote(value.vote) ? value.vote : null,
+    vote: isArenaVote(value.vote) ? value.vote : null,
     answers,
     models: parseRevealModels(value.models),
   };

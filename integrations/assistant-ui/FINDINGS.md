@@ -22,9 +22,11 @@ Each item is written as it was observed, before anything was changed.
 > returns `continuable` + `conversationId`, and the vote bar / store consume
 > that flag rather than re-encoding left|right. Finding 10: this host rehydrates
 > through `GET /api/arena/conversations/:id` via a `ThreadHistoryAdapter` after
-> a reload. Finding 9: `@omni-arena/react` ships the protocol-agnostic core; this
-> overlay still keeps its own thin `lib/arena/` (written before the split).
-> Finding 3 stands (parse the `messageId`).
+> a reload. Finding 9: `@omni-arena/react` ships the protocol-agnostic core, and
+> this overlay's `lib/arena/` now consumes those primitives (`parseArenaMatchup`,
+> `parseArenaReveal`, `getSessionId`, `submitArenaVote`) rather than hand-rolling
+> them — only host-specific pieces (matchup header, conversation rehydration,
+> AG-UI agent, store) remain local. Finding 3 stands (parse the `messageId`).
 
 **Headline:** the adapter's *output* is good. Two concurrent slot messages in one
 run pass `@ag-ui/client`'s event verifier unmodified, reach `RUN_FINISHED`, and
@@ -209,7 +211,8 @@ carried `votable` but no `continuable`, so every consumer re-encoded
 > `{ accepted, models, continuable, conversationId }`. The 409 refusal also
 > arrives as an in-band `RUN_ERROR` with code `conversation_not_ready` on the
 > AG-UI path. This host's store and vote bar consume `continuable` directly;
-> `isDecisive` remains only as a fallback for older vote payloads.
+> `@omni-arena/react`'s `parseArenaReveal` / `submitArenaVote` still derive it
+> from a decisive vote when an older payload omits the field.
 
 ## 9. `@omni-arena/react` cannot be used with any third-party runtime (resolved)
 
@@ -227,16 +230,16 @@ store — would drop straight into assistant-ui, CopilotKit or a custom UI, with
 stands, "we ship a React SDK" does not help the frontends the adapters exist to
 court.
 
-> **Resolved in `packages/react-sdk`.** The package now exports exactly that
-> protocol-agnostic surface from `packages/react-sdk/src/index.ts`:
+> **Resolved in `packages/react-sdk` + this overlay.** The package exports exactly
+> that protocol-agnostic surface from `packages/react-sdk/src/index.ts`:
 > `getSessionId` / `session`, `useArenaVote` / `vote`, reveal and matchup parsers
 > in `protocol`, plus `stream` helpers. `useArenaChat` remains the
 > batteries-included native-SSE wrapper and still cannot be dropped into a
 > third-party runtime that owns its own messages — that is a different claim from
 > "the package has no usable surface beside its own chat hook," which is no
-> longer true. This integration's overlay still carries its own thin
-> `lib/arena/` store and vote path (written before the split); the SDK core is
-> what a new AG-UI / CopilotKit host would reach for.
+> longer true. This integration's overlay now imports those primitives into
+> `lib/arena/protocol.ts` and keeps only the AG-UI-specific store, agent,
+> history adapter, and conversation GET parsing on the host side.
 
 ## 10. No conversation rehydration (resolved)
 

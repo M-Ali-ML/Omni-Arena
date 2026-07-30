@@ -160,7 +160,9 @@ integrations/assistant-ui/
   tests/                         Playwright specs
   screenshots/                   the documentation-screenshot spec
   overlay/examples/with-ag-ui/   the committed arena layer, copied into the clone
-    lib/arena/protocol.ts        wire types + header/vote/conversation parsers
+    lib/arena/protocol.ts        thin host wrappers over `@omni-arena/react`
+                                 (header/conversation parsers; vote/session/matchup
+                                 parsers delegated to the SDK)
     lib/arena/store.ts           external store: matchups, votes, reveal, hydrate
     lib/arena/persistence.ts     conversationId + pending vote tokens across reload
     lib/arena/history.ts         ThreadHistoryAdapter → conversation GET
@@ -184,12 +186,14 @@ integrations/assistant-ui/
   `forwardedProps` only from its own model context) or set a request header.
   That injection is the only reason the subclass remains.
 - Vote tokens arrive on the chat response's `x-arena-matchup` header. The Next
-  proxy forwards it; the agent's custom `fetch` parses it into
-  `lib/arena/store.ts`. assistant-ui's aggregator still drops `CUSTOM` events,
-  so the header is the path that works with the stock runtime — no raw
-  `CUSTOM` subscriber for voting.
+  proxy forwards it; the agent's custom `fetch` parses it (via
+  `@omni-arena/react`'s `parseArenaMatchup`) into `lib/arena/store.ts`.
+  assistant-ui's aggregator still drops `CUSTOM` events, so the header is the
+  path that works with the stock runtime — no raw `CUSTOM` subscriber for
+  voting.
 - After a vote, continuation follows the server's `continuable` flag on
-  `POST /api/arena/vote` (not a client-side left|right rule).
+  `POST /api/arena/vote` (surfaced by `submitArenaVote`, not a client-side
+  left|right rule).
 - Reload rehydration: the active `conversationId` (and any still-needed vote
   token) lives in `localStorage`; a `ThreadHistoryAdapter` calls
   `GET /api/arena/conversations/:id` and rebuilds both the arena store and the
