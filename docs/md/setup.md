@@ -105,7 +105,7 @@ this table expands on them with bounds and semantics.
 | `WEB_DIST_DIR` | no | `../../web/dist` (relative to the compiled server) | Override the built web bundle directory; correct by default for the repo and the Docker image |
 | `ARENA_MOCK_PROVIDER` | no | off | Set to `1`/`true` to register the deterministic `mock` provider for demos, examples, and CI/e2e (no LLM key needed). See [Mock provider](#mock-provider). |
 | `ARENA_TRIGGER` | no | `always` | When the arena engages: `always` (blind A/B matchup on every request) or `manual` (one model unless the request opts in). Any other value fails at boot. See [Trigger modes](#trigger-modes). |
-| `ARENA_DEFAULT_MODEL` | when `ARENA_TRIGGER` is not `always` | — | **UUID** of the enabled `models` row served on non-arena (`single`) rounds — not a display name. See [Trigger modes](#trigger-modes). |
+| `ARENA_DEFAULT_MODEL` | when `ARENA_TRIGGER` is not `always` | — | Enabled model served on non-arena (`single`) rounds: `models.id` UUID, `provider_model_id` slug, `display_name`, or `provider:provider_model_id`. Resolved at boot. See [Trigger modes](#trigger-modes). |
 | `ARENA_JOIN_WINDOW_MS` | no | `2000` | Rendezvous window for [slot join](architecture.md#slot-join-one-matchup-across-two-requests): how long the first of two sibling requests waits for its pair. `0` disables joining entirely (a `joinKey` is then ignored); max `60000`. |
 | `ARENA_JOIN_MAX_PENDING` | no | `256` | Cap on unpaired join scopes held in memory; over the cap a join is refused with `join_unavailable` rather than queued. Min `1`, max `100000`. |
 | `ARENA_JOIN_MAX_QUEUED_EVENTS` | no | `4096` | Per-connection event backlog on a joined matchup: how many events may queue for one slot whose client reads slower than the model produces. Over the cap that one connection fails instead of growing without bound. Min `16`, max `1000000`. |
@@ -158,37 +158,40 @@ The two signals are OR-ed, so `x-arena: on` opts in even when the body says
 `arena: false`. Under `always` both signals are ignored: every request is a
 matchup regardless.
 
-### `ARENA_DEFAULT_MODEL` takes a model UUID
+### `ARENA_DEFAULT_MODEL` accepts a UUID or a human identifier
 
-The value is compared against `models.id` — the **UUID primary key** of a row in
-the `models` table. It is not a display name and not a `provider_model_id`, so
-`gemini-3-flash` will not work. Because the seed mints ids with `randomUUID()`,
-the value differs per deployment and has to be looked up after seeding:
+The value is resolved against the **enabled** roster at boot
+(`server/src/server.ts`) and stored as a `models.id` UUID for request handling.
+Accepted forms, in preference order:
+
+| Form | Example | Column(s) |
+|---|---|---|
+| `models.id` | `3f8c9a1e-…` | UUID primary key |
+| `provider:provider_model_id` | `google:gemini-3-flash-preview` | unique pair |
+| `provider_model_id` (slug) | `gemini-3-flash-preview` | must be unique among enabled models |
+| `display_name` | `Gemini 3 Flash` | must be unique among enabled models |
+
+A UUID still works unchanged. Friendly forms remove the need to query Postgres
+after seeding (the Open WebUI integration previously worked around this by
+looking up an id with `psql`). List the roster any time with:
 
 ```bash
 curl -s http://localhost:3001/models | jq -r '.data[] | [.id, .name] | @tsv'
 ```
-
-`GET /models` (and `/v1/models`) is the OpenAI-compatible roster route; the same
-ids appear as `models[].id` on `GET /api/arena/leaderboard`. Needing to paste a
-generated UUID into config is a real usability wart — there is no lookup by
-friendly name today.
 
 Validation happens in two places, at two different times:
 
 | When | Check | On failure |
 |---|---|---|
 | Boot (`server/src/server.ts`) | a non-`always` trigger has a non-blank `ARENA_DEFAULT_MODEL` (a whitespace-only value counts as unset) | the process throws `ARENA_DEFAULT_MODEL is required when ARENA_TRIGGER=manual` and never listens |
-| Each `single` request | the id is in the **enabled** roster (`listEnabledModels()`) | `default_model_missing`: `ARENA_DEFAULT_MODEL '<value>' is not in the enabled roster` |
+| Boot (`server/src/server.ts`) | the value matches exactly one enabled model (UUID, slug, display name, or `provider:provider_model_id`) | the process throws with the accepted forms and the enabled roster listed, and never listens |
+| Each `single` request | the resolved id is still in the **enabled** roster (`listEnabledModels()`) | `default_model_missing`: `ARENA_DEFAULT_MODEL '<uuid>' is not in the enabled roster` |
 
-Boot does **not** check that the value is a well-formed UUID or that such a
-model exists — the roster is a database read, and the enabled set can change
-under a running server, so membership is re-checked per request. The practical
-consequence: a mistyped or since-disabled id boots cleanly and fails only on the
-first non-arena request, as HTTP 500 on protocols that carry HTTP errors and as
-a terminal in-band `run_error` on protocols whose clients only understand
-in-band errors. Matchup rounds keep working throughout, so a smoke test that
-only exercises opted-in traffic will not catch it.
+Boot now resolves and validates the identifier against the current enabled set,
+so a mistyped slug or unknown name fails before the server listens. Request-time
+membership is still re-checked because the enabled set can change under a
+running server (a model disabled after boot still surfaces as
+`default_model_missing` on the next `single` request).
 
 ### What a `single` round is
 
@@ -208,10 +211,14 @@ One slot, one model, and nothing recorded:
 
 An app that normally streams one model, with the arena available on demand.
 
-**Step 1 — find the UUID of the model to serve on ordinary turns**, against a
-running, seeded server:
+**Step 1 — pick the model to serve on ordinary turns.** Any of these work
+against a running, seeded server (or just use a known slug from the seed):
 
 ```bash
+# Friendly forms — no lookup required once you know the roster:
+#   gemini-3-flash-preview
+#   google:gemini-3-flash-preview
+#   "Gemini 3 Flash"
 curl -s http://localhost:3001/models | jq -r '.data[] | [.id, .name] | @tsv'
 # 3f8c9a1e-…  Gemini 3 Flash
 # b21d47c0-…  Gemini 3.1 Flash-Lite
@@ -222,7 +229,7 @@ loads the same file), then restart the app:
 
 ```bash
 ARENA_TRIGGER=manual
-ARENA_DEFAULT_MODEL=3f8c9a1e-…   # UUID from step 1; must be enabled
+ARENA_DEFAULT_MODEL=gemini-3-flash-preview   # slug, display_name, provider:id, or UUID
 ```
 
 **Step 3 — an ordinary request now gets a single, non-votable round:**

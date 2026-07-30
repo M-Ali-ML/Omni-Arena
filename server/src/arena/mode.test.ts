@@ -1,13 +1,31 @@
 import { describe, expect, it } from "vitest";
+import type { Model } from "../core/ports.js";
 import {
   assertArenaModeConfig,
   parseArenaModeConfig,
+  resolveArenaDefaultModel,
   resolveArenaPlan,
   type ArenaModeConfig,
 } from "./mode.js";
 
 const always: ArenaModeConfig = { trigger: "always", defaultModel: null };
 const manual: ArenaModeConfig = { trigger: "manual", defaultModel: "gpt" };
+
+const alpha: Model = {
+  id: "11111111-1111-4111-8111-111111111111",
+  displayName: "Mock Model Alpha",
+  provider: "mock",
+  providerModelId: "mock-alpha",
+  enabled: true,
+};
+const beta: Model = {
+  id: "22222222-2222-4222-8222-222222222222",
+  displayName: "Mock Model Beta",
+  provider: "mock",
+  providerModelId: "mock-beta",
+  enabled: true,
+};
+const enabledModels = [alpha, beta];
 
 // Phase 1 does not branch on rng; a throwing stub proves it stays unused.
 const unusedRng = (): number => {
@@ -55,6 +73,59 @@ describe("assertArenaModeConfig", () => {
     expect(() =>
       assertArenaModeConfig({ trigger: "manual", defaultModel: null }),
     ).toThrow(/ARENA_DEFAULT_MODEL is required/);
+  });
+});
+
+describe("resolveArenaDefaultModel", () => {
+  it("resolves a provider_model_id slug to the model UUID", () => {
+    expect(
+      resolveArenaDefaultModel(
+        { trigger: "manual", defaultModel: "mock-alpha" },
+        enabledModels,
+      ),
+    ).toEqual({ trigger: "manual", defaultModel: alpha.id });
+  });
+
+  it("resolves provider:provider_model_id to the model UUID", () => {
+    expect(
+      resolveArenaDefaultModel(
+        { trigger: "manual", defaultModel: "mock:mock-beta" },
+        enabledModels,
+      ),
+    ).toEqual({ trigger: "manual", defaultModel: beta.id });
+  });
+
+  it("keeps accepting a models.id UUID", () => {
+    expect(
+      resolveArenaDefaultModel(
+        { trigger: "manual", defaultModel: alpha.id },
+        enabledModels,
+      ),
+    ).toEqual({ trigger: "manual", defaultModel: alpha.id });
+  });
+
+  it("fails at boot when the identifier matches no enabled model", () => {
+    expect(() =>
+      resolveArenaDefaultModel(
+        { trigger: "manual", defaultModel: "does-not-exist" },
+        enabledModels,
+      ),
+    ).toThrow(
+      /ARENA_DEFAULT_MODEL 'does-not-exist' matched none of the enabled models[\s\S]*mock:mock-alpha[\s\S]*mock:mock-beta/,
+    );
+  });
+
+  it("leaves an unset default model unchanged", () => {
+    expect(resolveArenaDefaultModel(always, enabledModels)).toEqual(always);
+  });
+
+  it("resolves a display_name to the model UUID", () => {
+    expect(
+      resolveArenaDefaultModel(
+        { trigger: "manual", defaultModel: "Mock Model Alpha" },
+        enabledModels,
+      ),
+    ).toEqual({ trigger: "manual", defaultModel: alpha.id });
   });
 });
 
