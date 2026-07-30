@@ -8,13 +8,16 @@ harness on port 3011 (`npm run arena`).
 
 Each item is written as it was observed, before anything was changed.
 
-> **Since then, findings 1, 2, 4, 5, 6, 7, 8, 9, 10 and 11 have been fixed** —
-> the server ones in `server/` (and 6 and 9 in `packages/react-sdk` too), and this
-> integration now rides those surfaces end to end. Finding 1: the AG-UI path
-> accepts a stock `RunAgentInput` via `agUiRequestAdapter` — prompt from the last
-> user message, arena inputs from `forwardedProps` — so the envelope no longer
-> has to be translated client-side; `threadId` is deliberately *not* mapped onto
-> `conversationId`. Finding 4: matchup metadata (including the vote token) is
+> **Since then, findings 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 and 11 have been fixed** —
+> the server ones in `server/` (and 6 and 9 in `packages/react-sdk` too), finding
+> 3 in the integration docs, and this integration now rides those surfaces end
+> to end. Finding 1: the AG-UI path accepts a stock `RunAgentInput` via
+> `agUiRequestAdapter` — prompt from the last user message, arena inputs from
+> `forwardedProps` — so the envelope no longer has to be translated client-side;
+> `threadId` is deliberately *not* mapped onto `conversationId`. Finding 3:
+> `docs/md/integration.md` states normatively that clients MUST parse
+> `messageId` (`<matchupId>:<slot>`) and must not rely on the stripped top-level
+> `slot` field. Finding 4: matchup metadata (including the vote token) is
 > repeated in an `x-arena-matchup` response header; this host's chat proxy
 > forwards it and the agent's `fetch` wrapper records it, so voting no longer
 > needs a raw `CUSTOM` subscriber. Finding 7: client `threadId`/`runId` are
@@ -26,7 +29,7 @@ Each item is written as it was observed, before anything was changed.
 > this overlay's `lib/arena/` now consumes those primitives (`parseArenaMatchup`,
 > `parseArenaReveal`, `getSessionId`, `submitArenaVote`) rather than hand-rolling
 > them — only host-specific pieces (matchup header, conversation rehydration,
-> AG-UI agent, store) remain local. Finding 3 stands (parse the `messageId`).
+> AG-UI agent, store) remain local.
 
 **Headline:** the adapter's *output* is good. Two concurrent slot messages in one
 run pass `@ag-ui/client`'s event verifier unmodified, reach `RUN_FINISHED`, and
@@ -125,7 +128,7 @@ member today, so this is a core-events change, not just an adapter one.
 > client settles instead of hanging. This host's proxy still synthesises a
 > `RUN_ERROR` for any residual non-200 as defence in depth.
 
-## 3. Slot identity survives only by convention in `messageId`
+## 3. Slot identity survives only by convention in `messageId` (resolved)
 
 The adapter tags `TEXT_MESSAGE_START/CONTENT/END` with a non-standard top-level
 `slot` field. It survives `@ag-ui/client`'s zod schemas (they are `passthrough`)
@@ -139,6 +142,13 @@ describe as a nicety rather than the load-bearing channel it actually is.
 Not a bug, but worth stating normatively in `docs/md/integration.md`: **parse the
 `messageId`; do not rely on `slot`.** Our UI does exactly that
 (`lib/arena/protocol.ts: matchupIdFromMessageId`).
+
+> **Resolved in docs.** `docs/md/integration.md` (and `docs/html/integration.html`)
+> now state normatively that clients MUST parse `messageId`
+> (`<matchupId>:<slot>`) and must not rely on the advisory top-level `slot`
+> field that conformant parsers strip ("docs(ag-ui): make messageId the normative slot-identity channel"). The module and
+> `messageId` comments in `server/src/adapters/ag-ui.ts` agree with that
+> contract.
 
 ## 4. The vote token rides a `CUSTOM` event that conformant runtimes discard (resolved)
 
