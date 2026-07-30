@@ -142,9 +142,11 @@ conversation to continue, and no turn to number. All five protocols therefore
 **omit** `matchupToken`, `conversationId`, and `turnIndex` on such a round rather
 than emitting an empty string or a freshly minted id nothing can resolve — the
 old behaviour, which handed clients a `conversationId` that answered
-`404 Conversation not found` on the next turn. Absence is the signal; `votable:
-false` says the same thing positively. A client that stored the previous
-behaviour's `matchupToken: ""` sentinel should treat empty and absent alike.
+`404 Conversation not found` on the next turn. The Vercel AI path also omits
+`dataSlot` on a `single` round (nothing streams on the B data channel). Absence
+is the signal; `votable: false` says the same thing positively. A client that
+stored the previous behaviour's `matchupToken: ""` sentinel should treat empty
+and absent alike.
 
 Because such a round records no comparison, it also contributes nothing to the
 ratings: Bradley-Terry fits pairwise data only, so a `single` round is not a
@@ -463,7 +465,9 @@ data: [DONE]
   vs `data`) — so the AI SDK path is **votable** without a second channel.
 - **Trigger mode:** `data-arena-meta` also carries `mode` and `votable`. A `single` round streams the
   main text channel only and has no usable vote token, so a client renders one
-  column and hides the vote controls when `votable` is `false`.
+  column and hides the vote controls when `votable` is `false`. On that round
+  `dataSlot` is omitted entirely (nothing will ever arrive on the B data
+  channel); duel rounds still advertise `dataSlot: "B"`.
 - **Suits:** the React + Vercel AI SDK family — the
   [Vercel AI Chatbot template](https://github.com/vercel/ai-chatbot), Lobe Chat,
   and any `useChat` app. The lowest-friction path in practice: the app already
