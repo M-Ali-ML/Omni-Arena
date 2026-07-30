@@ -225,11 +225,16 @@ function parseEvents(body: string): Array<Record<string, unknown>> {
 }
 
 async function setup(
-  modeConfig: ArenaModeConfig = { trigger: "always", defaultModel: null },
+  modeConfig: ArenaModeConfig = {
+    trigger: "always",
+    defaultModel: null,
+    sampleRate: 0,
+  },
   overrides: {
     webDistDir?: string;
     failSaveResponse?: boolean;
     joinBroker?: JoinBroker;
+    rng?: () => number;
   } = {},
 ) {
   const repository = new MemoryRepository();
@@ -262,6 +267,7 @@ async function setup(
     modeConfig,
     joinBroker: overrides.joinBroker,
     webDistDir: overrides.webDistDir,
+    rng: overrides.rng,
   });
   return { app, repository, receivedMessages };
 }
@@ -411,6 +417,7 @@ describe("arena routes", () => {
     const { app, repository } = await setup({
       trigger: "manual",
       defaultModel: slotA.id,
+      sampleRate: 0,
     });
     try {
       const chat = await app.inject({
@@ -449,7 +456,11 @@ describe("arena routes", () => {
   });
 
   it("manual trigger with arena:true runs a full matchup", async () => {
-    const { app } = await setup({ trigger: "manual", defaultModel: slotA.id });
+    const { app } = await setup({
+      trigger: "manual",
+      defaultModel: slotA.id,
+      sampleRate: 0,
+    });
     try {
       const chat = await app.inject({
         method: "POST",
@@ -471,7 +482,11 @@ describe("arena routes", () => {
   });
 
   it("manual trigger opts in via the x-arena header", async () => {
-    const { app } = await setup({ trigger: "manual", defaultModel: slotA.id });
+    const { app } = await setup({
+      trigger: "manual",
+      defaultModel: slotA.id,
+      sampleRate: 0,
+    });
     try {
       const chat = await app.inject({
         method: "POST",
@@ -485,6 +500,55 @@ describe("arena routes", () => {
         mode: "matchup",
         votable: true,
       });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("sampled trigger miss (rng >= rate) streams a single, non-votable slot", async () => {
+    const { app, repository } = await setup(
+      { trigger: "sampled", defaultModel: slotA.id, sampleRate: 0.5 },
+      { rng: () => 0.9 },
+    );
+    try {
+      const chat = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat",
+        payload: { prompt: "Hello", sessionId: "anon_sampled_miss" },
+      });
+      expect(chat.statusCode).toBe(200);
+      expect(parseEvents(chat.body)[0]).toMatchObject({
+        type: "matchup_started",
+        mode: "single",
+        votable: false,
+        slots: ["A"],
+      });
+      expect(repository.matchups.size).toBe(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("sampled trigger hit (rng < rate) runs a full matchup", async () => {
+    const { app } = await setup(
+      { trigger: "sampled", defaultModel: slotA.id, sampleRate: 0.5 },
+      { rng: () => 0.1 },
+    );
+    try {
+      const chat = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat",
+        payload: { prompt: "Hello", sessionId: "anon_sampled_hit" },
+      });
+      expect(chat.statusCode).toBe(200);
+      const started = parseEvents(chat.body)[0];
+      expect(started).toMatchObject({
+        type: "matchup_started",
+        mode: "matchup",
+        votable: true,
+        slots: ["A", "B"],
+      });
+      expect(started?.matchupToken).toBeTruthy();
     } finally {
       await app.close();
     }
@@ -929,7 +993,11 @@ describe("out-of-band reads", () => {
   });
 
   it("omits the token from the header of a non-votable round", async () => {
-    const { app } = await setup({ trigger: "manual", defaultModel: slotA.id });
+    const { app } = await setup({
+      trigger: "manual",
+      defaultModel: slotA.id,
+      sampleRate: 0,
+    });
     try {
       const chat = await start(app, {
         prompt: "Hello",

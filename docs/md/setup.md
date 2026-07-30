@@ -104,7 +104,8 @@ this table expands on them with bounds and semantics.
 | `WEB_ORIGIN` | no | `http://localhost:5173` | Allowed CORS origin (only relevant when the UI is served from a different origin; the single container serves both same-origin) |
 | `WEB_DIST_DIR` | no | `../../web/dist` (relative to the compiled server) | Override the built web bundle directory; correct by default for the repo and the Docker image |
 | `ARENA_MOCK_PROVIDER` | no | off | Set to `1`/`true` to register the deterministic `mock` provider for demos, examples, and CI/e2e (no LLM key needed). See [Mock provider](#mock-provider). |
-| `ARENA_TRIGGER` | no | `always` | When the arena engages: `always` (blind A/B matchup on every request) or `manual` (one model unless the request opts in). Any other value fails at boot. See [Trigger modes](#trigger-modes). |
+| `ARENA_TRIGGER` | no | `always` | When the arena engages: `always` (blind A/B matchup on every request), `manual` (one model unless the request opts in), or `sampled` (engage with probability `ARENA_SAMPLE_RATE`). Any other value fails at boot. See [Trigger modes](#trigger-modes). |
+| `ARENA_SAMPLE_RATE` | when `ARENA_TRIGGER=sampled` | `0` | Engagement probability in `[0, 1]`. Ignored for `always`/`manual`. Out-of-range values fail at boot. See [Trigger modes](#trigger-modes). |
 | `ARENA_DEFAULT_MODEL` | when `ARENA_TRIGGER` is not `always` | — | Enabled model served on non-arena (`single`) rounds: `models.id` UUID, `provider_model_id` slug, `display_name`, or `provider:provider_model_id`. Resolved at boot. See [Trigger modes](#trigger-modes). |
 | `ARENA_JOIN_WINDOW_MS` | no | `2000` | Rendezvous window for [slot join](architecture.md#slot-join-one-matchup-across-two-requests): how long the first of two sibling requests waits for its pair. `0` disables joining entirely (a `joinKey` is then ignored); max `60000`. |
 | `ARENA_JOIN_MAX_PENDING` | no | `256` | Cap on unpaired join scopes held in memory; over the cap a join is refused with `join_unavailable` rather than queued. Min `1`, max `100000`. |
@@ -131,16 +132,19 @@ forwards each variable the rating worker reads explicitly (see
 
 By default **every** request to `POST /api/arena/chat` is a blind A/B matchup.
 `ARENA_TRIGGER` relaxes that, so an adopter can put the arena behind an explicit
-per-request opt-in instead of making it the only way to chat:
+per-request opt-in, or engage it on a fraction of traffic, instead of making it
+the only way to chat:
 
 | `ARENA_TRIGGER` | What a request gets | Votable |
 |---|---|---|
 | `always` (default) | a blind matchup of two models chosen by the `MATCHMAKER` strategy — the historical behaviour | yes |
 | `manual` | a **`single`** round served by `ARENA_DEFAULT_MODEL`, unless the request opts in; an opted-in request gets the usual matchup | only the opted-in rounds |
+| `sampled` | a matchup with probability `ARENA_SAMPLE_RATE`, otherwise a **`single`** round served by `ARENA_DEFAULT_MODEL` | only the engaged (hit) rounds |
 
-The value is a closed enum (`server/src/arena/mode.ts`), so a typo — or
-`sampled`, which is [not built](#not-built-yet) — throws before the server
-listens rather than silently falling back to `always`.
+The value is a closed enum (`server/src/arena/mode.ts`), so a typo throws before
+the server listens rather than silently falling back to `always`.
+`ARENA_SAMPLE_RATE` must parse to a number in `[0, 1]` (default `0` when unset);
+out-of-range values also fail at boot.
 
 ### How a request opts in
 
@@ -183,7 +187,7 @@ Validation happens in two places, at two different times:
 
 | When | Check | On failure |
 |---|---|---|
-| Boot (`server/src/server.ts`) | a non-`always` trigger has a non-blank `ARENA_DEFAULT_MODEL` (a whitespace-only value counts as unset) | the process throws `ARENA_DEFAULT_MODEL is required when ARENA_TRIGGER=manual` and never listens |
+| Boot (`server/src/server.ts`) | a non-`always` trigger has a non-blank `ARENA_DEFAULT_MODEL` (a whitespace-only value counts as unset) | the process throws `ARENA_DEFAULT_MODEL is required when ARENA_TRIGGER=<trigger>` and never listens |
 | Boot (`server/src/server.ts`) | the value matches exactly one enabled model (UUID, slug, display name, or `provider:provider_model_id`) | the process throws with the accepted forms and the enabled roster listed, and never listens |
 | Each `single` request | the resolved id is still in the **enabled** roster (`listEnabledModels()`) | `default_model_missing`: `ARENA_DEFAULT_MODEL '<uuid>' is not in the enabled roster` |
 
@@ -262,15 +266,28 @@ curl -N http://localhost:3001/api/arena/chat \
 
 Only the step 4 rounds are votable, and only they reach the rating worker.
 
+### Worked example: `sampled` end to end
+
+Engage the arena on 5% of traffic; the rest get a single-model round.
+
+```bash
+ARENA_TRIGGER=sampled
+ARENA_SAMPLE_RATE=0.05
+ARENA_DEFAULT_MODEL=gemini-3-flash-preview
+```
+
+Each request draws once: `rng < 0.05` → the usual blind matchup; otherwise a
+non-votable `single` round from `ARENA_DEFAULT_MODEL`. Opt-in signals
+(`arena: true` / `x-arena: on`) are ignored under `sampled` — engagement is
+purely probabilistic.
+
 ### Not built yet
 
-A `sampled` trigger (engage on a fraction of traffic) and a `shadow` exposure
-(run the second model without showing it) are **designed but not implemented**.
-There is no `ARENA_SAMPLE_RATE` and no `ARENA_EXPOSURE` variable; the server
-reads neither, and `ARENA_TRIGGER=sampled` is rejected at boot. The seams exist
-in the code — `resolveArenaPlan()` already takes an injectable RNG and the plan
-type already names `shadow` — but nothing reaches them, so `always` and `manual`
-are the whole of today's behaviour.
+A `shadow` exposure (run the second model without showing it) is **designed but
+not implemented**. There is no `ARENA_EXPOSURE` variable; the server does not
+read it. The `shadow` plan variant is already named on the resolver's return
+type so consumers can be exhaustive ahead of time, but nothing reaches it yet —
+`always`, `manual`, and `sampled` (blind) are the whole of today's behaviour.
 
 ## Database
 
