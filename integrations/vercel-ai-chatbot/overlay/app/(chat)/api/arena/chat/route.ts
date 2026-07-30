@@ -1,8 +1,12 @@
 import { checkBotId } from "botid/server";
 import { z } from "zod";
 import { auth } from "@/app/(auth)/auth";
-import { createArenaStreamTransform } from "@/lib/arena/stream";
+import {
+  MATCHUP_HEADER,
+  parseMatchupHeader,
+} from "@/lib/arena/protocol";
 import { arenaFetch } from "@/lib/arena/server";
+import { createArenaStreamTransform } from "@/lib/arena/stream";
 import { getChatById, saveChat, saveMessages } from "@/lib/db/queries";
 import { ChatbotError } from "@/lib/errors";
 import { generateUUID } from "@/lib/utils";
@@ -122,9 +126,15 @@ export async function POST(request: Request) {
       throw new ChatbotError("offline:chat", "OmniArena returned no stream");
     }
 
+    // Same payload as `data-arena-meta`; used when the stream omits it and
+    // forwarded so a client can hydrate without a CUSTOM / data-part subscriber.
+    const matchupHeader = upstream.headers.get(MATCHUP_HEADER);
+    const headerMeta = parseMatchupHeader(matchupHeader);
+
     const assistantMessageId = generateUUID();
     const stream = upstream.body.pipeThrough(
       createArenaStreamTransform({
+        headerMeta,
         messageId: assistantMessageId,
         onComplete: async ({ meta, slotA, slotB, errors }) => {
           if (!meta) {
@@ -167,6 +177,7 @@ export async function POST(request: Request) {
         "content-type": "text/event-stream; charset=utf-8",
         "x-accel-buffering": "no",
         "x-vercel-ai-ui-message-stream": "v1",
+        ...(matchupHeader ? { [MATCHUP_HEADER]: matchupHeader } : {}),
       },
     });
   } catch (error) {

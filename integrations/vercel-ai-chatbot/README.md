@@ -294,8 +294,9 @@ useChat (upstream)
 | `app/(chat)/api/arena/leaderboard/route.ts` | Server-side leaderboard proxy, so the arena never has to be exposed to the browser or CORS-configured |
 | `app/(chat)/api/arena/matchups/[id]/route.ts` | Server-side proxy for reading round details (`GET /api/arena/matchups/:id`) out-of-band |
 | `app/(chat)/api/arena/conversations/[id]/route.ts` | Server-side proxy for thread rehydration (`GET /api/arena/conversations/:id`) |
-| `lib/arena/stream.ts` | Tees the SSE stream: forwards every frame untouched, accumulates slot A/B text, and injects the message id into the `start` frame so the streamed and stored messages are the same entity |
-| `lib/arena/protocol.ts` | Shared types plus `readArenaMatchup`, which reconstructs a matchup from a message's parts (live or replayed from Postgres) |
+| `lib/arena/stream.ts` | Tees the SSE stream via `@omni-arena/react`'s `createArenaSseDecoder`: forwards every frame untouched, accumulates slot A/B text, injects the message id into the `start` frame, and falls back to `x-arena-matchup` when the stream omits meta |
+| `lib/arena/protocol.ts` | Thin adapter over the SDK parsers (`parseArenaMatchup` / `parseArenaReveal` / `parseArenaSlotError`) plus `readArenaMatchup`, which reconstructs a matchup from a message's parts (live or replayed from Postgres) |
+| `lib/arena/server.ts` | Host-only OmniArena fetch helper that maps status codes onto the template's `ChatbotError` taxonomy |
 | `components/arena/arena-provider.tsx` | Client state: the toggle, server-stated continuation (`continuable`/`conversationId`), per-matchup vote state, and out-of-band matchup hydration |
 | `components/arena/arena-matchup.tsx` | The two blind columns, mode/turn labels, reveal chips |
 | `components/arena/arena-vote-bar.tsx` | The five vote buttons; hidden when the round is not `votable` |
@@ -308,8 +309,12 @@ The client reads both from the same `useChat` message; nothing about upstream's
 transport or state management is replaced.
 
 `@omni-arena/react`'s `useArenaChat` is **not** used here, on purpose — the
-template's `useChat` owns message state. Its primitive layer now covers most of
-what `overlay/lib/arena/` hand-rolls; see the findings below.
+template's `useChat` owns message state. The overlay's `lib/arena/` consumes the
+SDK's protocol-agnostic primitives (`parseArenaMatchup`, `parseArenaReveal`,
+`parseArenaSlotError`, `createArenaSseDecoder`, `isDecisiveVote`) and only keeps
+the host-specific bits: UI Message Stream folding, the `start`/`messageId`
+rewrite, and `ChatbotError`-aware proxying. Setup links `@omni-arena/react` into
+`.upstream/` as a `file:` dependency on `packages/react-sdk`.
 
 ## Updating the pinned upstream commit
 
@@ -334,10 +339,10 @@ in the template.
   changed is that `@omni-arena/react` no longer *is* that hook: it now also ships
   a React-free primitive layer — `parseArenaMatchup` / `parseArenaReveal` /
   `parseArenaSlotError`, `getSessionId`, `submitArenaVote`, `useArenaVote`, and the
-  wire types — which is close to a drop-in replacement for `overlay/lib/arena/`'s
-  hand-rolled equivalents, including in a server route. The overlay has not been
-  rewritten onto it (`lib/arena/protocol.ts` still parses parts itself), so this
-  stands as a follow-up rather than as a gap in the SDK.
+  wire types — and this overlay's `lib/arena/` is rewritten on top of those
+  parsers and the SSE decoder. Host-only pieces remain (UI Message Stream
+  folding, the `start`/`messageId` rewrite, `ChatbotError` mapping). Setup wires
+  `@omni-arena/react` into `.upstream/` via `file:../../../packages/react-sdk`.
 - **Single (non-votable) rounds hand out a `conversationId` that does not
   exist.** `server/src/routes/chat.ts` returned a fresh uuid for `single` plans
   but persisted no matchup, so sending it back yielded `404 Conversation not
