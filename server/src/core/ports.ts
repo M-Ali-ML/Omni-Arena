@@ -70,6 +70,9 @@ export interface MatchmakingStatsPort {
   getMatchmakingStats(): Promise<MatchmakingStats>;
 }
 
+/** Persisted exposure of a matchup row: human-votable blind vs silent shadow. */
+export type MatchupMode = "blind" | "shadow";
+
 export interface MatchupRecord {
   id: string;
   prompt: string;
@@ -79,6 +82,8 @@ export interface MatchupRecord {
   slotBModelId: string;
   matchupTokenHash: string;
   harnessVersion: string;
+  /** `blind` (default) is votable; `shadow` is persisted but not votable. */
+  mode: MatchupMode;
   conversation: {
     id: string;
     turnId: string;
@@ -131,6 +136,8 @@ export interface MatchupView {
   slotA: Model;
   slotB: Model;
   vote: ArenaVote | null;
+  /** `shadow` rows reject human votes; `blind` is the default votable path. */
+  mode: MatchupMode;
 }
 
 /** One completed or in-flight turn of a conversation, both slots included. */

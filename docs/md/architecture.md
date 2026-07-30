@@ -95,9 +95,12 @@ Tests inject in-memory implementations behind the same ports.
 
 ## Stream orchestration
 
-`ArenaCore.stream()` (`server/src/core/arena.ts`) fires both provider calls
+`ArenaCore.stream()` (`server/src/core/arena.ts`) fires provider calls
 concurrently and merges their tokens into one async event stream via an
-internal async queue. Internal events (`server/src/core/events.ts`):
+internal async queue. A `single` plan omits slot B entirely; a `shadow` plan
+runs both slots, but the chat route only forwards A-facing events to the wire
+while still persisting both `slot_done` payloads. Internal events
+(`server/src/core/events.ts`):
 
 - `token` — one token for slot `A` or `B`
 - `slot_error` — a slot failed; the other slot keeps streaming (fault isolation)
@@ -110,6 +113,29 @@ persists each `slot_done` as a `responses` row, and hands the public event to th
 selected protocol adapter for framing. Internal completion events include TTFT,
 stream duration, token count/source, Markdown density, and provider-reported
 model version. Each matchup stores the configured `HARNESS_VERSION`.
+
+## Trigger and exposure
+
+Two orthogonal axes decide what a request becomes
+(`server/src/arena/mode.ts`):
+
+| Axis | Env | Values | Default |
+|---|---|---|---|
+| Trigger (when) | `ARENA_TRIGGER` | `always` \| `manual` \| `sampled` | `always` |
+| Exposure (what) | `ARENA_EXPOSURE` | `blind` \| `shadow` | `blind` |
+
+`resolveArenaPlan(config, signals, rng)` returns one of:
+
+| Plan | Meaning |
+|---|---|
+| `matchup` | Blind A/B streamed, votable (`blind` + engaged) |
+| `shadow` | A streamed, B silent + logged, not votable (`shadow` + engaged) |
+| `single` | One model, nothing persisted (not engaged) |
+
+Defaults (`always` + `blind`) reproduce the historic every-request matchup path
+byte-for-byte. Shadow requires `ARENA_DEFAULT_MODEL` (the incumbent); the
+challenger is matchmaker-picked and constrained ≠ incumbent. See
+[Setup → Trigger and exposure](setup.md#trigger-and-exposure).
 
 ## Egress: the protocol-adapter layer
 
@@ -499,13 +525,10 @@ ships as a container image. All three run key-free against the mock provider.
 - **Mid-stream steering execution** — the control plane's `steer` message is a
   schema-validated, documented stub returning a negative ack; the instruction is
   not yet threaded into the running producers in `ArenaCore`. `stop` is real.
-- **`sampled` trigger** — `ARENA_TRIGGER` accepts only `always` and `manual`
-  (`arenaTriggerSchema` in `server/src/arena/mode.ts`), so `sampled` is rejected at
-  boot rather than silently behaving like another mode. The seam exists —
-  `resolveArenaPlan` already takes an injectable `rng` — but nothing branches on it
-  yet. Likewise the `shadow` plan variant is declared so consumers can be
-  exhaustive ahead of time, and is currently unreachable. See
-  [Setup → trigger modes](setup.md#trigger-modes).
+- **Auto-judge for shadow matchups** — `ARENA_EXPOSURE=shadow` persists both
+  responses with `matchups.mode='shadow'` and rejects human votes; feeding those
+  rows into an LLM-as-judge → `recordPreference` path is a separate workstream.
+  See [Setup → Trigger and exposure](setup.md#trigger-and-exposure).
 - **Multimodal input** — deferred.
 
 OmniArena does not scrub or redact stored prompts/responses — content is

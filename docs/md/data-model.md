@@ -18,6 +18,7 @@ Each file is applied once, inside its own transaction, and recorded in
 | `003_model_ratings.sql` | `model_ratings` |
 | `004_style_ratings.sql` | `model_style_ratings`, `style_control_coefficients` |
 | `005_rating_history.sql` | `model_rating_history`, index `model_rating_history_computed_idx` |
+| `006_arena_mode.sql` | `matchups.mode` (`blind` \| `shadow`, default `blind`) |
 
 Migrations 002–004 were renamed after they had already shipped, so the runner
 first rewrites the legacy rows (`002_phase_one.sql`, `003_phase_two.sql`,
@@ -102,21 +103,23 @@ either a mismatch or a unique violation (SQLSTATE `23505`) into a
 
 ### matchups
 
-One blind head-to-head instantiation per prompt.
+One blind head-to-head instantiation per prompt (or a silent shadow comparison).
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | UUID PK | |
 | `prompt` | TEXT | |
 | `model_a_id` / `model_b_id` | UUID FK | The selected pair |
-| `slot_a_model_id` / `slot_b_model_id` | UUID FK | Randomized display assignment |
+| `slot_a_model_id` / `slot_b_model_id` | UUID FK | Randomized display assignment (for shadow: A = incumbent, B = challenger) |
 | `matchup_token_hash` | TEXT | SHA-256 of the signed matchup token; the token itself is never stored |
 | `harness_version` | TEXT | Default `'v1'`; the configured `HARNESS_VERSION` of the run (`'demo'` for rows written by the demo-data seeder) |
+| `mode` | TEXT | `blind` (default, human-votable) or `shadow` (persisted, not votable). Migration `006_arena_mode.sql` |
 | `created_at` | TIMESTAMPTZ | |
 
 Checks enforce that the pair and the slot assignment are distinct models.
 Non-votable `single` rounds write no row here at all, which is why they produce
-no rating signal.
+no rating signal. Shadow rounds do write a row (`mode='shadow'`) but
+`POST /api/arena/vote` rejects them.
 
 ### responses
 

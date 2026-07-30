@@ -18,9 +18,9 @@ export const publicArenaEventSchema = z.discriminatedUnion("type", [
      */
     matchupId: z.string(),
     /**
-     * Only present when there is a vote to cast. A non-votable round persists
-     * no matchup, so it emits no token rather than an empty-string sentinel a
-     * client would have to special-case.
+     * Only present when there is a vote to cast. Non-votable rounds (`single`,
+     * `shadow`) emit no token rather than an empty-string sentinel a client
+     * would have to special-case.
      */
     matchupToken: z.string().optional(),
     /**

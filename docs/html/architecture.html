@@ -110,7 +110,7 @@
   <div class="callout">Core ports are defined in <span class="mono">server/src/core/ports.ts</span>; the egress <span class="mono">EventAdapter</span> port in <span class="mono">server/src/adapters/event-adapter.ts</span> and the ingress <span class="mono">RequestAdapter</span> in <span class="mono">request-adapter.ts</span>. Tests inject in-memory implementations behind the same interfaces.</div>
 
   <h2>Stream orchestration</h2>
-  <p><span class="mono">ArenaCore.stream()</span> merges two concurrent provider streams into one async event queue. If one slot errors, the other keeps streaming.</p>
+  <p><span class="mono">ArenaCore.stream()</span> merges concurrent provider streams into one async event queue. A <span class="mono">single</span> plan omits slot B; a <span class="mono">shadow</span> plan runs both, but the chat route only forwards A-facing events while still persisting both <span class="mono">slot_done</span> payloads. If one slot errors, the other keeps streaming.</p>
   <div>
     <span class="chip">token</span>
     <span class="chip">slot_error</span>
@@ -118,6 +118,20 @@
     <span class="chip">matchup_done</span>
   </div>
   <div class="callout">Internal completion events capture TTFT, duration, provider/estimated tokens, Markdown density, and provider-reported model version. Public <span class="mono">slot_done</span> strips them; every matchup stores <span class="mono">HARNESS_VERSION</span>. The chat route hands each public event to the selected protocol adapter for framing.</div>
+
+  <h2 id="trigger-and-exposure">Trigger and exposure</h2>
+  <table>
+    <tr><th>Axis</th><th>Env</th><th>Values</th><th>Default</th></tr>
+    <tr><td>Trigger (when)</td><td class="mono">ARENA_TRIGGER</td><td class="mono">always | manual | sampled</td><td class="mono">always</td></tr>
+    <tr><td>Exposure (what)</td><td class="mono">ARENA_EXPOSURE</td><td class="mono">blind | shadow</td><td class="mono">blind</td></tr>
+  </table>
+  <table>
+    <tr><th>Plan</th><th>Meaning</th></tr>
+    <tr><td class="mono">matchup</td><td>Blind A/B streamed, votable (<span class="mono">blind</span> + engaged)</td></tr>
+    <tr><td class="mono">shadow</td><td>A streamed, B silent + logged, not votable (<span class="mono">shadow</span> + engaged)</td></tr>
+    <tr><td class="mono">single</td><td>One model, nothing persisted (not engaged)</td></tr>
+  </table>
+  <div class="callout">Defaults (<span class="mono">always</span> + <span class="mono">blind</span>) reproduce the historic every-request matchup path. Shadow requires <span class="mono">ARENA_DEFAULT_MODEL</span> (incumbent); the challenger is matchmaker-picked and ≠ incumbent. See <a href="setup.html#trigger-and-exposure">Setup → Trigger and exposure</a>.</div>
 
   <h2>Egress: protocol-adapter layer</h2>
   <p>One internal event stream (zod <span class="mono">publicArenaEventSchema</span> in <span class="mono">core/events.ts</span>) is fanned out to <strong>five wire protocols</strong> through a small egress port, so the chat route knows no framing details.</p>
@@ -300,7 +314,7 @@
 
   <details>
     <summary>Intentionally not built yet</summary>
-    <p><strong>Mid-stream steering execution</strong> — the control plane's <span class="mono">steer</span> message is a schema-validated, documented stub returning a negative ack; the instruction is not yet threaded into <span class="mono">ArenaCore</span> (<span class="mono">stop</span> is real). <strong><span class="mono">sampled</span> trigger</strong> — <span class="mono">ARENA_TRIGGER</span> accepts only <span class="mono">always</span> and <span class="mono">manual</span>, so <span class="mono">sampled</span> is rejected at boot rather than silently behaving like another mode; the seam exists (<span class="mono">resolveArenaPlan</span> already takes an injectable RNG, and the <span class="mono">shadow</span> plan variant is declared and unreachable) but nothing branches on it. <strong>Multimodal input</strong> — deferred. OmniArena does not scrub or redact stored prompts/responses — content is persisted as received.</p>
+    <p><strong>Mid-stream steering execution</strong> — the control plane's <span class="mono">steer</span> message is a schema-validated, documented stub returning a negative ack; the instruction is not yet threaded into <span class="mono">ArenaCore</span> (<span class="mono">stop</span> is real). <strong>Auto-judge for shadow matchups</strong> — <span class="mono">ARENA_EXPOSURE=shadow</span> persists both responses with <span class="mono">matchups.mode='shadow'</span> and rejects human votes; feeding those rows into an LLM-as-judge → <span class="mono">recordPreference</span> path is a separate workstream (see <a href="setup.html#trigger-and-exposure">Setup → Trigger and exposure</a>). <strong>Multimodal input</strong> — deferred. OmniArena does not scrub or redact stored prompts/responses — content is persisted as received.</p>
   </details>
 </main>
 </body>
