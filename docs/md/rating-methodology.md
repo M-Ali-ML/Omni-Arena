@@ -38,13 +38,19 @@ where the arena is most constrained — so it is stated here rather than left to
 inferred.
 
 - **A `single` round produces nothing rateable.** Under
-  `ARENA_TRIGGER=manual`, a request that does not opt in is served by one model
-  (`ARENA_DEFAULT_MODEL`) and **persists nothing at all** — no `matchups` row, no
+  `ARENA_TRIGGER=manual` (or a `sampled` miss), a request that does not engage
+  is served by one model (`ARENA_DEFAULT_MODEL`) and **persists nothing at all**
+  — no `matchups` row, no
   responses, no vote token (`server/src/routes/chat.ts`). Aggregation reads
   `preferences ⋈ matchups`, so such a round is not *filtered out* of the fit the
   way a `skip` vote or a flagged session is; it never reaches the database to be
   filtered. See
   [Integration → identifiers you cannot use are not sent](integration.md#identifiers-you-cannot-use-are-not-sent).
+- **A `shadow` round persists both answers but is not human-votable.** Under
+  `ARENA_EXPOSURE=shadow`, both responses and a `matchups.mode='shadow'` row are
+  written, but `POST /api/arena/vote` returns `403` and no preference is
+  recorded. Until an auto-judge path exists, shadow rows also contribute nothing
+  to the BT fit.
 - **One-sided feedback is not a comparison, and there is no ingestion path for
   it.** A thumbs-up on a lone answer says nothing about a *pair*, and BT has
   nowhere to put it. `POST /api/arena/vote` accordingly accepts only an
@@ -76,11 +82,15 @@ There is a candidate fix worth naming precisely because it is easy to assume it
 exists: turn two sequential single answers into one genuine pair — serve an
 answer, regenerate the same prompt with a second model, persist the two as a
 matchup, and collect a real pairwise vote from a client that can only show one
-answer at a time. **None of it is implemented.** There is no such mode, no
-schema for it, no endpoint, and no worker support; the mode enum admits only
-`matchup`, `single`, and a declared-but-unreachable `shadow`
-(`server/src/arena/mode.ts`). It is recorded here as an idea so it is not
-mistaken for a feature — do not plan an integration against it.
+answer at a time. **None of it is implemented.** There is no regenerate-as-slot-B
+mode, no schema for it, no endpoint, and no worker support. Do not confuse that
+idea with `ARENA_EXPOSURE=shadow`, which **is** shipped: the incumbent streams,
+the challenger runs silently, both responses land in Postgres with
+`matchups.mode='shadow'`, and human votes are rejected (`403`). Shadow rows are
+not yet fed to an auto-judge, so they also produce no rating signal today
+(`server/src/arena/mode.ts`, see [Setup → Trigger and
+exposure](setup.md#trigger-and-exposure)). The regenerate idea is recorded here
+so it is not mistaken for a feature — do not plan an integration against it.
 
 ## The fit: log-parameterized MLE via L-BFGS-B
 
