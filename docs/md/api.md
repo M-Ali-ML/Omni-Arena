@@ -53,8 +53,9 @@ Request:
 - `arena` — optional. The per-request opt-in read only under
   `ARENA_TRIGGER=manual`, where a request that does not opt in is served as a
   `single` round instead (the `x-arena: on` header does the same job for
-  clients that cannot change the body). Ignored under the default
-  `ARENA_TRIGGER=always`. See [arena modes](architecture.md).
+  clients that cannot change the body). Ignored under `ARENA_TRIGGER=always`
+  and `ARENA_TRIGGER=sampled`. See [arena modes](architecture.md) and
+  [Setup → Trigger and exposure](setup.md#trigger-and-exposure).
 - `joinKey` — optional (1–200 characters). Opts this request into being served
   as **one half** of a matchup shared with a sibling request — see
   [serving one matchup over two requests](#serving-one-matchup-over-two-requests-joinkey).
@@ -75,6 +76,7 @@ Response: `200` with `content-type: text/event-stream`. Each event has an
 | `token` | `{ type, slot, token }` | One token for slot `A` or `B`, interleaved. |
 | `slot_error` | `{ type, slot, message }` | That slot failed; the other keeps streaming. |
 | `slot_done` | `{ type, slot }` | Content and latency are stripped from the public event. |
+| `steered` | `{ type, instruction }` | Mid-stream steer took effect; both slots are about to re-run. Reset slot buffers. |
 | `run_error` | `{ type, code, message }` | Terminal: the whole round failed. No `matchup_done` follows. |
 | `matchup_done` | `{ type }` | Every slot on this connection finished; stream closes. |
 
@@ -93,10 +95,12 @@ the round back from [`GET /api/arena/matchups/:matchupId`](#get-apiarenamatchups
 instead.
 
 `slots` lists the slots **this connection** streams, and only events for those
-slots follow: `["A", "B"]` on a normal matchup, `["A"]` on a `single` round or
-on the leader of a [slot join](#serving-one-matchup-over-two-requests-joinkey),
-`["B"]` on that join's sibling. `mode` is `matchup` or `single` (`shadow` is
-declared in the schema and unreachable).
+slots follow: `["A", "B"]` on a normal matchup, `["A"]` on a `single` or
+`shadow` round or on the leader of a
+[slot join](#serving-one-matchup-over-two-requests-joinkey), `["B"]` on that
+join's sibling. `mode` is `matchup`, `single`, or `shadow` (the last under
+`ARENA_EXPOSURE=shadow` — see [Setup → Trigger and
+exposure](setup.md#trigger-and-exposure)).
 
 ### Identifiers are only sent when they can be used
 
@@ -105,8 +109,10 @@ declared in the schema and unreachable).
 nothing behind them. A `single` round (see [arena modes](architecture.md))
 persists no matchup, so there is no token to vote with and no conversation to
 continue; sending those ids anyway earned callers a `404 Conversation not found`
-on the next turn. Treat their absence as authoritative and pair it with
-`votable: false`. Such a round is also invisible to the rating worker — a
+on the next turn. A `shadow` round persists the matchup and conversation but
+still omits `matchupToken` (`votable: false`); `conversationId` / `turnIndex`
+remain. Treat absence as authoritative and pair a missing token with
+`votable: false`. A `single` round is also invisible to the rating worker — a
 Bradley-Terry fit needs a comparison, and none was recorded (see [rating
 methodology → what the engine cannot
 rate](rating-methodology.md#what-the-engine-cannot-rate)).
@@ -159,7 +165,8 @@ exception below.
 | `409` | `conversation_conflict` | Another request already advanced the conversation |
 | `409` | `join_slots_exhausted` | Both slots of this join scope are already claimed |
 | `409` | `join_expired` | The join window closed before this request arrived |
-| `500` | `default_model_missing` | `ARENA_DEFAULT_MODEL` is not in the enabled roster (`single` rounds only) |
+| `500` | `default_model_missing` | `ARENA_DEFAULT_MODEL` is not in the enabled roster (`single` / `shadow` rounds) |
+| `500` | `shadow_challenger_missing` | Matchmaker could not pick a challenger ≠ `ARENA_DEFAULT_MODEL` (`shadow` only) |
 | `500` | `join_failed` | The request holding the shared matchup failed for an unclassified reason |
 | `503` | `join_unavailable` | Too many unpaired joins in flight; retry without `joinKey` |
 | `504` | `join_leader_timeout` | The request holding the shared matchup never started it |
@@ -393,6 +400,7 @@ Errors:
 |---|---|
 | `400` | Invalid body — `matchupId` must be a UUID and `vote` one of the five values above |
 | `401` | Bad signature, expired token, or claims that don't match the stored matchup (its id or either slot's model) |
+| `403` | Shadow matchups are not votable (`matchups.mode='shadow'`; human votes are rejected) |
 | `404` | Unknown `matchupId` |
 | `409` | A vote was already recorded for this matchup |
 
@@ -428,8 +436,11 @@ reload left it holding nothing but a `matchupId` parsed out of a `messageId`.
   span and `models` is `null` with it — the blindness rule, enforced on every
   read path, is that identities travel only with a vote.
 - `continuable` follows the same `left`/`right` rule as the vote response.
-- `mode` is always `matchup`: a `single` round writes no row and is therefore
-  never readable here (`404`).
+- `mode` on this read path is always the wire value `matchup` (including rows
+  whose DB `matchups.mode` is `shadow`). A `single` round writes no row and is
+  therefore never readable here (`404`). The stream's `matchup_started` still
+  reports `mode: "shadow"` for shadow rounds; use that (or the DB column) when
+  you need the exposure axis.
 - **No `matchupToken`.** The token is the capability that authorises a vote,
   minted once onto the stream that served the round. An unauthenticated read
   that returned it would let anyone holding a matchup id vote on a round they

@@ -131,9 +131,10 @@ below), but the voting flow is always the same three steps:
 > `surface_init`, AG-UI in a `CUSTOM` event named `arena_matchup`, and OpenAI SSE
 > in an optional `omni_arena` extension object on the first chunk. All five also
 > carry `mode` and `votable`, so a client can hide the vote controls on a
-> non-votable (`single`) round. `mode` is `matchup` or `single` in practice;
-> `shadow` is declared in the shared event schema so consumers can be exhaustive,
-> but no request currently resolves to it.
+> non-votable (`single` or `shadow`) round. `mode` is `matchup`, `single`, or
+> `shadow` (`shadow` under `ARENA_EXPOSURE=shadow` — incumbent streamed,
+> challenger persisted silently; see [Setup → Trigger and
+> exposure](setup.md#trigger-and-exposure)).
 
 ### Identifiers you cannot use are not sent
 
@@ -142,7 +143,9 @@ conversation to continue, and no turn to number. All five protocols therefore
 **omit** `matchupToken`, `conversationId`, and `turnIndex` on such a round rather
 than emitting an empty string or a freshly minted id nothing can resolve — the
 old behaviour, which handed clients a `conversationId` that answered
-`404 Conversation not found` on the next turn. The Vercel AI path also omits
+`404 Conversation not found` on the next turn. A `shadow` round persists the
+matchup and conversation but still omits `matchupToken` (`votable: false`). The
+Vercel AI path also omits
 `dataSlot` on a `single` round (nothing streams on the B data channel). Absence
 is the signal; `votable: false` says the same thing positively. A client that
 stored the previous behaviour's `matchupToken: ""` sentinel should treat empty
@@ -566,7 +569,9 @@ data: [DONE]
   the app's problem. [`integrations/open-webui/`](../../integrations/open-webui/)
   ships a bridge that solves exactly that for Open WebUI — duel rendering, typed
   `!a`/`!b` votes, reveal, and multi-turn continuation (the bridge keeps the last
-  continuable `conversationId` per Open WebUI chat id and sends it back). Two
+  continuable `conversationId` per Open WebUI chat id and sends it back, persisted
+  under `BRIDGE_STATE_PATH` — default `./.data/bridge/continuations.json` — so a
+  bridge restart does not drop it). Two
   thirds of that bridge have since moved into the server: its request translation
   is redundant now that this adapter parses `/chat/completions` bodies, and its
   pairing of Open WebUI's two parallel model requests is what
@@ -601,7 +606,8 @@ does arena mode survive inside an app that was not written for it? — there is
 [`integrations/vercel-ai-chatbot/`](../../integrations/vercel-ai-chatbot/): a
 setup script clones the **actual [`vercel/ai-chatbot`](https://github.com/vercel/ai-chatbot)
 template** at a pinned commit into a gitignored `.upstream/`, copies in a
-committed overlay (arena routes, matchup UI, protocol helpers), and applies a
+committed overlay (arena routes, matchup UI, protocol helpers built on
+`@omni-arena/react`), and applies a
 handful of anchored patches to the template's own files. The upstream app keeps
 its NextAuth guest login, Postgres chat history, and message list; every chat is
 served by a matchup instead of a single model call.
@@ -615,8 +621,8 @@ each documents what it found:
 
 | Integration | Upstream app | Adapter | What it took |
 |---|---|---|---|
-| [`integrations/open-webui/`](../../integrations/open-webui/) | Open WebUI (SvelteKit + FastAPI) | OpenAI SSE | A bridge that presents an OpenAI surface to Open WebUI — including the model list — and renders the duel, vote, reveal, and multi-turn continuation (per-chat `conversationId`) inside Open WebUI's message channel. |
-| [`integrations/assistant-ui/`](../../integrations/assistant-ui/) | assistant-ui's `with-ag-ui` example | AG-UI | A route that forwards the AG-UI stream (and `x-arena-matchup`) to the stock `@assistant-ui/react-ag-ui` runtime, plus arena UI for vote, reveal, multi-turn, and reload rehydration. |
+| [`integrations/open-webui/`](../../integrations/open-webui/) | Open WebUI (SvelteKit + FastAPI) | OpenAI SSE | A bridge that presents an OpenAI surface to Open WebUI — including the model list — and renders the duel, vote, reveal, and multi-turn continuation (per-chat `conversationId`, durable across bridge restarts via `.data/bridge/continuations.json`) inside Open WebUI's message channel. |
+| [`integrations/assistant-ui/`](../../integrations/assistant-ui/) | assistant-ui's `with-ag-ui` example | AG-UI | A route that forwards the AG-UI stream (and `x-arena-matchup`) to the stock `@assistant-ui/react-ag-ui` runtime, plus arena UI for vote, reveal, multi-turn, and reload rehydration. Overlay protocol helpers consume `@omni-arena/react`. |
 
 Their findings are the reason for several of the contracts documented above —
 positional `choices[0]`, `RUN_ERROR`, marked slot failures, omitted identifiers,
