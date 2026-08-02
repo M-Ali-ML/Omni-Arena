@@ -271,8 +271,7 @@ test("the CopilotKit runtime route accepts a RunAgentInput-shaped POST", async (
   baseURL,
 }) => {
   // Soft probe: CopilotRuntime's exact request/response framing may differ
-  // from a raw AG-UI proxy. Failures here are merge-time reconciliation signals,
-  // not harness bugs — the direct OmniArena tests above are authoritative.
+  // from a raw AG-UI proxy. Direct OmniArena tests above are authoritative.
   const response = await request.post(`${baseURL}/api/copilotkit`, {
     headers: { "content-type": "application/json" },
     data: runAgentBody({
@@ -283,9 +282,7 @@ test("the CopilotKit runtime route accepts a RunAgentInput-shaped POST", async (
     failOnStatusCode: false,
   });
 
-  // CopilotKit may answer 200 (SSE), 400 (wrong envelope), or 404 (route not
-  // registered yet on this parallel track). Record the shape; do not soft-pass
-  // a 5xx — that would hide a real runtime crash once the app lands.
+  // Do not soft-pass a 5xx — that would hide a real runtime crash.
   expect(
     [200, 400, 404, 405].includes(response.status()),
     `unexpected /api/copilotkit status ${response.status()}`,
@@ -293,12 +290,53 @@ test("the CopilotKit runtime route accepts a RunAgentInput-shaped POST", async (
 
   if (response.status() === 200) {
     const contentType = response.headers()["content-type"] ?? "";
-    // Runtime may stream SSE or return a JSON envelope; either is fine as long
-    // as the process accepted the POST.
     expect(
       contentType.includes("text/event-stream") ||
         contentType.includes("application/json") ||
         contentType.includes("text/plain"),
     ).toBe(true);
+  }
+});
+
+test("CUSTOM arena_matchup vs poll: which path hydrates the browser", async ({
+  page,
+}) => {
+  // Increment 2: resolve whether CopilotKit's runtime→frontend proxy forwards
+  // arbitrary CUSTOM names. ArenaMatchupBridge sets window diagnostics.
+  await page.goto("/");
+  await expect(page.getByTestId("arena-controls")).toBeVisible();
+
+  const composer = page.getByRole("textbox").first();
+  await composer.click();
+  await composer.fill("CUSTOM vs poll probe");
+  await composer.press("Enter");
+
+  // Vote bar only appears once matchup metadata landed (CUSTOM and/or poll).
+  await expect(page.getByTestId("arena-vote-bar")).toBeVisible({
+    timeout: 30_000,
+  });
+
+  const flags = await page.evaluate(() => ({
+    viaCustom: Boolean(window.__arenaMatchupViaCustom),
+    viaPoll: Boolean(window.__arenaMatchupViaPoll),
+  }));
+
+  // Poll path is load-bearing (header capture → matchupCache → GET). CUSTOM
+  // reaching the browser is nice-to-have; assert poll if CUSTOM is dropped so
+  // the finding stays honest either way.
+  expect(
+    flags.viaCustom || flags.viaPoll,
+    `matchup never hydrated (custom=${flags.viaCustom}, poll=${flags.viaPoll})`,
+  ).toBe(true);
+
+  // Record the empirical answer for the reporter / FINDINGS.md §1.
+  // eslint-disable-next-line no-console
+  console.log(
+    `[CUSTOM finding] viaCustom=${flags.viaCustom} viaPoll=${flags.viaPoll}`,
+  );
+
+  if (!flags.viaCustom) {
+    // Soft-but-documented: CK dropped CUSTOM; poll alone carried the vote token.
+    expect(flags.viaPoll).toBe(true);
   }
 });

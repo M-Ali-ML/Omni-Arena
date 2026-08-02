@@ -5,6 +5,15 @@ import { useAgent } from "@copilotkit/react-core/v2";
 import { parseArenaMatchup } from "@/lib/arena/protocol";
 import { arenaStore, useArenaThread } from "@/lib/arena/store";
 
+declare global {
+  interface Window {
+    /** Set by ArenaMatchupBridge when `onCustomEvent` receives `arena_matchup`. */
+    __arenaMatchupViaCustom?: boolean;
+    /** Set when the poll fallback hydrated a matchup. */
+    __arenaMatchupViaPoll?: boolean;
+  }
+}
+
 /**
  * Bridges CopilotKit's AG-UI proxy agent to the arena store:
  * 1. Try `onCustomEvent` for `arena_matchup` (surfaced per CopilotKit docs).
@@ -30,7 +39,11 @@ export function ArenaMatchupBridge() {
         const typed = event as { name?: string; value?: unknown };
         if (typed.name !== "arena_matchup") return;
         const matchup = parseArenaMatchup(typed.value);
-        if (matchup) arenaStore.beginMatchup(matchup);
+        if (matchup) {
+          // Diagnostic for e2e: did the CK runtime→frontend proxy forward CUSTOM?
+          window.__arenaMatchupViaCustom = true;
+          arenaStore.beginMatchup(matchup);
+        }
       },
       onRunErrorEvent: ({ event }) => {
         arenaStore.noteRunError(event.message ?? "Arena run failed");
@@ -63,6 +76,7 @@ async function pollMatchup(threadId: string): Promise<void> {
       const payload: unknown = await response.json();
       const matchup = parseArenaMatchup(payload);
       if (matchup) {
+        window.__arenaMatchupViaPoll = true;
         arenaStore.beginMatchup(matchup);
         return;
       }

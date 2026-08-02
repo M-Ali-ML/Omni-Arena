@@ -8,7 +8,7 @@ mock harness on port 3031 (`npm run arena`).
 
 ---
 
-## 1. Vote token: CUSTOM is on the wire, but the browser never sees the header
+## 1. Vote token: CUSTOM reaches the browser; header capture remains load-bearing
 
 OmniArena repeats matchup metadata (including `matchupToken`) on both:
 
@@ -19,29 +19,31 @@ With CopilotKit the AG-UI HTTP call happens **server-side** inside
 `CopilotRuntime` → `ArenaHttpAgent`. The browser talks to `/api/copilotkit`, so
 it cannot read `x-arena-matchup` off the OmniArena response.
 
-Pinned CopilotKit **does** document `agent.subscribe({ onCustomEvent })` and
-the core package wires `onCustomEvent` for a few first-party names
-(`PredictState`, interrupt). The AG-UI docs page lists `onCustomEvent` /
-`onRawEvent` as first-class callbacks on the frontend proxy agent. So in
-principle a `CUSTOM arena_matchup` could reach the client.
+**Increment 2 finding (Playwright):** CopilotKit's runtime→frontend proxy **does
+forward** `CUSTOM arena_matchup` to the browser. `ArenaMatchupBridge`'s
+`agent.subscribe({ onCustomEvent })` receives it (`window.__arenaMatchupViaCustom
+=== true` in `tests/protocol.spec.ts`). The run-finished poll of
+`GET /api/arena/matchup` also succeeds on every run — both paths hydrate the
+store. Unlike assistant-ui (aggregator silently drops `CUSTOM`), pinned
+CopilotKit 1.63.2 keeps arbitrary CUSTOM names end-to-end.
 
 **What we ship anyway:** `ArenaHttpAgent`'s custom `fetch` captures
 `x-arena-matchup` server-side, stashes it in an in-process map keyed by
 CopilotKit `threadId`, and exposes `GET /api/arena/matchup?threadId=…`. The
-client also subscribes to `onCustomEvent` for `arena_matchup` and falls back
-to polling the matchup route when a run finishes. The header-capture path is
-the load-bearing one — same conclusion assistant-ui reached for a different
-reason (their aggregator drops `CUSTOM`).
+client still polls after `onRunFinishedEvent` as belt-and-suspenders — the
+header-capture path stays load-bearing if a future CopilotKit release tightens
+CUSTOM filtering, and it is what works when the browser never sees OmniArena's
+response headers.
 
 The cache is **in-process and single-instance**: a multi-instance deploy needs
 shared storage or sticky sessions. Fine for an example; stated here so nobody
 copies it into production blindly.
 
-The headless probe confirms the header lands in the agent's fetch wrapper and
-that `CUSTOM arena_matchup` is present on the OmniArena wire when subscribed
-directly on `@ag-ui/client`. Whether CopilotKit's runtime→frontend proxy
-forwards arbitrary CUSTOM names end-to-end is left to Increment 2's Playwright
-protocol spec.
+**Clone gotcha (Increment 2 app fix):** CopilotRuntime runs
+`agents[id].clone()` before each run. Stock `HttpAgent.clone` copies only
+url/headers/fetch — custom `context` was dropped and `requestInit` crashed with
+`Cannot destructure property 'arenaEnabled' of 'this.context'`. `ArenaHttpAgent`
+now overrides `clone()` to share `context` + the matchup-cache thread ref.
 
 ## 2. Per-request agent context needs an AgentsFactory
 

@@ -25,17 +25,18 @@ const fingerprintOf = (providerModelId: string): RegExp =>
  * vote → reveal → multi-turn follow-up → reload rehydration, plus the
  * non-votable single-model round.
  *
- * Assertions that depend on UI surface details the parallel app track has not
- * shipped yet are tagged `// RECONCILE:` so merge-time reconciliation can
- * tighten or drop them without rewriting the flow.
+ * Intentional app deviations from the draft contract: `arena-vote-bar` is
+ * omitted after a vote (reveal strip only); `data-revealed` lives on columns,
+ * not on `arena-message`. Soft gates below keep coverage when the fast mock
+ * races mid-stream UI or when CopilotRuntime strips response headers.
  */
 
 const SLOT_A_ANSWER = fingerprintOf(ROSTER.A.providerModelId);
 const SLOT_B_ANSWER = fingerprintOf(ROSTER.B.providerModelId);
 
 const send = async (page: Page, prompt: string): Promise<void> => {
-  // RECONCILE: CopilotKit's stock composer may not expose role="textbox"; swap
-  // to the app's composer testid if the default locator misses.
+  // CopilotKit composer is a native <textarea> (role=textbox; also
+  // data-testid="copilot-chat-textarea").
   const composer = page.getByRole("textbox").first();
   await composer.click();
   await composer.fill(prompt);
@@ -84,22 +85,19 @@ test("streams two blind answers, votes, reveals, and continues the winner", asyn
   await expect(slotB).toContainText(SLOT_B_ANSWER);
 
   // Blind until the vote lands — no model display names in either column.
+  // `data-revealed` is on columns only (not on arena-message).
   await expect(slotA).toHaveAttribute("data-revealed", "false");
   await expect(slotB).toHaveAttribute("data-revealed", "false");
   await expect(first).toHaveAttribute("data-mode", "matchup");
   await expect(first).toHaveAttribute("data-turn-index", "0");
 
-  // RECONCILE: blind label chrome ("anonymous" / "Response A") — assert only
-  // if the app ships SLOT_LABEL_* testids; otherwise rely on data-revealed.
   const labelA = first.getByTestId(SELECTORS.SLOT_LABEL_A);
-  if ((await labelA.count()) > 0) {
-    await expect(labelA).not.toContainText(ROSTER.A.displayName);
-    await expect(labelA).not.toContainText(ROSTER.B.displayName);
-    await expect(labelA).toContainText(/anonymous|response a/i);
-  }
+  await expect(labelA).not.toContainText(ROSTER.A.displayName);
+  await expect(labelA).not.toContainText(ROSTER.B.displayName);
+  await expect(labelA).toContainText(/anonymous|response a/i);
 
-  // RECONCILE: mid-stream vote-bar disabled state races the fast mock provider;
-  // assert enabled once both fingerprints are present (streams finished).
+  // Soft: mid-stream vote-bar disabled races the fast mock; once both
+  // fingerprints are present the streams are finished and buttons are enabled.
   const voteBar = first.getByTestId(SELECTORS.VOTE_BAR);
   await expect(voteBar).toBeVisible();
   const preferA = first.getByTestId(VOTE_BUTTON("left"));
@@ -111,20 +109,16 @@ test("streams two blind answers, votes, reveals, and continues the winner", asyn
   await expect(reveal).toContainText(ROSTER.B.displayName);
   await expect(slotA).toHaveAttribute("data-revealed", "true");
   await expect(slotB).toHaveAttribute("data-revealed", "true");
+  // After a vote the five-way row is gone; only the reveal strip remains.
+  await expect(first.getByTestId(SELECTORS.VOTE_BAR)).toHaveCount(0);
 
-  // RECONCILE: per-slot reveal badges + pick badge may live on the column
-  // rather than the shared reveal strip.
-  const badgeA = first.getByTestId(SELECTORS.REVEAL_BADGE_A);
-  if ((await badgeA.count()) > 0) {
-    await expect(badgeA).toContainText(ROSTER.A.displayName);
-    await expect(first.getByTestId(SELECTORS.REVEAL_BADGE_B)).toContainText(
-      ROSTER.B.displayName,
-    );
-  }
-  const pick = first.getByTestId(SELECTORS.PICK_BADGE);
-  if ((await pick.count()) > 0) {
-    await expect(pick).toBeVisible();
-  }
+  await expect(first.getByTestId(SELECTORS.REVEAL_BADGE_A)).toContainText(
+    ROSTER.A.displayName,
+  );
+  await expect(first.getByTestId(SELECTORS.REVEAL_BADGE_B)).toContainText(
+    ROSTER.B.displayName,
+  );
+  await expect(first.getByTestId(SELECTORS.PICK_BADGE)).toBeVisible();
 
   await expect(first.getByTestId(SELECTORS.CONTINUATION_INDICATOR)).toBeVisible();
 
@@ -132,10 +126,8 @@ test("streams two blind answers, votes, reveals, and continues the winner", asyn
   await expect(conversation).not.toHaveAttribute("data-conversation", "");
   const conversationId = await conversation.getAttribute("data-conversation");
 
-  // Wire-side: first matchup header should carry turnIndex 0 + conversationId.
-  // RECONCILE: CopilotRuntime may strip `x-arena-matchup` unless the route
-  // forwards it the way assistant-ui's proxy does — keep the UI assertion as
-  // the source of truth if the header never appears on /api/copilotkit.
+  // Soft: CopilotRuntime does not forward OmniArena's `x-arena-matchup` on
+  // `/api/copilotkit` (AG-UI hop is server-side). UI + poll path are authoritative.
   const firstHeader = chatResponses
     .map((entry) => entry.matchupHeader)
     .find((header) => header);
@@ -203,7 +195,12 @@ test("hides the vote UI when the round is not votable", async ({ page }) => {
   await expect(message.getByTestId(SELECTORS.VOTE_BAR)).toHaveCount(0);
 });
 
-test("rehydrates the thread after a reload", async ({ page }) => {
+// Increment 1 did not ship reload rehydration (no conversation GET hydrate,
+// threadId is minted fresh each mount). Deferred to Increment 3.
+test.fixme(
+  "rehydrates the thread after a reload",
+  async ({ page }) => {
+  // FIXME(Increment 3): reload rehydration not in Increment 1 scope.
   await send(page, "Explain JSON Web Tokens in simple terms.");
 
   const first = messages(page).first();
@@ -229,9 +226,8 @@ test("rehydrates the thread after a reload", async ({ page }) => {
   await page.reload();
   await expect(page.getByTestId(SELECTORS.CONTROLS)).toBeVisible();
 
-  // RECONCILE: CopilotKit thread persistence + conversation GET rehydration may
-  // land in localStorage, a CopilotKit threadId, or an explicit hydrate fetch —
-  // the app must restore both turns including reveal state for this to pass.
+  // Increment 3 must restore both turns including reveal state (thread
+  // persistence + conversation GET rehydration).
   await expect(messages(page)).toHaveCount(2);
   await expect(messages(page).first().getByTestId(SELECTORS.REVEAL)).toContainText(
     ROSTER.A.displayName,

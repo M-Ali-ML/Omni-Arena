@@ -8,8 +8,9 @@
     "dev": "next dev -p 3300",
     "build": "next build",
     "start": "next start -p 3300",
-    "probe": "tsx tools/probe.ts",
-    "test": "playwright test"
+    "test": "node scripts/e2e.mjs",
+    "test:playwright": "playwright test",
+    "probe": "tsx tools/probe.ts"
   },
   "dependencies": {
     "@ag-ui/client": "0.0.57",
