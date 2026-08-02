@@ -1,0 +1,226 @@
+@import "@copilotkit/react-core/v2/styles.css";
+
+:root {
+  --arena-bg: #0f1419;
+  --arena-surface: #1a222c;
+  --arena-border: #2a3544;
+  --arena-text: #e7ecf3;
+  --arena-muted: #8b9bb0;
+  --arena-accent: #3d9cf0;
+  --arena-good: #3dbe7a;
+  --arena-bad: #e85d5d;
+  --arena-font: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --arena-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, #1a2a3d 0%, transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, #162033 0%, transparent 50%),
+    var(--arena-bg);
+  color: var(--arena-text);
+  font-family: var(--arena-font);
+}
+
+.arena-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.arena-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid var(--arena-border);
+  background: color-mix(in srgb, var(--arena-surface) 85%, transparent);
+  backdrop-filter: blur(8px);
+  font-size: 0.875rem;
+}
+
+.arena-brand {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.arena-muted {
+  color: var(--arena-muted);
+  font-size: 0.75rem;
+}
+
+.arena-muted code {
+  font-family: var(--arena-mono);
+  font-size: 0.7rem;
+}
+
+.arena-toggle,
+.arena-reset,
+.arena-vote-btn {
+  appearance: none;
+  border: 1px solid var(--arena-border);
+  background: var(--arena-surface);
+  color: var(--arena-text);
+  border-radius: 6px;
+  padding: 0.3rem 0.7rem;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.arena-toggle.on {
+  background: color-mix(in srgb, var(--arena-accent) 25%, var(--arena-surface));
+  border-color: var(--arena-accent);
+}
+
+.arena-toggle:hover,
+.arena-reset:hover,
+.arena-vote-btn:hover:not(:disabled) {
+  border-color: var(--arena-accent);
+}
+
+.arena-vote-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.arena-chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.arena-chat > * {
+  flex: 1;
+  min-height: 0;
+}
+
+.arena-message {
+  width: 100%;
+  padding: 0.25rem 0 0.75rem;
+}
+
+.arena-columns {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+}
+
+@media (min-width: 720px) {
+  .arena-columns:not(.arena-columns-single) {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.arena-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--arena-border);
+  border-radius: 10px;
+  background: var(--arena-surface);
+  padding: 0.85rem 1rem;
+}
+
+.arena-column-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+  margin-bottom: 0.55rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--arena-muted);
+}
+
+.arena-anonymous {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  opacity: 0.7;
+}
+
+.arena-badge {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.7rem;
+}
+
+.arena-badge-model {
+  background: color-mix(in srgb, var(--arena-accent) 20%, transparent);
+  color: var(--arena-accent);
+}
+
+.arena-badge-pick {
+  background: color-mix(in srgb, var(--arena-good) 20%, transparent);
+  color: var(--arena-good);
+}
+
+.arena-column-body {
+  min-width: 0;
+  line-height: 1.5;
+}
+
+.arena-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 0.925rem;
+}
+
+.arena-waiting {
+  color: var(--arena-muted);
+  font-size: 0.85rem;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.arena-vote-bar {
+  margin-top: 0.75rem;
+}
+
+.arena-vote-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.arena-vote-hint {
+  color: var(--arena-muted);
+  font-size: 0.75rem;
+  margin-right: 0.25rem;
+}
+
+.arena-reveal,
+.arena-not-votable {
+  font-size: 0.85rem;
+  color: var(--arena-text);
+}
+
+.arena-error {
+  color: var(--arena-bad);
+  font-size: 0.8rem;
+}
