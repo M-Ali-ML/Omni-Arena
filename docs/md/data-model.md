@@ -20,6 +20,7 @@ Each file is applied once, inside its own transaction, and recorded in
 | `005_rating_history.sql` | `model_rating_history`, index `model_rating_history_computed_idx` |
 | `006_arena_mode.sql` | `matchups.mode` (`blind` \| `shadow`, default `blind`) |
 | `007_matchup_steers.sql` | `matchups.steers` JSONB array of mid-stream operator instructions |
+| `008_matchup_provider_models.sql` | `matchups.slot_a_provider_model_id` / `slot_b_provider_model_id` — snapshot of each slot's `models.provider_model_id` at insert time; backfills existing rows from the current roster |
 
 Migrations 002–004 were renamed after they had already shipped, so the runner
 first rewrites the legacy rows (`002_phase_one.sql`, `003_phase_two.sql`,
@@ -112,6 +113,7 @@ One blind head-to-head instantiation per prompt (or a silent shadow comparison).
 | `prompt` | TEXT | |
 | `model_a_id` / `model_b_id` | UUID FK | The selected pair |
 | `slot_a_model_id` / `slot_b_model_id` | UUID FK | Randomized display assignment (for shadow: A = incumbent, B = challenger) |
+| `slot_a_provider_model_id` / `slot_b_provider_model_id` | TEXT | Snapshot of each slot's `models.provider_model_id` at insert time so historical matchups keep what ran if a roster row is later repointed. Migration `008_matchup_provider_models.sql` |
 | `matchup_token_hash` | TEXT | SHA-256 of the signed matchup token; the token itself is never stored |
 | `harness_version` | TEXT | Default `'v1'`; the configured `HARNESS_VERSION` of the run (`'demo'` for rows written by the demo-data seeder) |
 | `mode` | TEXT | `blind` (default, human-votable) or `shadow` (persisted, not votable). Migration `006_arena_mode.sql` |

@@ -84,6 +84,10 @@ export interface MatchupRecord {
   modelBId: string;
   slotAModelId: string;
   slotBModelId: string;
+  /** Provider model id for slot A at insert time (survives roster repoints). */
+  slotAProviderModelId: string;
+  /** Provider model id for slot B at insert time (survives roster repoints). */
+  slotBProviderModelId: string;
   matchupTokenHash: string;
   harnessVersion: string;
   /** `blind` (default) is votable; `shadow` is persisted but not votable. */

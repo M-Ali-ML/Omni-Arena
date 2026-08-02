@@ -20,6 +20,7 @@ describe("runMigrations", () => {
       expect(first).toContain("005_rating_history.sql");
       expect(first).toContain("006_arena_mode.sql");
       expect(first).toContain("007_matchup_steers.sql");
+      expect(first).toContain("008_matchup_provider_models.sql");
 
       const second = await runMigrations(pool);
       expect(second).toEqual([]);
@@ -39,6 +40,7 @@ describe("runMigrations", () => {
       await pool.query(
         `INSERT INTO matchups (
           id, prompt, model_a_id, model_b_id, slot_a_model_id, slot_b_model_id,
+          slot_a_provider_model_id, slot_b_provider_model_id,
           matchup_token_hash
         ) VALUES (
           '33333333-3333-4333-8333-333333333333', 'p',
@@ -46,6 +48,7 @@ describe("runMigrations", () => {
           '22222222-2222-4222-8222-222222222222',
           '11111111-1111-4111-8111-111111111111',
           '22222222-2222-4222-8222-222222222222',
+          'a', 'b',
           'hash'
         )`,
       );
@@ -66,6 +69,18 @@ describe("runMigrations", () => {
         `SELECT steers FROM matchups WHERE id = '33333333-3333-4333-8333-333333333333'`,
       );
       expect(steersRow.rows[0]?.steers).toEqual([]);
+
+      const providerRow = await pool.query<{
+        slot_a_provider_model_id: string;
+        slot_b_provider_model_id: string;
+      }>(
+        `SELECT slot_a_provider_model_id, slot_b_provider_model_id
+         FROM matchups WHERE id = '33333333-3333-4333-8333-333333333333'`,
+      );
+      expect(providerRow.rows[0]).toEqual({
+        slot_a_provider_model_id: "a",
+        slot_b_provider_model_id: "b",
+      });
     } finally {
       await pool.end();
     }
@@ -89,11 +104,26 @@ describe("runMigrations", () => {
           ('005_rating_history.sql'),
           ('006_arena_mode.sql')`,
       );
-      // Stub so the next unapplied migration (007) can ALTER TABLE matchups.
-      await pool.query(`CREATE TABLE matchups (id UUID PRIMARY KEY)`);
+      // Stub so the next unapplied migrations (007–008) can ALTER TABLE matchups.
+      await pool.query(
+        `CREATE TABLE models (
+          id UUID PRIMARY KEY,
+          provider_model_id TEXT NOT NULL
+        )`,
+      );
+      await pool.query(
+        `CREATE TABLE matchups (
+          id UUID PRIMARY KEY,
+          slot_a_model_id UUID,
+          slot_b_model_id UUID
+        )`,
+      );
 
       const ran = await runMigrations(pool);
-      expect(ran).toEqual(["007_matchup_steers.sql"]);
+      expect(ran).toEqual([
+        "007_matchup_steers.sql",
+        "008_matchup_provider_models.sql",
+      ]);
 
       const { rows } = await pool.query(
         "SELECT name FROM schema_migrations ORDER BY name",
@@ -106,6 +136,7 @@ describe("runMigrations", () => {
         "005_rating_history.sql",
         "006_arena_mode.sql",
         "007_matchup_steers.sql",
+        "008_matchup_provider_models.sql",
       ]);
     } finally {
       await pool.end();

@@ -214,8 +214,9 @@ export class PostgresRepository
       await client.query(
         `INSERT INTO matchups (
           id, prompt, model_a_id, model_b_id, slot_a_model_id,
-          slot_b_model_id, matchup_token_hash, harness_version, mode
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          slot_b_model_id, slot_a_provider_model_id, slot_b_provider_model_id,
+          matchup_token_hash, harness_version, mode
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           matchup.id,
           matchup.prompt,
@@ -223,6 +224,8 @@ export class PostgresRepository
           matchup.modelBId,
           matchup.slotAModelId,
           matchup.slotBModelId,
+          matchup.slotAProviderModelId,
+          matchup.slotBProviderModelId,
           matchup.matchupTokenHash,
           matchup.harnessVersion,
           matchup.mode,

@@ -145,7 +145,8 @@ describe("Postgres-backed arena flow", () => {
         { role: "user", content: "Go deeper" },
       ]);
       const turns = await pool.query(
-        `SELECT t.turn_index, t.parent_response_id, mt.harness_version
+        `SELECT t.turn_index, t.parent_response_id, mt.harness_version,
+                mt.slot_a_provider_model_id, mt.slot_b_provider_model_id
          FROM turns t
          JOIN matchups mt ON mt.id = t.matchup_id
          ORDER BY t.turn_index`,
@@ -155,13 +156,31 @@ describe("Postgres-backed arena flow", () => {
           turn_index: 0,
           parent_response_id: null,
           harness_version: "integration-v1",
+          slot_a_provider_model_id: "alpha",
+          slot_b_provider_model_id: "beta",
         },
         {
           turn_index: 1,
           parent_response_id: expect.any(String),
           harness_version: "integration-v1",
+          slot_a_provider_model_id: "alpha",
+          slot_b_provider_model_id: "beta",
         },
       ]);
+
+      // Roster repoint must not rewrite historical snapshots.
+      await pool.query(
+        `UPDATE models SET provider_model_id = 'alpha-repointed'
+         WHERE id = $1`,
+        [slotA.id],
+      );
+      const snapshot = await pool.query<{
+        slot_a_provider_model_id: string;
+      }>(
+        `SELECT slot_a_provider_model_id FROM matchups WHERE id = $1`,
+        [started.matchupId],
+      );
+      expect(snapshot.rows[0]?.slot_a_provider_model_id).toBe("alpha");
 
       // The out-of-band reads run against real SQL: both of them join turns
       // and preferences onto the matchup, which the in-memory fake cannot
@@ -273,12 +292,14 @@ describe("Postgres-backed arena flow", () => {
     await pool.query(
       `INSERT INTO matchups (
         id, prompt, model_a_id, model_b_id,
-        slot_a_model_id, slot_b_model_id, matchup_token_hash
+        slot_a_model_id, slot_b_model_id,
+        slot_a_provider_model_id, slot_b_provider_model_id,
+        matchup_token_hash
       ) VALUES
-        ('${m1}', 'p1', '${alpha}', '${beta}', '${alpha}', '${beta}', 'h1'),
-        ('${m2}', 'p2', '${alpha}', '${beta}', '${beta}', '${alpha}', 'h2'),
-        ('${m3}', 'p3', '${alpha}', '${gamma}', '${alpha}', '${gamma}', 'h3'),
-        ('${m4}', 'p4', '${beta}', '${gamma}', '${beta}', '${gamma}', 'h4')`,
+        ('${m1}', 'p1', '${alpha}', '${beta}', '${alpha}', '${beta}', 'alpha', 'beta', 'h1'),
+        ('${m2}', 'p2', '${alpha}', '${beta}', '${beta}', '${alpha}', 'beta', 'alpha', 'h2'),
+        ('${m3}', 'p3', '${alpha}', '${gamma}', '${alpha}', '${gamma}', 'alpha', 'gamma', 'h3'),
+        ('${m4}', 'p4', '${beta}', '${gamma}', '${beta}', '${gamma}', 'beta', 'gamma', 'h4')`,
     );
     await pool.query(
       `INSERT INTO preferences (id, matchup_id, vote, winner_model_id) VALUES
@@ -474,10 +495,12 @@ describe("Postgres-backed arena flow", () => {
     await pool.query(
       `INSERT INTO matchups (
         id, prompt, model_a_id, model_b_id,
-        slot_a_model_id, slot_b_model_id, matchup_token_hash
+        slot_a_model_id, slot_b_model_id,
+        slot_a_provider_model_id, slot_b_provider_model_id,
+        matchup_token_hash
       ) VALUES
-        ('${m1}', 'p1', '${alpha}', '${beta}', '${alpha}', '${beta}', 'h1'),
-        ('${m2}', 'p2', '${alpha}', '${beta}', '${alpha}', '${beta}', 'h2')`,
+        ('${m1}', 'p1', '${alpha}', '${beta}', '${alpha}', '${beta}', 'alpha', 'beta', 'h1'),
+        ('${m2}', 'p2', '${alpha}', '${beta}', '${alpha}', '${beta}', 'alpha', 'beta', 'h2')`,
     );
     await pool.query(
       `INSERT INTO preferences (id, matchup_id, vote, winner_model_id) VALUES

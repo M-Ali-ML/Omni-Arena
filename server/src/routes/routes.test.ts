@@ -336,6 +336,10 @@ describe("arena routes", () => {
       expect(
         repository.matchups.get(matchupId)?.harnessVersion,
       ).toBe("test-harness-v1");
+      expect(repository.matchups.get(matchupId)).toMatchObject({
+        slotAProviderModelId: slotA.providerModelId,
+        slotBProviderModelId: slotB.providerModelId,
+      });
 
       const leaderboard = await app.inject({
         method: "GET",
@@ -697,6 +701,8 @@ describe("arena routes", () => {
         modelBId: slotB.id,
         slotAModelId: slotA.id,
         slotBModelId: slotB.id,
+        slotAProviderModelId: slotA.providerModelId,
+        slotBProviderModelId: slotB.providerModelId,
       });
       expect(repository.responses).toHaveLength(2);
       expect(repository.responses.map((response) => response.slot).sort()).toEqual([

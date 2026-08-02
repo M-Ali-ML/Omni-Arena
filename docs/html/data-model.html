@@ -47,6 +47,7 @@
     <tr><td class="mono">005_rating_history.sql</td><td><span class="mono">model_rating_history</span> · index <span class="mono">model_rating_history_computed_idx</span></td></tr>
     <tr><td class="mono">006_arena_mode.sql</td><td><span class="mono">matchups.mode</span> (<span class="mono">blind</span> | <span class="mono">shadow</span>, default <span class="mono">blind</span>)</td></tr>
     <tr><td class="mono">007_matchup_steers.sql</td><td><span class="mono">matchups.steers</span> JSONB array of mid-stream operator instructions</td></tr>
+    <tr><td class="mono">008_matchup_provider_models.sql</td><td><span class="mono">matchups.slot_a/b_provider_model_id</span> — snapshot of each slot's <span class="mono">models.provider_model_id</span> at insert time; backfills existing rows from the current roster</td></tr>
   </table>
   <div class="callout"><strong>Renamed after shipping.</strong> Migrations 002–004 once had phase-era filenames, so the runner first rewrites the legacy rows (<span class="mono">002_phase_one.sql</span>, <span class="mono">003_phase_two.sql</span>, <span class="mono">004_phase_three.sql</span>) to the current names — an existing database does not re-run them. Never edit an applied migration; add the next <span class="mono">NNN_description.sql</span>.</div>
 
@@ -67,7 +68,7 @@
     <div class="card"><div class="t">models</div><div class="d">catalog of comparable models; only enabled ones enter matchmaking</div></div>
     <div class="card"><div class="t">conversations</div><div class="d">linear chat container + anonymous session ownership</div></div>
     <div class="card"><div class="t">turns</div><div class="d">ordered matchup; parent points only to the prior winning response</div></div>
-    <div class="card"><div class="t">matchups</div><div class="d">blind or shadow head-to-head; randomized slots, token hash, harness version, mode</div></div>
+    <div class="card"><div class="t">matchups</div><div class="d">blind or shadow head-to-head; randomized slots, provider-model snapshots, token hash, harness version, mode</div></div>
     <div class="card"><div class="t">responses</div><div class="d">content + TTFT, duration, tokens, Markdown density, model version</div></div>
     <div class="card"><div class="t">preferences</div><div class="d">one vote per matchup (unique constraint), winner nullable</div></div>
     <div class="card"><div class="t">model_ratings</div><div class="d">worker-written Bradley-Terry rating, CI, component id, games</div></div>
@@ -86,6 +87,7 @@
     <tr><td class="mono">turns</td><td class="mono">parent_response_id</td><td>Null only at turn 0; unique thereafter, preventing two follow-ups from branching from one winner. A table check enforces the pairing: <span class="mono">turn_index = 0 ⇔ parent IS NULL</span>.</td></tr>
     <tr><td class="mono">turns</td><td class="mono">conversation_id + turn_index</td><td>Unique ordered position (<span class="mono">turn_index &gt;= 0</span>); prompt persisted as received. A mismatch or unique violation surfaces as <span class="mono">conversation_conflict</span> 409.</td></tr>
     <tr><td class="mono">matchups</td><td class="mono">slot_a/b_model_id</td><td>Randomized display assignment, distinct from the raw pair columns; checks forbid self-matches. A non-votable <span class="mono">single</span> round writes no row here at all. Shadow sets A = incumbent, B = challenger.</td></tr>
+    <tr><td class="mono">matchups</td><td class="mono">slot_a/b_provider_model_id</td><td>Snapshot of each slot's <span class="mono">models.provider_model_id</span> at insert time so historical rows keep what ran if a roster alias is later repointed. Migration <span class="mono">008_matchup_provider_models.sql</span>.</td></tr>
     <tr><td class="mono">matchups</td><td class="mono">matchup_token_hash</td><td>SHA-256 of the signed token — the token itself is never stored.</td></tr>
     <tr><td class="mono">matchups</td><td class="mono">harness_version</td><td>Prompt/orchestration version captured for temporal drift analysis. Defaults to <span class="mono">'v1'</span>; demo-seeded rows carry <span class="mono">'demo'</span>.</td></tr>
     <tr><td class="mono">matchups</td><td class="mono">mode</td><td><span class="mono">blind</span> (default, human-votable) or <span class="mono">shadow</span> (persisted, not votable). Migration <span class="mono">006_arena_mode.sql</span>. Vote endpoint rejects shadow rows with 403.</td></tr>

@@ -83,6 +83,7 @@ interface ModelRow {
 interface Profile {
   id: string;
   displayName: string;
+  providerModelId: string;
   /** Latent Bradley-Terry strength in log-odds. */
   strength: number;
   meanTokens: number;
@@ -185,6 +186,7 @@ function buildProfiles(models: ModelRow[], random: () => number): Profile[] {
     return {
       id: model.id,
       displayName: model.display_name,
+      providerModelId: model.provider_model_id,
       strength,
       meanTokens: Math.round(traits.baseTokens * (0.8 + 0.55 * padding) + random() * 40),
       meanMarkdown: Math.min(
@@ -386,8 +388,9 @@ async function main(): Promise<void> {
     await pool.query(
       `INSERT INTO matchups (
          id, prompt, model_a_id, model_b_id, slot_a_model_id, slot_b_model_id,
+         slot_a_provider_model_id, slot_b_provider_model_id,
          matchup_token_hash, harness_version, created_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'demo', $8)`,
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'demo', $10)`,
       [
         matchupId,
         prompt,
@@ -395,6 +398,8 @@ async function main(): Promise<void> {
         second.id,
         slotA.id,
         slotB.id,
+        slotA.providerModelId,
+        slotB.providerModelId,
         createHash("sha256").update(randomUUID()).digest("hex"),
         timestamp,
       ],
