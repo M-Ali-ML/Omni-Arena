@@ -2,11 +2,9 @@ import { defineConfig } from "@playwright/test";
 
 /**
  * Documentation-screenshot run for the CopilotKit integration: OmniArena harness
- * on 3031, the Next.js app on 3300, retina viewport, showcase provider pacing.
- *
- * Driven by `npm run screenshots` once the integration package scripts exist
- * (parallel app track). <!-- VERSIONS-PENDING: @copilotkit/react-core,
- * @copilotkit/react-ui, @copilotkit/runtime, @ag-ui/client -->
+ * on 3031, the owned Next.js app on 3300, retina viewport, showcase provider
+ * pacing. Driven by `npm run screenshots`; the app is served by `next start`
+ * so no dev overlay lands in the images.
  */
 const ARENA_PORT = process.env.ARENA_PORT ?? "3031";
 const APP_PORT = process.env.APP_PORT ?? "3300";

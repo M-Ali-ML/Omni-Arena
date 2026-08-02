@@ -10,7 +10,8 @@
     "start": "next start -p 3300",
     "test": "node scripts/e2e.mjs",
     "test:playwright": "playwright test",
-    "probe": "tsx tools/probe.ts"
+    "probe": "tsx tools/probe.ts",
+    "screenshots": "node scripts/screenshots.mjs"
   },
   "dependencies": {
     "@ag-ui/client": "0.0.57",
@@ -29,7 +30,11 @@
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "pg-mem": "3.0.14",
+    "sharp": "0.34.5",
     "tsx": "4.23.0",
     "typescript": "5.9.3"
+  },
+  "allowScripts": {
+    "sharp@0.34.5": true
   }
 }

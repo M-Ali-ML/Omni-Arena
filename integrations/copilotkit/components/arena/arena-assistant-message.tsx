@@ -38,6 +38,9 @@ export function ArenaAssistantMessage(props: CopilotChatAssistantMessageProps) {
     matchup?.slots ??
     (siblingB ? (["A", "B"] as ArenaSlot[]) : (["A"] as ArenaSlot[]));
   const singleColumn = slots.length === 1;
+  // Prefer the store flag armed by CUSTOM / cleared on RUN_FINISHED — CK's
+  // `isRunning` sticks true after paced dual-slot showcase (and real) streams.
+  const streaming = matchup?.streaming ?? Boolean(isRunning);
 
   const contentFor = (slot: ArenaSlot): string => {
     const id = `${parsed.matchupId}:${slot}`;
@@ -68,14 +71,14 @@ export function ArenaAssistantMessage(props: CopilotChatAssistantMessageProps) {
             key={slot}
             slot={slot}
             content={contentFor(slot)}
-            isRunning={Boolean(isRunning)}
+            isRunning={streaming}
             matchup={matchup}
           />
         ))}
       </div>
       <ArenaVoteBar
         matchupId={parsed.matchupId}
-        isRunning={Boolean(isRunning)}
+        isRunning={streaming}
       />
     </div>
   );

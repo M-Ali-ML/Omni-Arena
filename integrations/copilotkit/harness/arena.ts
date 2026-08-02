@@ -13,6 +13,7 @@ import { MockModelProvider } from "../../../server/src/providers/mock.js";
 import { ProviderRegistry } from "../../../server/src/providers/registry.js";
 import { PostgresRepository } from "../../../server/src/repo/postgres.js";
 import { MatchupTokenService } from "../../../server/src/token.js";
+import { ShowcaseModelProvider } from "./showcase-provider.js";
 
 /** Stable ids so the single-model (non-votable) plan can name one of them. */
 const MOCK_ALPHA = "00000000-0000-4000-8000-0000000a11ce";
@@ -36,7 +37,12 @@ await pool.query(
 );
 
 const repository = new PostgresRepository(pool);
-const provider = new MockModelProvider();
+// `npm run screenshots` swaps the canned bytes for identity-free answers that
+// stream slowly enough to photograph mid-run; everything else is untouched.
+const provider =
+  process.env.ARENA_SHOWCASE === "1"
+    ? new ShowcaseModelProvider()
+    : new MockModelProvider();
 const app = await createApp({
   core: new ArenaCore(new ProviderRegistry().register("mock", provider)),
   // Fixed RNG keeps slot A on Mock Model Alpha so the reveal is assertable.

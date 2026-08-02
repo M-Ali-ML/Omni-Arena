@@ -30,6 +30,13 @@ export type MatchupState = ArenaMatchup & {
   continuable: boolean | null;
   voting: boolean;
   voteError: string | null;
+  /**
+   * True from the CUSTOM `arena_matchup` event until the agent's
+   * `onRunFinishedEvent`. CopilotKit's per-message `isRunning` can stick
+   * true after paced dual-slot runs even though RUN_FINISHED arrived — the
+   * vote bar keys off this flag instead.
+   */
+  streaming: boolean;
 };
 
 export type ThreadState = {
@@ -148,6 +155,9 @@ export const arenaStore = {
           continuable: null,
           voting: false,
           voteError: null,
+          // Preserve an in-flight streaming flag if CUSTOM already armed it;
+          // poll-after-finish hydration must not re-disable the vote bar.
+          streaming: existing?.streaming ?? false,
         },
       },
     });
@@ -155,6 +165,27 @@ export const arenaStore = {
 
   noteRunError(message: string): void {
     patchThread({ runError: message });
+    arenaStore.clearStreaming();
+  },
+
+  /** Arm the vote-bar lock when CUSTOM `arena_matchup` opens a live round. */
+  setMatchupStreaming(matchupId: string, streaming: boolean): void {
+    patchMatchup(matchupId, { streaming });
+  },
+
+  /** Clear every in-flight streaming lock (run finished or errored). */
+  clearStreaming(): void {
+    let changed = false;
+    const matchups: Record<string, MatchupState> = {};
+    for (const [id, matchup] of Object.entries(state.matchups)) {
+      if (matchup.streaming) {
+        changed = true;
+        matchups[id] = { ...matchup, streaming: false };
+      } else {
+        matchups[id] = matchup;
+      }
+    }
+    if (changed) emit({ ...state, matchups });
   },
 
   setVoting(matchupId: string, voting: boolean): void {
@@ -225,6 +256,7 @@ export const arenaStore = {
         continuable: turn.vote ? isDecisiveVote(turn.vote) : null,
         voting: false,
         voteError: null,
+        streaming: false,
       };
     }
     // Keep the server id in persistence even when the thread is not yet

@@ -56,12 +56,16 @@ export function ArenaMatchupBridge() {
           // Diagnostic for e2e: did the CK runtime→frontend proxy forward CUSTOM?
           window.__arenaMatchupViaCustom = true;
           arenaStore.beginMatchup(matchup);
+          arenaStore.setMatchupStreaming(matchup.matchupId, true);
         }
       },
       onRunErrorEvent: ({ event }) => {
         arenaStore.noteRunError(event.message ?? "Arena run failed");
       },
       onRunFinishedEvent: () => {
+        // CopilotKit's assistant-message `isRunning` can remain true after paced
+        // dual-slot runs; unlock the vote bar from the agent lifecycle instead.
+        arenaStore.clearStreaming();
         const threadId =
           (agent as { threadId?: string }).threadId ?? thread.threadId;
         if (!threadId) return;
