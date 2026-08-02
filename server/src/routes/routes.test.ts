@@ -464,6 +464,67 @@ describe("arena routes", () => {
     }
   });
 
+  it("single rounds do not hand out a conversationId that 404s on replay", async () => {
+    // Regression: the original single path minted a fresh conversationId (and
+    // an empty matchupToken) without persisting either, so a client that saved
+    // the id and sent it back got conversation_not_found. Single must advertise
+    // nothing continuable — only the control-plane matchupId stays.
+    const { app } = await setup({
+      trigger: "manual",
+      exposure: "blind",
+      defaultModel: slotA.id,
+      sampleRate: 0,
+    });
+    try {
+      const first = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat",
+        payload: { prompt: "Hello", sessionId: "anon_single_replay" },
+      });
+      expect(first.statusCode).toBe(200);
+
+      const started = parseEvents(first.body)[0];
+      expect(started).toMatchObject({
+        type: "matchup_started",
+        mode: "single",
+        votable: false,
+        slots: ["A"],
+      });
+      expect(started).not.toHaveProperty("conversationId");
+      expect(started).not.toHaveProperty("turnIndex");
+      expect(started).not.toHaveProperty("matchupToken");
+
+      const header = JSON.parse(
+        first.headers["x-arena-matchup"] as string,
+      ) as Record<string, unknown>;
+      expect(header).toEqual({
+        matchupId: started?.matchupId,
+        slots: ["A"],
+        mode: "single",
+        votable: false,
+      });
+      expect(header).not.toHaveProperty("conversationId");
+
+      // A client that still mistook the stream's matchupId for a conversation
+      // id and replayed it under a matchup plan must get a clean 404 — there
+      // is no row behind that uuid.
+      const replay = await app.inject({
+        method: "POST",
+        url: "/api/arena/chat",
+        payload: {
+          prompt: "Follow up",
+          sessionId: "anon_single_replay",
+          conversationId: started?.matchupId,
+          arena: true,
+        },
+      });
+      expect(replay.statusCode).toBe(404);
+      expect(replay.json()).toEqual({ error: "Conversation not found" });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("manual trigger with arena:true runs a full matchup", async () => {
     const { app } = await setup({
       trigger: "manual",

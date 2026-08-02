@@ -100,11 +100,31 @@ function fail(
  */
 export const MATCHUP_HEADER = "x-arena-matchup";
 
+/**
+ * A `single` round persists nothing, so `matchupToken` / `conversationId` /
+ * `turnIndex` must never reach the wire — a client that saved one and sent it
+ * back got `conversation_not_found`. Strip them even if a caller built the
+ * started event with them by mistake. `matchupId` stays: it is the control-plane
+ * handle for stop/steer, not a conversation to continue.
+ */
+function wireMatchupStarted(started: PublicArenaEvent): PublicArenaEvent {
+  if (started.type !== "matchup_started" || started.mode !== "single") {
+    return started;
+  }
+  const {
+    matchupToken: _matchupToken,
+    conversationId: _conversationId,
+    turnIndex: _turnIndex,
+    ...safe
+  } = started;
+  return safe;
+}
+
 function matchupHeader(started: PublicArenaEvent): Record<string, string> {
   if (started.type !== "matchup_started") {
     return {};
   }
-  const { type: _type, ...metadata } = started;
+  const { type: _type, ...metadata } = wireMatchupStarted(started);
   return { [MATCHUP_HEADER]: JSON.stringify(metadata) };
 }
 
@@ -118,9 +138,10 @@ function matchupHeader(started: PublicArenaEvent): Record<string, string> {
 async function streamRound(options: StreamOptions): Promise<void> {
   const { reply, adapter, registry, streamId, started, open, onEvent, log } =
     options;
+  const onWire = wireMatchupStarted(started);
   reply.hijack();
-  reply.raw.writeHead(200, { ...adapter.headers, ...matchupHeader(started) });
-  reply.raw.write(adapter.serialize(started));
+  reply.raw.writeHead(200, { ...adapter.headers, ...matchupHeader(onWire) });
+  reply.raw.write(adapter.serialize(onWire));
 
   const controller = registry.register(streamId);
   try {
@@ -236,7 +257,8 @@ export function registerChatRoute(
 
       // A single round persists nothing, so it mints no vote token and no
       // conversation: the only id it emits is the one that identifies this
-      // stream to the control plane.
+      // stream to the control plane. `wireMatchupStarted` strips continuable
+      // fields as defense in depth if a caller ever adds them by mistake.
       const streamId = randomUUID();
       return streamRound({
         reply,
