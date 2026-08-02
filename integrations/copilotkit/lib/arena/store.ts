@@ -1,10 +1,19 @@
 "use client";
 
 import { useCallback, useSyncExternalStore } from "react";
+import { isDecisiveVote } from "@omni-arena/react";
+import {
+  clearPersistedArena,
+  persistConversationId,
+  persistMatchupToken,
+  persistThreadId,
+  readPersistedArena,
+} from "./persistence";
 import type {
   ArenaMatchup,
   ArenaReveal,
   ArenaSlot,
+  ConversationSnapshot,
   VoteChoice,
   VoteResult,
 } from "./protocol";
@@ -66,6 +75,10 @@ const patchMatchup = (matchupId: string, patch: Partial<MatchupState>): void => 
   });
 };
 
+const rememberConversation = (conversationId: string | null): void => {
+  persistConversationId(conversationId);
+};
+
 export const arenaStore = {
   subscribe(listener: () => void): () => void {
     listeners.add(listener);
@@ -80,6 +93,7 @@ export const arenaStore = {
 
   setThreadId(threadId: string): void {
     if (state.thread.threadId === threadId) return;
+    persistThreadId(threadId);
     patchThread({ threadId });
   },
 
@@ -88,25 +102,47 @@ export const arenaStore = {
       arenaEnabled,
       ...(arenaEnabled ? {} : { conversationId: null }),
     });
+    if (!arenaEnabled) rememberConversation(null);
   },
 
   beginMatchup(matchup: ArenaMatchup): void {
+    const existing = state.matchups[matchup.matchupId];
+    // A hydrated (or already-voted) round must not be reset by a stale
+    // matchup-cache poll — that wipe is what made reload lose reveals.
+    if (existing?.vote != null || existing?.reveal) {
+      return;
+    }
+    const persistedToken = readPersistedArena().tokens[matchup.matchupId];
+    const withToken: ArenaMatchup = {
+      ...matchup,
+      ...(matchup.matchupToken
+        ? {}
+        : persistedToken
+          ? { matchupToken: persistedToken }
+          : {}),
+    };
+    if (withToken.matchupToken) {
+      persistMatchupToken(withToken.matchupId, withToken.matchupToken);
+    }
+    if (withToken.conversationId) {
+      rememberConversation(withToken.conversationId);
+    }
     emit({
       thread: {
         ...state.thread,
         runError: null,
-        ...(matchup.conversationId
-          ? { conversationId: matchup.conversationId }
+        ...(withToken.conversationId
+          ? { conversationId: withToken.conversationId }
           : {}),
-        matchupIds: state.thread.matchupIds.includes(matchup.matchupId)
+        matchupIds: state.thread.matchupIds.includes(withToken.matchupId)
           ? state.thread.matchupIds
-          : [...state.thread.matchupIds, matchup.matchupId],
+          : [...state.thread.matchupIds, withToken.matchupId],
       },
       matchups: {
         ...state.matchups,
-        [matchup.matchupId]: {
-          ...matchup,
-          slotOrder: [...matchup.slots],
+        [withToken.matchupId]: {
+          ...withToken,
+          slotOrder: [...withToken.slots],
           vote: null,
           reveal: null,
           continuable: null,
@@ -144,14 +180,17 @@ export const arenaStore = {
         },
       });
     }
+    persistMatchupToken(matchupId, undefined);
     if (result.continuable) {
       const conversationId =
         result.conversationId ??
         state.matchups[matchupId]?.conversationId ??
         null;
       patchThread({ conversationId });
+      rememberConversation(conversationId);
     } else {
       patchThread({ conversationId: null });
+      rememberConversation(null);
     }
   },
 
@@ -159,7 +198,55 @@ export const arenaStore = {
     patchMatchup(matchupId, { voting: false, voteError: error });
   },
 
+  /**
+   * Rebuild matchup/reveal state from `GET /api/arena/conversations/:id`.
+   * Tokens for a still-votable last turn come from local persistence — the
+   * read endpoint never returns them.
+   */
+  hydrateConversation(conversation: ConversationSnapshot): void {
+    const tokens = readPersistedArena().tokens;
+    const matchups: Record<string, MatchupState> = { ...state.matchups };
+    const matchupIds: string[] = [];
+    for (const turn of conversation.turns) {
+      matchupIds.push(turn.matchupId);
+      const slots = turn.answers.map((answer) => answer.slot);
+      const token = turn.votable ? tokens[turn.matchupId] : undefined;
+      matchups[turn.matchupId] = {
+        matchupId: turn.matchupId,
+        ...(token ? { matchupToken: token } : {}),
+        slots: slots.length > 0 ? slots : ["A", "B"],
+        mode: "matchup",
+        votable: turn.votable,
+        conversationId: conversation.conversationId,
+        turnIndex: turn.turnIndex,
+        slotOrder: slots.length > 0 ? slots : ["A", "B"],
+        vote: turn.vote,
+        reveal: turn.models,
+        continuable: turn.vote ? isDecisiveVote(turn.vote) : null,
+        voting: false,
+        voteError: null,
+      };
+    }
+    // Keep the server id in persistence even when the thread is not yet
+    // continuable — another reload must still rebuild an unvoted last round.
+    persistConversationId(conversation.conversationId);
+    emit({
+      thread: {
+        ...state.thread,
+        conversationId: conversation.continuable
+          ? conversation.conversationId
+          : null,
+        matchupIds,
+        runError: null,
+      },
+      matchups,
+    });
+  },
+
   resetConversation(): void {
+    const threadId = state.thread.threadId;
+    clearPersistedArena();
+    if (threadId) persistThreadId(threadId);
     patchThread({ conversationId: null, runError: null, matchupIds: [] });
   },
 };

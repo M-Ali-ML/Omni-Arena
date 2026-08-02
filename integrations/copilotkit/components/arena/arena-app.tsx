@@ -9,6 +9,7 @@ import {
 import { ArenaAssistantMessage } from "@/components/arena/arena-assistant-message";
 import { ArenaControls } from "@/components/arena/arena-controls";
 import { ArenaMatchupBridge } from "@/components/arena/arena-matchup-bridge";
+import { persistThreadId, readPersistedArena } from "@/lib/arena/persistence";
 import { getSessionId } from "@/lib/arena/protocol";
 import { arenaStore, useArenaThread } from "@/lib/arena/store";
 
@@ -17,6 +18,16 @@ import { arenaStore, useArenaThread } from "@/lib/arena/store";
 const AssistantSlot =
   ArenaAssistantMessage as unknown as typeof CopilotChatAssistantMessage;
 
+/** Pin CopilotKit's threadId across reloads so matchup-cache polls stay keyed. */
+function resolveThreadId(): string {
+  if (typeof window === "undefined") return crypto.randomUUID();
+  const existing = readPersistedArena().threadId;
+  if (existing) return existing;
+  const id = crypto.randomUUID();
+  persistThreadId(id);
+  return id;
+}
+
 /**
  * CopilotKit provider + stock CopilotChat, with arena headers injected on
  * every runtime request so the server-side ArenaHttpAgent can populate
@@ -24,7 +35,7 @@ const AssistantSlot =
  */
 export function ArenaApp() {
   const thread = useArenaThread();
-  const [threadId] = useState(() => crypto.randomUUID());
+  const [threadId] = useState(resolveThreadId);
   const sessionId = useMemo(() => getSessionId(), []);
 
   useEffect(() => {

@@ -2,12 +2,13 @@
  * OmniArena wire helpers beside the CopilotKit AG-UI runtime.
  *
  * Parsing / session / vote POSTs come from `@omni-arena/react`. What remains
- * here is host-specific: the matchup response header, message-id → slot
- * mapping, and vote labels.
+ * here is host-specific: the matchup response header, conversation
+ * rehydration (not in the SDK), message-id → slot mapping, and vote labels.
  */
 import {
   getSessionId as sdkGetSessionId,
   isArenaSlot,
+  isArenaVote,
   parseArenaMatchup as sdkParseArenaMatchup,
   parseArenaReveal,
   submitArenaVote,
@@ -41,6 +42,23 @@ export type VoteResult = {
   conversationId?: string;
 };
 
+export type ConversationTurn = {
+  turnIndex: number;
+  matchupId: string;
+  prompt: string;
+  votable: boolean;
+  vote: VoteChoice | null;
+  answers: { slot: ArenaSlot; content: string; error: string | null }[];
+  models: ArenaReveal | null;
+};
+
+export type ConversationSnapshot = {
+  conversationId: string;
+  continuable: boolean;
+  nextTurnIndex: number;
+  turns: ConversationTurn[];
+};
+
 export const VOTE_OPTIONS: { choice: VoteChoice; label: string }[] = [
   { choice: "left", label: "A is better" },
   { choice: "right", label: "B is better" },
@@ -48,6 +66,9 @@ export const VOTE_OPTIONS: { choice: VoteChoice; label: string }[] = [
   { choice: "both_bad", label: "Both bad" },
   { choice: "skip", label: "Skip" },
 ];
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
 
 function toHostMatchup(info: ArenaMatchupInfo): ArenaMatchup {
   return {
@@ -122,4 +143,80 @@ export async function postVote(body: {
 export function parseRevealModels(value: unknown): ArenaReveal | null {
   const reveal = parseArenaReveal({ models: value });
   return reveal ? reveal.models : null;
+}
+
+function parseTurn(value: unknown): ConversationTurn | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.matchupId !== "string" || typeof value.prompt !== "string") {
+    return null;
+  }
+  const answers = Array.isArray(value.answers)
+    ? value.answers.flatMap((entry) => {
+        if (!isRecord(entry) || !isArenaSlot(entry.slot)) return [];
+        return [
+          {
+            slot: entry.slot,
+            content: typeof entry.content === "string" ? entry.content : "",
+            error: typeof entry.error === "string" ? entry.error : null,
+          },
+        ];
+      })
+    : [];
+  return {
+    turnIndex: typeof value.turnIndex === "number" ? value.turnIndex : 0,
+    matchupId: value.matchupId,
+    prompt: value.prompt,
+    votable: value.votable === true,
+    vote: isArenaVote(value.vote) ? value.vote : null,
+    answers,
+    models: parseRevealModels(value.models),
+  };
+}
+
+export function parseConversation(value: unknown): ConversationSnapshot | null {
+  if (!isRecord(value) || typeof value.conversationId !== "string") return null;
+  const turns = Array.isArray(value.turns)
+    ? value.turns.flatMap((turn) => {
+        const parsed = parseTurn(turn);
+        return parsed ? [parsed] : [];
+      })
+    : [];
+  return {
+    conversationId: value.conversationId,
+    continuable: value.continuable === true,
+    nextTurnIndex:
+      typeof value.nextTurnIndex === "number" ? value.nextTurnIndex : turns.length,
+    turns,
+  };
+}
+
+export async function fetchConversation(
+  conversationId: string,
+): Promise<
+  | { ok: true; conversation: ConversationSnapshot }
+  | { ok: false; error: string }
+> {
+  const sessionId = getSessionId();
+  const response = await fetch(
+    `/api/arena/conversations/${encodeURIComponent(conversationId)}?sessionId=${encodeURIComponent(sessionId)}`,
+  );
+  const payload: unknown = await response.json().catch(() => ({}));
+  const record =
+    typeof payload === "object" && payload !== null
+      ? (payload as Record<string, unknown>)
+      : {};
+  if (!response.ok) {
+    return {
+      ok: false,
+      error:
+        typeof record.error === "string"
+          ? record.error
+          : `Conversation fetch failed (${response.status})`,
+    };
+  }
+  const conversation = parseConversation(payload);
+  if (!conversation) {
+    return { ok: false, error: "Malformed conversation payload" };
+  }
+  return { ok: true, conversation };
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useAgent } from "@copilotkit/react-core/v2";
+import { rehydrateArenaThread } from "@/lib/arena/history";
 import { parseArenaMatchup } from "@/lib/arena/protocol";
 import { arenaStore, useArenaThread } from "@/lib/arena/store";
 
@@ -11,25 +12,37 @@ declare global {
     __arenaMatchupViaCustom?: boolean;
     /** Set when the poll fallback hydrated a matchup. */
     __arenaMatchupViaPoll?: boolean;
+    /** Set when conversation GET rehydration restored the thread. */
+    __arenaRehydrated?: boolean;
   }
 }
 
 /**
  * Bridges CopilotKit's AG-UI proxy agent to the arena store:
- * 1. Try `onCustomEvent` for `arena_matchup` (surfaced per CopilotKit docs).
- * 2. Fall back to polling `GET /api/arena/matchup` after a run — the path that
+ * 1. On mount, rehydrate from a persisted conversationId via conversation GET.
+ * 2. Try `onCustomEvent` for `arena_matchup` (surfaced per CopilotKit docs).
+ * 3. Fall back to polling `GET /api/arena/matchup` after a run — the path that
  *    works when CUSTOM is dropped or the header never reaches the browser.
  */
 export function ArenaMatchupBridge() {
   const { agent } = useAgent({ agentId: "arena" });
   const thread = useArenaThread();
   const polledForRun = useRef<string | null>(null);
+  const rehydrated = useRef(false);
 
   useEffect(() => {
     const threadId =
       (agent as { threadId?: string }).threadId ?? thread.threadId;
     if (threadId) arenaStore.setThreadId(threadId);
   }, [agent, thread.threadId]);
+
+  useEffect(() => {
+    if (!agent || rehydrated.current) return;
+    rehydrated.current = true;
+    void rehydrateArenaThread(agent).then((ok) => {
+      if (ok) window.__arenaRehydrated = true;
+    });
+  }, [agent]);
 
   useEffect(() => {
     if (!agent) return;

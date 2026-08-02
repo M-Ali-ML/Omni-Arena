@@ -195,16 +195,12 @@ test("hides the vote UI when the round is not votable", async ({ page }) => {
   await expect(message.getByTestId(SELECTORS.VOTE_BAR)).toHaveCount(0);
 });
 
-// Increment 1 did not ship reload rehydration (no conversation GET hydrate,
-// threadId is minted fresh each mount). Deferred to Increment 3.
-test.fixme(
-  "rehydrates the thread after a reload",
-  async ({ page }) => {
-  // FIXME(Increment 3): reload rehydration not in Increment 1 scope.
+test("rehydrates the thread after a reload", async ({ page }) => {
   await send(page, "Explain JSON Web Tokens in simple terms.");
 
   const first = messages(page).first();
   await expect(first.getByTestId(SLOT_COLUMN("A"))).toContainText(SLOT_A_ANSWER);
+  await expect(first.getByTestId(SLOT_COLUMN("B"))).toContainText(SLOT_B_ANSWER);
   await first.getByTestId(VOTE_BUTTON("left")).click();
   await expect(first.getByTestId(SELECTORS.REVEAL)).toContainText(
     ROSTER.A.displayName,
@@ -215,33 +211,50 @@ test.fixme(
     .getAttribute("data-conversation");
   expect(conversationId).toBeTruthy();
 
+  // Second turn streams but stays unvoted — reload must restore the
+  // matchupToken from localStorage (conversation GET never returns it).
   await send(page, "Now give me an example token.");
   await expect(messages(page)).toHaveCount(2);
-  await expect(messages(page).nth(1)).toHaveAttribute("data-turn-index", "1");
-  await messages(page).nth(1).getByTestId(VOTE_BUTTON("right")).click();
-  await expect(messages(page).nth(1).getByTestId(SELECTORS.REVEAL)).toContainText(
-    ROSTER.B.displayName,
-  );
+  const second = messages(page).nth(1);
+  await expect(second).toHaveAttribute("data-turn-index", "1");
+  await expect(second.getByTestId(SLOT_COLUMN("A"))).toContainText(SLOT_A_ANSWER);
+  await expect(second.getByTestId(SLOT_COLUMN("B"))).toContainText(SLOT_B_ANSWER);
+  await expect(second.getByTestId(SELECTORS.VOTE_BAR)).toBeVisible();
 
   await page.reload();
   await expect(page.getByTestId(SELECTORS.CONTROLS)).toBeVisible();
 
-  // Increment 3 must restore both turns including reveal state (thread
-  // persistence + conversation GET rehydration).
+  // Conversation GET rebuilds both turns; turn 0 keeps its reveal, turn 1
+  // is still blind and still votable via the persisted token.
   await expect(messages(page)).toHaveCount(2);
-  await expect(messages(page).first().getByTestId(SELECTORS.REVEAL)).toContainText(
+  const restoredFirst = messages(page).first();
+  const restoredSecond = messages(page).nth(1);
+  await expect(restoredFirst.getByTestId(SELECTORS.REVEAL)).toContainText(
     ROSTER.A.displayName,
   );
-  await expect(messages(page).nth(1).getByTestId(SELECTORS.REVEAL)).toContainText(
+  await expect(restoredFirst.getByTestId(SLOT_COLUMN("A"))).toContainText(
+    SLOT_A_ANSWER,
+  );
+  await expect(restoredSecond).toHaveAttribute("data-turn-index", "1");
+  await expect(restoredSecond.getByTestId(SLOT_COLUMN("A"))).toContainText(
+    SLOT_A_ANSWER,
+  );
+  await expect(restoredSecond.getByTestId(SLOT_COLUMN("B"))).toContainText(
+    SLOT_B_ANSWER,
+  );
+  await expect(restoredSecond.getByTestId(SELECTORS.VOTE_BAR)).toBeVisible();
+
+  await restoredSecond.getByTestId(VOTE_BUTTON("right")).click();
+  await expect(restoredSecond.getByTestId(SELECTORS.REVEAL)).toContainText(
     ROSTER.B.displayName,
   );
-  await expect(messages(page).nth(1)).toHaveAttribute("data-turn-index", "1");
   await expect(page.getByTestId(SELECTORS.CONVERSATION)).toHaveAttribute(
     "data-conversation",
     conversationId ?? "",
   );
 
-  // A follow-up after reload still continues the same OmniArena conversation.
+  // A follow-up after reload (+ post-reload vote) still continues the same
+  // OmniArena conversation at turnIndex 2.
   await send(page, "One more example, please.");
   await expect(messages(page)).toHaveCount(3);
   await expect(messages(page).nth(2)).toHaveAttribute("data-turn-index", "2");
