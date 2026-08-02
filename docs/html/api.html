@@ -71,7 +71,7 @@
   <p>Unknown members are ignored rather than rejected.</p>
   <table>
     <tr><th>SSE event</th><th>Payload</th><th>Notes</th></tr>
-    <tr><td class="mono">matchup_started</td><td class="mono">{ matchupId, matchupToken?, conversationId?, turnIndex?, slots, mode, votable }</td><td>First event. Save the conversation ID; no model identities. <span class="mono">mode</span> is <span class="mono">matchup</span>, <span class="mono">single</span>, or <span class="mono">shadow</span> (the last under <span class="mono">ARENA_EXPOSURE=shadow</span>). <span class="mono">slots</span> lists the slots <em>this response</em> streams: <span class="mono">["A","B"]</span> normally, <span class="mono">["A"]</span> for a <span class="mono">single</span> or <span class="mono">shadow</span> round, one slot each under <a href="#slot-join">slot join</a>.</td></tr>
+    <tr><td class="mono">matchup_started</td><td class="mono">{ matchupId, matchupToken?, conversationId?, turnIndex?, slots, mode, votable }</td><td>First event. Save the conversation ID; no model identities. <span class="mono">mode</span> is <span class="mono">matchup</span>, <span class="mono">single</span>, or <span class="mono">shadow</span> (the last under <span class="mono">ARENA_EXPOSURE=shadow</span>). <span class="mono">votable</span> is <span class="mono">true</span> only for engaged blind matchups; <span class="mono">single</span> and <span class="mono">shadow</span> emit <span class="mono">false</span> (shadow rows are also rejected at vote time with <span class="mono">403</span>). <span class="mono">slots</span> lists the slots <em>this response</em> streams: <span class="mono">["A","B"]</span> normally, <span class="mono">["A"]</span> for a <span class="mono">single</span> or <span class="mono">shadow</span> round, one slot each under <a href="#slot-join">slot join</a>.</td></tr>
     <tr><td class="mono">token</td><td class="mono">{ slot, token }</td><td>Interleaved tokens for A and B</td></tr>
     <tr><td class="mono">slot_error</td><td class="mono">{ slot, message }</td><td>Other slot keeps streaming</td></tr>
     <tr><td class="mono">slot_done</td><td class="mono">{ slot }</td><td>Content/latency stripped from public event</td></tr>
@@ -92,7 +92,8 @@
     <tr><td class="mono">409</td><td class="mono">conversation_conflict</td><td>Another request already advanced the conversation</td></tr>
     <tr><td class="mono">409</td><td class="mono">join_slots_exhausted</td><td>Both slots of this join scope are already claimed</td></tr>
     <tr><td class="mono">409</td><td class="mono">join_expired</td><td>The join window closed before this request arrived</td></tr>
-    <tr><td class="mono">500</td><td class="mono">default_model_missing</td><td><span class="mono">ARENA_DEFAULT_MODEL</span> is not in the enabled roster (<span class="mono">single</span> rounds only)</td></tr>
+    <tr><td class="mono">500</td><td class="mono">default_model_missing</td><td><span class="mono">ARENA_DEFAULT_MODEL</span> is not in the enabled roster (<span class="mono">single</span> / <span class="mono">shadow</span> rounds)</td></tr>
+    <tr><td class="mono">500</td><td class="mono">shadow_challenger_missing</td><td>Matchmaker could not pick a challenger ≠ <span class="mono">ARENA_DEFAULT_MODEL</span> (<span class="mono">shadow</span> only)</td></tr>
     <tr><td class="mono">500</td><td class="mono">join_failed</td><td>The request holding the shared matchup failed for an unclassified reason</td></tr>
     <tr><td class="mono">503</td><td class="mono">join_unavailable</td><td>Too many unpaired joins in flight; retry without <span class="mono">joinKey</span></td></tr>
     <tr><td class="mono">504</td><td class="mono">join_leader_timeout</td><td>The request holding the shared matchup never started it</td></tr>
@@ -152,7 +153,8 @@
 ← { "type": "stopped", "matchupId": "&lt;uuid&gt;", "ok": true }
 
 → { "type": "steer", "matchupId": "&lt;uuid&gt;", "instruction": "be more concise" }
-← { "type": "steer_ack", "matchupId": "&lt;uuid&gt;", "accepted": true }</code></pre>
+← { "type": "steer_ack", "matchupId": "&lt;uuid&gt;", "accepted": true }
+← { "type": "steer_ack", "matchupId": "&lt;uuid&gt;", "accepted": false, "reason": "…" }</code></pre>
   <table>
     <tr><th>Message</th><th>Behavior</th></tr>
     <tr><td class="mono">stop</td><td>Aborts the matchup's stream via the matchup registry's <span class="mono">AbortController</span> (signal threaded through <span class="mono">ArenaCore.stream</span>). <span class="mono">ok:false</span> when the matchup is unknown — never started, already finished, or already stopped.</td></tr>
@@ -182,6 +184,7 @@
     <tr><th>Status</th><th>Meaning</th></tr>
     <tr><td class="mono">400</td><td>Invalid body (non-UUID <span class="mono">matchupId</span>, unknown <span class="mono">vote</span>, missing token)</td></tr>
     <tr><td class="mono">401</td><td>Bad signature, <strong>expired</strong> token, or claims that don't match the stored matchup (its id or either slot's model)</td></tr>
+    <tr><td class="mono">403</td><td>Shadow matchups are not votable (<span class="mono">matchups.mode='shadow'</span>; human votes are rejected)</td></tr>
     <tr><td class="mono">404</td><td>Unknown matchup</td></tr>
     <tr><td class="mono">409</td><td>Vote already recorded</td></tr>
   </table>

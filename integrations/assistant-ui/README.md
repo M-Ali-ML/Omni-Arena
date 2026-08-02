@@ -121,6 +121,16 @@ Open <http://127.0.0.1:3100>.
    and the UI renders one column with the vote bar replaced by an explanation.
 8. **New Thread** starts a new assistant-ui thread with its own arena state.
 
+With `ARENA_TRIGGER=manual` (what `harness/arena.ts` and `npm test` use), the
+**Arena mode** toggle sets `x-arena: on` on proxied chat requests
+(`lib/arena/agent.ts`). Equivalent direct call:
+
+```bash
+curl -N 'http://127.0.0.1:3011/api/arena/chat?protocol=ag-ui' \
+  -H 'content-type: application/json' -H 'x-arena: on' \
+  -d '{"prompt":"Hello"}'
+```
+
 ## Test
 
 ```bash

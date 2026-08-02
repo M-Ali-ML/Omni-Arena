@@ -95,6 +95,15 @@ npm run arena                    # Omni-Arena on :3021 — leave this running
 applies the real migrations, seeds the repository's own mock roster
 (`server/src/db/seed.mock.ts` → *Mock Model Alpha* and *Mock Model Beta*), and
 starts Omni-Arena with `ARENA_MOCK_PROVIDER=1` and `ARENA_TRIGGER=manual`.
+Duel and compare pseudo-models opt in with `arena: true` on
+`POST /api/arena/chat`; **Single Model** does not. The header works on every
+protocol:
+
+```bash
+curl -N 'http://127.0.0.1:3021/api/arena/chat?protocol=openai' \
+  -H 'content-type: application/json' -H 'x-arena: on' \
+  -d '{"prompt":"Hello","stream":true}'
+```
 
 Open WebUI takes about 40 seconds on first boot (it downloads an embedding
 model). Then open **<http://localhost:3200>** — login is disabled, so you land

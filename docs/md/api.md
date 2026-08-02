@@ -100,7 +100,10 @@ slots follow: `["A", "B"]` on a normal matchup, `["A"]` on a `single` or
 [slot join](#serving-one-matchup-over-two-requests-joinkey), `["B"]` on that
 join's sibling. `mode` is `matchup`, `single`, or `shadow` (the last under
 `ARENA_EXPOSURE=shadow` — see [Setup → Trigger and
-exposure](setup.md#trigger-and-exposure)).
+exposure](setup.md#trigger-and-exposure)). `votable` is `true` only for engaged
+blind matchups the client may send to `POST /api/arena/vote`; `single` and
+`shadow` rounds emit `false` (shadow rows are also rejected at vote time with
+`403` even if a token were presented).
 
 ### Identifiers are only sent when they can be used
 

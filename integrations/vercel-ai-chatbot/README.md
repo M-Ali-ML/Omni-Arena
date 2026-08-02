@@ -195,7 +195,19 @@ automatically. Then:
 
 The `Compare: on/off` button next to it is the per-request opt-in a
 `ARENA_TRIGGER=manual` deployment reads. Against the default
-`ARENA_TRIGGER=always` arena, every message is a matchup either way.
+`ARENA_TRIGGER=always` arena, every message is a matchup either way. With
+`manual`, the Next proxy forwards `arena: true` in the JSON body and
+`x-arena: on` on the upstream OmniArena request when Compare is on. The same
+opt-in without the UI:
+
+```bash
+curl -N http://localhost:3001/api/arena/chat?protocol=vercel-ai \
+  -H 'content-type: application/json' -H 'x-arena: on' \
+  -d '{"prompt":"Compare two approaches to caching."}'
+```
+
+Omit the header (and `arena` in the body) and the stream opens with
+`mode: "single"`, `votable: false`.
 
 Upstream's model picker is replaced in the toolbar by a static **Models chosen by
 the arena** label: OmniArena's chat API takes no model hint, so the roster is
