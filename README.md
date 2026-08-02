@@ -173,13 +173,17 @@ Both answers stream over one connection inside the template's own message list;
 [more screenshots](integrations/vercel-ai-chatbot/README.md#what-it-looks-like)
 cover the vote, the reveal, multi-turn continuation, and the leaderboard.
 
-Two more upstream apps get the same treatment, each pinned to an exact upstream
-version and self-contained in its own directory:
+Three more upstream apps get the same treatment, each self-contained in its own
+directory:
 [`integrations/assistant-ui/`](integrations/assistant-ui/) overlays the arena
-onto the real assistant-ui monorepo over the AG-UI adapter, and
+onto the real assistant-ui monorepo over the AG-UI adapter,
+[`integrations/copilotkit/`](integrations/copilotkit/) is a minimal owned
+Next.js app with CopilotKit over the same AG-UI adapter (flagship consumer of
+that path — blind two-column voting inside CopilotKit's stock chat UI via
+CopilotRuntime), and
 [`integrations/open-webui/`](integrations/open-webui/) drives the upstream Open
 WebUI container over the OpenAI-compatible adapter — the compare view that
-motivated `joinKey`. None of the three is an npm workspace; each installs and
+motivated `joinKey`. None of the four is an npm workspace; each installs and
 runs through its own scripts.
 
 ## Contributing

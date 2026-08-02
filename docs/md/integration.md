@@ -368,7 +368,16 @@ data: {"type":"RUN_FINISHED","threadId":"c1","runId":"m1"}
   the shipped integration did before the header existed. [`integrations/assistant-ui/`](../../integrations/assistant-ui/)
   runs against the real `@assistant-ui/react-ag-ui` runtime and now votes via the
   header; its remaining custom agent only injects `forwardedProps` / `x-arena`
-  that `useAgUiRuntime` cannot set. The [`examples/assistant-ui/`](../../examples/assistant-ui/) app runs on
+  that `useAgUiRuntime` cannot set. [`integrations/copilotkit/`](../../integrations/copilotkit/)
+  is the flagship consumer of this adapter: a minimal owned Next.js app that
+  registers an `ArenaHttpAgent` (`HttpAgent` from `@ag-ui/client`) in
+  CopilotRuntime at `/api/copilotkit`, pointed at
+  `/api/arena/chat?protocol=ag-ui`, injecting `forwardedProps` and the
+  `x-arena` header — two anonymous AG-UI slot streams rendered as side-by-side
+  columns inside CopilotKit's stock chat UI, with server-side agent registration
+  rather than a client-only runtime swap. <!-- VERSIONS-PENDING:
+  @copilotkit/react-core, @copilotkit/react-ui, @copilotkit/runtime,
+  @ag-ui/client --> The [`examples/assistant-ui/`](../../examples/assistant-ui/) app runs on
   assistant-ui too, via the AI SDK runtime.
 
 ---
@@ -616,13 +625,14 @@ That directory's README covers setup, the real-provider path, and its own
 Playwright suite (`npm test` there), which needs no credentials: PGlite stands in
 for Postgres and the mock provider for the models.
 
-Two more integrations exercise the other adapters against real upstream apps, and
-each documents what it found:
+Three more integrations exercise the other adapters against real upstream apps,
+and each documents what it found:
 
 | Integration | Upstream app | Adapter | What it took |
 |---|---|---|---|
 | [`integrations/open-webui/`](../../integrations/open-webui/) | Open WebUI (SvelteKit + FastAPI) | OpenAI SSE | A bridge that presents an OpenAI surface to Open WebUI — including the model list — and renders the duel, vote, reveal, and multi-turn continuation (per-chat `conversationId`, durable across bridge restarts via `.data/bridge/continuations.json`) inside Open WebUI's message channel. |
 | [`integrations/assistant-ui/`](../../integrations/assistant-ui/) | assistant-ui's `with-ag-ui` example | AG-UI | A route that forwards the AG-UI stream (and `x-arena-matchup`) to the stock `@assistant-ui/react-ag-ui` runtime, plus arena UI for vote, reveal, multi-turn, and reload rehydration. Overlay protocol helpers consume `@omni-arena/react`. |
+| [`integrations/copilotkit/`](../../integrations/copilotkit/) | Minimal owned Next.js + CopilotKit | AG-UI | An `ArenaHttpAgent` registered in CopilotRuntime at `/api/copilotkit`, forwarding to `/api/arena/chat?protocol=ag-ui` with `forwardedProps` (`sessionId`, `conversationId`, `arena`) and `x-arena: on|off`. CopilotKit's stock chat UI renders the two `<matchupId>:A|B` slot streams as blind columns, a five-way vote bar, reveal with your-pick badge, and decisive-vote continuation on `turnIndex` 1; arena off yields a single non-votable column. Mock provider + pg-mem harness (ports 3031 / 3300). See [`integrations/copilotkit/README.md`](../../integrations/copilotkit/README.md). <!-- VERSIONS-PENDING: @copilotkit/react-core, @copilotkit/react-ui, @copilotkit/runtime, @ag-ui/client --> |
 
 Their findings are the reason for several of the contracts documented above —
 positional `choices[0]`, `RUN_ERROR`, marked slot failures, omitted identifiers,
@@ -710,6 +720,33 @@ replaces the vote bar with an explanation rather than offering a vote that
 cannot be cast:
 
 ![Arena mode off: one column labelled Single model, with the vote bar replaced by an explanation](../images/integrations/assistant-ui/05-single-model.png)
+
+#### AG-UI, inside CopilotKit's stock chat UI
+
+The two slots arrive as concurrent AG-UI text messages (`messageId` =
+`<matchupId>:A|B`), rendered as blind A/B columns inside CopilotKit's default
+chat surface while both still stream — vote controls disabled until both finish:
+
+![Two anonymous answers streaming side by side in CopilotKit, vote bar disabled mid-stream](../images/integrations/copilotkit/01-streaming.png)
+
+Both answers done, identities still hidden, five-way vote enabled:
+
+![The finished pair with the five-way vote bar enabled and both models still anonymous](../images/integrations/copilotkit/02-vote.png)
+
+After `POST /api/arena/vote`: both models named, your-pick badge on the chosen
+column:
+
+![After the vote: both columns named with their models and the picked column badged](../images/integrations/copilotkit/03-reveal.png)
+
+A decisive vote continues the same OmniArena conversation — turn 2 below the
+previous reveal, fresh blind matchup for the follow-up:
+
+![A follow-up question answered as turn 2 of the same conversation, below the previous round's reveal](../images/integrations/copilotkit/04-multi-turn.png)
+
+Arena mode off: `mode: "single"` and `votable: false` — one column and an
+explanation instead of a vote bar:
+
+![Arena mode off: one column with a single-model notice instead of a vote bar](../images/integrations/copilotkit/05-single-model.png)
 
 ## See also
 
