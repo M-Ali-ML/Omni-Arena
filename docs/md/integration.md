@@ -375,9 +375,15 @@ data: {"type":"RUN_FINISHED","threadId":"c1","runId":"m1"}
   `/api/arena/chat?protocol=ag-ui`, injecting `forwardedProps` and the
   `x-arena` header — two anonymous AG-UI slot streams rendered as side-by-side
   columns inside CopilotKit's stock chat UI, with server-side agent registration
-  rather than a client-only runtime swap. <!-- VERSIONS-PENDING:
-  @copilotkit/react-core, @copilotkit/react-ui, @copilotkit/runtime,
-  @ag-ui/client --> The [`examples/assistant-ui/`](../../examples/assistant-ui/) app runs on
+  rather than a client-only runtime swap. Pinned at `@copilotkit/react-core`,
+  `@copilotkit/react-ui`, and `@copilotkit/runtime` **1.63.2**, `@ag-ui/client`
+  **0.0.57**, `next` **16.2.10**, and `react` **19.2.8**. Because
+  `CopilotRuntime` calls OmniArena server-side, the browser never sees OmniArena's
+  `x-arena-matchup` header; `ArenaHttpAgent`'s `fetch` captures it into an
+  in-process cache and the client polls `GET /api/arena/matchup?threadId=…` after
+  each run (belt-and-suspenders alongside `CUSTOM arena_matchup`, which CopilotKit
+  **1.63.2** forwards to the browser). Votes go through the same-origin
+  `POST /api/arena/vote` proxy. The [`examples/assistant-ui/`](../../examples/assistant-ui/) app runs on
   assistant-ui too, via the AI SDK runtime.
 
 ---
@@ -632,7 +638,7 @@ and each documents what it found:
 |---|---|---|---|
 | [`integrations/open-webui/`](../../integrations/open-webui/) | Open WebUI (SvelteKit + FastAPI) | OpenAI SSE | A bridge that presents an OpenAI surface to Open WebUI — including the model list — and renders the duel, vote, reveal, and multi-turn continuation (per-chat `conversationId`, durable across bridge restarts via `.data/bridge/continuations.json`) inside Open WebUI's message channel. |
 | [`integrations/assistant-ui/`](../../integrations/assistant-ui/) | assistant-ui's `with-ag-ui` example | AG-UI | A route that forwards the AG-UI stream (and `x-arena-matchup`) to the stock `@assistant-ui/react-ag-ui` runtime, plus arena UI for vote, reveal, multi-turn, and reload rehydration. Overlay protocol helpers consume `@omni-arena/react`. |
-| [`integrations/copilotkit/`](../../integrations/copilotkit/) | Minimal owned Next.js + CopilotKit | AG-UI | An `ArenaHttpAgent` registered in CopilotRuntime at `/api/copilotkit`, forwarding to `/api/arena/chat?protocol=ag-ui` with `forwardedProps` (`sessionId`, `conversationId`, `arena`) and `x-arena: on|off`. CopilotKit's stock chat UI renders the two `<matchupId>:A|B` slot streams as blind columns, a five-way vote bar, reveal with your-pick badge, and decisive-vote continuation on `turnIndex` 1; arena off yields a single non-votable column. Mock provider + pg-mem harness (ports 3031 / 3300). See [`integrations/copilotkit/README.md`](../../integrations/copilotkit/README.md). <!-- VERSIONS-PENDING: @copilotkit/react-core, @copilotkit/react-ui, @copilotkit/runtime, @ag-ui/client --> |
+| [`integrations/copilotkit/`](../../integrations/copilotkit/) | Minimal owned Next.js + CopilotKit | AG-UI | An `ArenaHttpAgent` registered in CopilotRuntime at `/api/copilotkit`, forwarding to `/api/arena/chat?protocol=ag-ui` with `forwardedProps` (`sessionId`, `conversationId`, `arena`) and `x-arena: on|off`. CopilotKit's stock chat UI renders the two `<matchupId>:A|B` slot streams as blind columns, a five-way vote bar, reveal with your-pick badge, and decisive-vote continuation on `turnIndex` 1; arena off yields a single non-votable column. Vote tokens: server-side `x-arena-matchup` capture → matchup cache → `GET /api/arena/matchup` poll (plus `CUSTOM arena_matchup` on CopilotKit 1.63.2); vote via same-origin `POST /api/arena/vote`. Pinned `@copilotkit/*` **1.63.2**, `@ag-ui/client` **0.0.57**, `next` **16.2.10**, `react` **19.2.8**. Mock provider + pg-mem harness (ports 3031 / 3300). See [`integrations/copilotkit/README.md`](../../integrations/copilotkit/README.md). |
 
 Their findings are the reason for several of the contracts documented above —
 positional `choices[0]`, `RUN_ERROR`, marked slot failures, omitted identifiers,
@@ -733,8 +739,11 @@ Both answers done, identities still hidden, five-way vote enabled:
 
 ![The finished pair with the five-way vote bar enabled and both models still anonymous](../images/integrations/copilotkit/02-vote.png)
 
-After `POST /api/arena/vote`: both models named, your-pick badge on the chosen
-column:
+The vote uses `matchupId` and `matchupToken` from the server-side
+`x-arena-matchup` capture (poll `GET /api/arena/matchup` after each run; CopilotKit
+1.63.2 also delivers `CUSTOM arena_matchup` to the browser). The browser posts to
+the same-origin `POST /api/arena/vote` proxy — only then are the columns named
+and your pick badged:
 
 ![After the vote: both columns named with their models and the picked column badged](../images/integrations/copilotkit/03-reveal.png)
 
