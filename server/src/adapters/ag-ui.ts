@@ -17,7 +17,7 @@ import {
 import { slotErrorText } from "./slot-error.js";
 
 /**
- * AG-UI adapter (differentiator, vision §2/§5.3): the two arena slots become two
+ * AG-UI adapter (docs/md/architecture.md §Egress): the two arena slots become two
  * concurrent AG-UI text messages inside one run. Slot identity is carried in
  * `messageId` as `<matchupId>:<slot>` — the normative channel clients must parse
  * to route each side to its own column — because conformant AG-UI parsers strip

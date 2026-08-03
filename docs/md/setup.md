@@ -10,7 +10,7 @@ Related: [Architecture](architecture.md) · [API](api.md) · [Integration](integ
 
 OmniArena is self-hosted as a **single container per deployment** — one Fastify
 process serves both the API and the built web UI on one port, so chat data never
-leaves the adopter's infrastructure (decision record #5). `docker compose up`
+leaves the adopter's infrastructure. `docker compose up`
 brings up Postgres, the rating worker, and the app with no extra manual steps.
 
 ```bash

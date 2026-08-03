@@ -249,7 +249,7 @@ export type StyleEffectBasis = "absolute" | "per_std_dev";
 
 /**
  * One style confounder from the worker's joint Bradley-Terry regression
- * (vision §3), restated on the leaderboard's display scale so a reader can
+ * (docs/md/rating-methodology.md), restated on the leaderboard's display scale so a reader can
  * compare it against a rating gap.
  */
 export interface StyleEffect {
@@ -285,7 +285,8 @@ export interface StyleControlReport {
 
 /**
  * Connectivity of the comparison graph. Bradley-Terry ratings are only
- * identified up to a per-component constant (vision §4), so a client must not
+ * identified up to a per-component constant (docs/md/rating-methodology.md
+ * §Identifiability), so a client must not
  * compare ratings across components.
  */
 export interface LeaderboardComponents {

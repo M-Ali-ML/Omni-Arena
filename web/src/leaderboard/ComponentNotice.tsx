@@ -6,7 +6,7 @@ interface ComponentNoticeProps {
 
 /**
  * States plainly whether the leaderboard's ratings are comparable at all
- * (vision §4). Bradley-Terry strengths are identified only up to a constant
+ * (docs/md/rating-methodology.md §Identifiability). Bradley-Terry strengths are identified only up to a constant
  * *per connected component*, so two ratings from different components sit on
  * unrelated scales — a reader who is not told will silently compare them.
  * Stays a quiet one-liner in the normal single-component case.

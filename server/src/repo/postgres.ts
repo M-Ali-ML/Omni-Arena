@@ -722,7 +722,8 @@ export class PostgresRepository
   /**
    * The qualifiers a reader needs before trusting the numbers in
    * `getLeaderboard`: whether the ratings are mutually comparable at all
-   * (vision §4) and how much of a gap superficial style buys (vision §3). Both
+   * (docs/md/rating-methodology.md §Identifiability) and how much of a gap
+   * superficial style buys (style covariates, same doc). Both
    * come back empty on a fresh install where the worker has not run yet.
    */
   async getRatingContext(): Promise<RatingContext> {

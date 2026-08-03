@@ -30,7 +30,7 @@ function describeBasis(effect: StyleEffect): string {
 
 /**
  * The style confounders the rating worker fits jointly with model strength
- * (vision §3), converted to rating points so a reader can weigh them against
+ * (docs/md/rating-methodology.md), converted to rating points so a reader can weigh them against
  * the gaps in the leaderboard above.
  */
 export default function StyleControlPanel({

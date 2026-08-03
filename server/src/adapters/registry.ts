@@ -24,7 +24,7 @@ interface AdapterEntry {
 }
 
 /**
- * The pluggable adapter layer (vision §2.2 / architecture.md): every wire
+ * The pluggable adapter layer (docs/md/architecture.md §Egress): every wire
  * protocol is one module over the same internal PublicArenaEvent stream, and —
  * where the protocol defines one — over its own request envelope too. Native SSE
  * is the default so existing clients are byte-for-byte unaffected.

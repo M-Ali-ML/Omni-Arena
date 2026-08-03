@@ -1,6 +1,6 @@
 /**
  * Tracks in-flight matchup streams so the WebSocket control plane can act on a
- * running generation (decision record #7: stop / steer). The chat route
+ * running generation (stop / steer — docs/md/architecture.md §WebSocket control plane). The chat route
  * registers an `AbortController` when it starts streaming and releases it when
  * the stream ends; the control plane looks a matchup up by id and aborts or
  * steers it.

@@ -16,7 +16,7 @@ import {
 } from "./request-adapter.js";
 
 /**
- * Vercel AI SDK adapter (ecosystem, vision §2): speaks the AI SDK UI Message
+ * Vercel AI SDK adapter (ecosystem adapter — docs/md/architecture.md §Egress): speaks the AI SDK UI Message
  * Stream protocol so a stock `useChat` client can consume the arena. Slot A
  * rides the primary text channel (`text-start`/`text-delta`/`text-end`); slot B
  * is multiplexed through custom `data-*` parts (`writer.merge` convention) so a

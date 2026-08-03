@@ -19,7 +19,7 @@ import {
 import { slotErrorText } from "./slot-error.js";
 
 /**
- * OpenAI SSE adapter (ecosystem, vision §2): emits `chat.completion.chunk`
+ * OpenAI SSE adapter (ecosystem adapter — docs/md/architecture.md §Egress): emits `chat.completion.chunk`
  * frames so Open WebUI / Chatbot-UI-class frontends can drive the arena as if
  * it were a normal OpenAI endpoint. finalize() writes the protocol's trailing
  * `data: [DONE]` sentinel.

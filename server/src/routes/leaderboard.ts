@@ -3,7 +3,7 @@ import type { LeaderboardPort } from "../core/ports.js";
 
 /**
  * The leaderboard and the context that makes it readable, in one response
- * (vision §3, §4).
+ * (see docs/md/rating-methodology.md).
  *
  * `components` and `styleControl` are additive siblings of the pre-existing
  * `models` array rather than a separate endpoint: neither is meaningful on its

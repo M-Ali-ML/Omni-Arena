@@ -658,7 +658,7 @@ played games bridging the groups, and a client showing the ratings should say so
 ### `styleControl` — what superficial style is worth
 
 The worker fits voter biases as covariates *inside* the Bradley-Terry regression
-(vision §3) and stores them in `style_control_coefficients`. `effects` restates
+(see [rating-methodology.md](rating-methodology.md)) and stores them in `style_control_coefficients`. `effects` restates
 each one in leaderboard points, ordered as the worker fits them: `position`,
 `verbosity`, `formatting`, `latency_ttft`, `latency_duration`.
 

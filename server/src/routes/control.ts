@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { MatchupRegistry } from "../control/registry.js";
 
 /**
- * WebSocket control plane (decision record #7, vision §2.1). A bidirectional
+ * WebSocket control plane (docs/md/architecture.md §WebSocket control plane). A bidirectional
  * channel that acts on an in-flight matchup out-of-band from the token stream.
  *
  * - `stop` — aborts the matchup via the registry's `AbortController`.

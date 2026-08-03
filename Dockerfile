@@ -1,6 +1,6 @@
 # Single-tenant OmniArena image: builds the server and the web demo, then serves
-# both from one Fastify process on one port (decision record #5 — self-hosted,
-# one container per team, chat data never leaves adopter infra).
+# both from one Fastify process on one port (self-hosted, one container per
+# team, chat data never leaves adopter infra).
 
 # ---- Builder: install every workspace dep and produce the production bundles ----
 FROM node:22-bookworm AS builder

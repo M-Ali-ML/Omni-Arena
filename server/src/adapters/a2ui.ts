@@ -6,11 +6,11 @@ import {
 import type { EventAdapter } from "./event-adapter.js";
 
 /**
- * A2UI adapter (differentiator, vision §2): a schema-validated, newline-delimited
+ * A2UI adapter (docs/md/architecture.md §Egress): a schema-validated, newline-delimited
  * JSON stream. Each line is one flat, self-describing message so a
  * generative-UI frontend can paint two side-by-side "surfaces" (one per slot)
  * with its own local design system. Every message is validated against the
- * schema before it leaves the process (vision §5 rule 3). `surface_init` also
+ * schema before it leaves the process. `surface_init` also
  * carries the signed vote token, so this path is votable without a second
  * channel — flat, self-describing messages are the protocol's own idiom, so the
  * token needs no envelope of its own.
