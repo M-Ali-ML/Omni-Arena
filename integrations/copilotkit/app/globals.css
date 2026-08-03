@@ -1,6 +1,8 @@
 @import "@copilotkit/react-core/v2/styles.css";
 
 :root {
+  /* Dark app: native controls (scrollbars, inputs) follow suit. */
+  color-scheme: dark;
   --arena-bg: #0f1419;
   --arena-surface: #1a222c;
   --arena-border: #2a3544;
